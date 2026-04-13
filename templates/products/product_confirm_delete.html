@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Delete {{ object.name }}{% endblock %}
+
+{% block content %}
+<div class="mx-auto w-full max-w-3xl space-y-4">
+    <div>
+        <div class="text-sm text-slate-500">
+            <a class="hover:underline" href="{% url 'product-detail' object.id %}">{{ object.name }}</a>
+            <span class="px-1">/</span>
+            <span class="text-slate-700">Delete</span>
+        </div>
+        <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Confirm deletion</h1>
+        <p class="mt-1 text-sm text-slate-600">This action cannot be undone.</p>
+    </div>
+
+    <div class="rounded-xl border border-rose-200 bg-white p-6 shadow-sm">
+        <div class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Deleting a product may affect inventory history and any customer associations.
+        </div>
+
+        <div class="mt-5 rounded-lg border border-slate-200 p-4">
+            <div class="text-sm font-semibold text-slate-900">Product</div>
+            <dl class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <dt class="text-xs text-slate-500">Name</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.name }}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-slate-500">Category</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.get_category_display }}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-slate-500">Selling price</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.selling_price|intcomma }} TZS</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-slate-500">Quantity</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.quantity }} {{ object.measure_unit }}</dd>
+                </div>
+            </dl>
+        </div>
+
+        <form method="post" class="mt-6 flex flex-wrap items-center justify-end gap-3">
+            {% csrf_token %}
+            <a href="{% url 'product-detail' object.id %}" class="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                Cancel
+            </a>
+            <button type="submit" class="rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-600/30">
+                Delete product
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,71 @@
+<section class="section no-break" style="margin-bottom: 0;">
+  <p class="thanks-band">
+    {% if document.document_type == "quotation" %}
+      Thank You For Choosing Us!
+    {% elif document.document_type == "receipt" %}
+      Thank You For Your Payment!
+    {% else %}
+      Thank You For Your Business!
+    {% endif %}
+  </p>
+  <p class="thanks-sub">Welcome Again!</p>
+
+  <div class="footer-strip">
+    <table>
+      <tr>
+        {% if document.document_type == "quotation" %}
+          <td>Quotation {{ document.number }}</td>
+          <td>Version v{{ document.version_number }}</td>
+          <td>Status <span class="footer-status">{{ document.get_status_display }}</span></td>
+        {% elif document.document_type == "invoice" %}
+          <td>Invoice {{ document.number }}</td>
+          <td>
+            {% if document.due_date %}
+              Due {{ document.due_date|date:"d M Y" }}
+            {% else %}
+              Issued {{ document.issue_date|date:"d M Y" }}
+            {% endif %}
+          </td>
+          <td>Status <span class="footer-status">{{ document.get_status_display }}</span></td>
+        {% elif document.document_type == "receipt" %}
+          <td>Receipt {{ document.number }}</td>
+          <td>
+            {% if document.payment_date %}
+              Paid {{ document.payment_date|date:"d M Y" }}
+            {% elif document.invoice %}
+              Invoice {{ document.invoice.number }}
+            {% else %}
+              Issued {{ document.issue_date|date:"d M Y" }}
+            {% endif %}
+          </td>
+          <td>Status <span class="footer-status">{{ document.get_status_display }}</span></td>
+        {% else %}
+          <td>
+            {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}
+              {{ ACTIVE_BRANDING.phone }}
+            {% else %}
+              {{ COMPANY_PHONE|default:"Phone not available" }}
+            {% endif %}
+          </td>
+          <td>
+            {% if ACTIVE_BRANDING and ACTIVE_BRANDING.email %}
+              {{ ACTIVE_BRANDING.email }}
+            {% else %}
+              {{ CONTACT_EMAIL|default:"Email not available" }}
+            {% endif %}
+          </td>
+          <td>
+            {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+              {{ ACTIVE_BRANDING.address_line1 }}
+              {% if ACTIVE_BRANDING.address_line2 %}, {{ ACTIVE_BRANDING.address_line2 }}{% endif %}
+            {% elif COMPANY_ADDRESS %}
+              {{ COMPANY_ADDRESS }}
+            {% else %}
+              {{ document.number }}
+            {% endif %}
+          </td>
+        {% endif %}
+      </tr>
+    </table>
+  </div>
+</section>

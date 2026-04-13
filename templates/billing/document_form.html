@@ -1,0 +1,475 @@
+{% extends "base.html" %}
+
+{% block title %}{{ doc_type_display }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
+      <p class="mt-1 max-w-3xl text-sm text-slate-600">Prepare a polished billing document with compact details, flexible product and package selection, and live totals before saving.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Compact document metadata</span>
+      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Multiple products and packages</span>
+      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Live pricing summary</span>
+    </div>
+  </div>
+
+  <form method="post" class="space-y-6" id="document-form">
+    {% csrf_token %}
+
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div class="space-y-6">
+        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="mb-4">
+            <h2 class="text-base font-semibold text-slate-900">Document details</h2>
+            <p class="mt-1 text-sm text-slate-500">Keep customer, dates, status, currency, and tax visible without forcing a long stacked form.</p>
+          </div>
+
+          {% if form.non_field_errors %}
+            <div class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              {% for error in form.non_field_errors %}
+                <div>{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+            {% include "billing/includes/document_meta_fields.html" with primary_fields=primary_fields notes_field=notes_field secondary_fields=secondary_fields %}
+          </div>
+        </section>
+
+        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 class="text-base font-semibold text-slate-900">Line items</h2>
+              <p class="mt-1 text-sm text-slate-500">Add multiple products, packages, or custom items in one quotation and keep totals visible as you work.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800" data-kind="custom">
+                Add custom item
+              </button>
+              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50" data-kind="product">
+                Add product row
+              </button>
+              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50" data-kind="package">
+                Add package row
+              </button>
+            </div>
+          </div>
+
+          {% if formset.non_form_errors %}
+            <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              {% for error in formset.non_form_errors %}
+                <div>{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div class="mt-5">
+            {{ formset.management_form }}
+            <div class="space-y-4" id="line-items-container">
+              {% for item_form in formset %}
+                {% include "billing/includes/document_line_item_form.html" with item_form=item_form %}
+              {% endfor %}
+            </div>
+
+            <div id="line-items-empty" class="mt-4 hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              No active line items yet. Add a product, package, or custom item to continue.
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="space-y-6 xl:sticky xl:top-6 xl:self-start">
+        <section class="rounded-3xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-semibold">Quotation summary</h2>
+              <p class="mt-1 text-sm text-slate-300">Live totals update as line items and tax change.</p>
+            </div>
+            <span class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200" id="summary-currency">{{ form.currency.value|default:"TZS"|upper }}</span>
+          </div>
+
+          <dl class="mt-5 space-y-3 text-sm">
+            <div class="flex items-center justify-between">
+              <dt class="text-slate-300">Active items</dt>
+              <dd class="font-semibold text-white" id="summary-count">0</dd>
+            </div>
+            <div class="flex items-center justify-between">
+              <dt class="text-slate-300">Subtotal</dt>
+              <dd class="font-semibold text-white" id="summary-subtotal">0.00</dd>
+            </div>
+            <div class="flex items-center justify-between">
+              <dt class="text-slate-300">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0.00" }}%)</span></dt>
+              <dd class="font-semibold text-white" id="summary-tax">0.00</dd>
+            </div>
+            <div class="flex items-center justify-between border-t border-white/10 pt-3 text-base">
+              <dt class="font-medium text-white">Grand total</dt>
+              <dd class="font-semibold text-white" id="summary-total">0.00</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-semibold text-slate-900">Product quick add</h2>
+              <p class="mt-1 text-sm text-slate-500">Select any active product and append it as a line item.</p>
+            </div>
+            <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">{{ product_catalog|length }} active</span>
+          </div>
+
+          <div class="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
+            {% for product in product_catalog %}
+              <button
+                type="button"
+                class="js-quick-add flex w-full items-start justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                data-kind="product"
+                data-id="{{ product.id }}"
+              >
+                <span>
+                  <span class="block text-sm font-semibold text-slate-900">{{ product.name }}</span>
+                  <span class="mt-1 block text-xs text-slate-500">{{ product.description|default:"No description" }}</span>
+                </span>
+                <span class="ml-3 text-sm font-semibold text-slate-700">{{ product.selling_price }}</span>
+              </button>
+            {% empty %}
+              <div class="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">No active products available.</div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-semibold text-slate-900">Package quick add</h2>
+              <p class="mt-1 text-sm text-slate-500">Add multiple packages to the same quotation with one click.</p>
+            </div>
+            <span class="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">{{ package_catalog|length }} active</span>
+          </div>
+
+          <div class="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
+            {% for package in package_catalog %}
+              <button
+                type="button"
+                class="js-quick-add flex w-full items-start justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                data-kind="package"
+                data-id="{{ package.id }}"
+              >
+                <span>
+                  <span class="block text-sm font-semibold text-slate-900">{{ package.name }}</span>
+                  <span class="mt-1 block text-xs text-slate-500">{{ package.speed }} - {{ package.description|default:"No description" }}</span>
+                </span>
+                <span class="ml-3 text-sm font-semibold text-slate-700">{{ package.price }}</span>
+              </button>
+            {% empty %}
+              <div class="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">No active packages available.</div>
+            {% endfor %}
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <div class="flex items-center justify-end gap-2">
+      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+      <button type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+        {% if document %}Save changes{% else %}Create {{ doc_type_display|lower }}{% endif %}
+      </button>
+    </div>
+  </form>
+</div>
+
+<template id="line-item-empty-template">
+  {% include "billing/includes/document_line_item_form.html" with item_form=formset.empty_form %}
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script id="product-catalog-data" type="application/json">
+[
+  {% for product in product_catalog %}
+    {"id":"{{ product.id }}","name":"{{ product.name|escapejs }}","description":"{{ product.description|default_if_none:''|escapejs }}","price":"{{ product.retail_price|default:product.selling_price }}","wholesale_price":"{{ product.wholesale_price|default_if_none:'' }}","wholesale_min_quantity":"{{ product.wholesale_min_quantity }}","allow_wholesale":{% if product.allow_wholesale %}true{% else %}false{% endif %}}{% if not forloop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script id="package-catalog-data" type="application/json">
+[
+  {% for package in package_catalog %}
+    {"id":"{{ package.id }}","name":"{{ package.name|escapejs }}","description":"{{ package.description|default_if_none:''|escapejs }}","speed":"{{ package.speed|escapejs }}","price":"{{ package.price }}"}{% if not forloop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script>
+  (() => {
+    const form = document.getElementById('document-form');
+    const container = document.getElementById('line-items-container');
+    const emptyState = document.getElementById('line-items-empty');
+    const totalForms = document.getElementById('id_{{ formset.prefix }}-TOTAL_FORMS');
+    const template = document.getElementById('line-item-empty-template');
+    const productCatalog = new Map((JSON.parse(document.getElementById('product-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
+    const packageCatalog = new Map((JSON.parse(document.getElementById('package-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
+    const currencyField = document.getElementById('id_currency');
+    const taxRateField = document.getElementById('id_tax_rate');
+    const summaryCurrency = document.getElementById('summary-currency');
+    const summaryCount = document.getElementById('summary-count');
+    const summarySubtotal = document.getElementById('summary-subtotal');
+    const summaryTax = document.getElementById('summary-tax');
+    const summaryTotal = document.getElementById('summary-total');
+    const summaryTaxRateLabel = document.getElementById('summary-tax-rate-label');
+
+    if (!form || !container || !emptyState || !totalForms || !template) {
+      return;
+    }
+
+    const parseMoney = (value) => {
+      const parsed = Number.parseFloat(value || '0');
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const formatMoney = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const getRowControls = (row) => ({
+      product: row.querySelector('[name$="-product"]'),
+      package: row.querySelector('[name$="-package"]'),
+      description: row.querySelector('[name$="-description"]'),
+      quantity: row.querySelector('[name$="-quantity"]'),
+      unitPrice: row.querySelector('[name$="-unit_price"]'),
+      discount: row.querySelector('[name$="-discount_amount"]'),
+      pricingMode: row.querySelector('[name$="-pricing_mode"]'),
+      deleteBox: row.querySelector('[name$="-DELETE"]'),
+      productWrap: row.querySelector('.js-product-wrap'),
+      packageWrap: row.querySelector('.js-package-wrap'),
+      summary: row.querySelector('.js-selection-summary'),
+      lineTotal: row.querySelector('.js-line-total'),
+      label: row.querySelector('.js-item-label'),
+    });
+
+    const setButtonState = (row, activeType) => {
+      row.querySelectorAll('.js-item-type').forEach((button) => {
+        const active = button.dataset.type === activeType;
+        button.classList.toggle('bg-white', active);
+        button.classList.toggle('text-slate-900', active);
+        button.classList.toggle('shadow-sm', active);
+        button.classList.toggle('text-slate-600', !active);
+      });
+    };
+
+    const setDescriptionIfSuggested = (field, value) => {
+      if (!field) {
+        return;
+      }
+      const current = (field.value || '').trim();
+      if (!current || field.dataset.autofilled === '1') {
+        field.value = value || '';
+        field.dataset.autofilled = value ? '1' : '0';
+      }
+    };
+
+    const refreshLabels = () => {
+      const activeRows = [...container.querySelectorAll('.js-line-item')].filter((row) => !row.classList.contains('hidden'));
+      activeRows.forEach((row, index) => {
+        const label = row.querySelector('.js-item-label');
+        if (label) {
+          label.textContent = String(index + 1).padStart(2, '0');
+        }
+      });
+      emptyState.classList.toggle('hidden', activeRows.length > 0);
+      if (summaryCount) {
+        summaryCount.textContent = String(activeRows.length);
+      }
+    };
+
+    const refreshSummary = () => {
+      refreshLabels();
+      const activeRows = [...container.querySelectorAll('.js-line-item')].filter((row) => !row.classList.contains('hidden'));
+      const subtotal = activeRows.reduce((sum, row) => {
+        const controls = getRowControls(row);
+        const line = (parseMoney(controls.quantity?.value) * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value);
+        return sum + Math.max(line, 0);
+      }, 0);
+      const taxRate = parseMoney(taxRateField?.value);
+      const taxAmount = subtotal * (taxRate / 100);
+      const total = subtotal + taxAmount;
+      const currency = (currencyField?.value || 'TZS').toUpperCase();
+
+      if (summaryCurrency) summaryCurrency.textContent = currency;
+      if (summaryTaxRateLabel) summaryTaxRateLabel.textContent = `(${taxRate.toFixed(2)}%)`;
+      if (summarySubtotal) summarySubtotal.textContent = formatMoney(subtotal);
+      if (summaryTax) summaryTax.textContent = formatMoney(taxAmount);
+      if (summaryTotal) summaryTotal.textContent = formatMoney(total);
+    };
+
+    const syncRow = (row) => {
+      const controls = getRowControls(row);
+      const productId = controls.product?.value || '';
+      const packageId = controls.package?.value || '';
+      const activeType = productId ? 'product' : packageId ? 'package' : 'custom';
+      const product = productCatalog.get(productId);
+      const packageItem = packageCatalog.get(packageId);
+
+      controls.productWrap?.classList.toggle('hidden', activeType !== 'product');
+      controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
+      setButtonState(row, activeType);
+
+      if (activeType === 'product' && product) {
+        if (
+          controls.pricingMode?.value === 'wholesale' &&
+          product.allow_wholesale &&
+          product.wholesale_price &&
+          parseMoney(controls.quantity?.value) >= parseMoney(product.wholesale_min_quantity)
+        ) {
+          controls.unitPrice.value = product.wholesale_price;
+        } else if (controls.pricingMode?.value === 'retail') {
+          controls.unitPrice.value = product.price;
+        }
+        controls.summary.textContent = `${product.name} selected`;
+      } else if (activeType === 'package' && packageItem) {
+        controls.summary.textContent = `${packageItem.name} selected`;
+      } else {
+        controls.summary.textContent = 'No product or package selected yet.';
+      }
+
+      const gross = parseMoney(controls.quantity?.value) * parseMoney(controls.unitPrice?.value);
+      const total = Math.max(gross - parseMoney(controls.discount?.value), 0);
+      controls.lineTotal.textContent = formatMoney(total);
+      refreshSummary();
+    };
+
+    const activateType = (row, type, options = {}) => {
+      const controls = getRowControls(row);
+      const clearOther = options.clearOther !== false;
+      if (type === 'product' && clearOther && controls.package) {
+        controls.package.value = '';
+      }
+      if (type === 'package' && clearOther && controls.product) {
+        controls.product.value = '';
+      }
+      if (type === 'custom' && clearOther) {
+        if (controls.product) controls.product.value = '';
+        if (controls.package) controls.package.value = '';
+      }
+      syncRow(row);
+    };
+
+    const applyCatalogSelection = (row, kind, itemId) => {
+      const controls = getRowControls(row);
+      if (kind === 'product' && controls.product) {
+        controls.product.value = itemId;
+        if (controls.package) {
+          controls.package.value = '';
+        }
+        const product = productCatalog.get(String(itemId));
+        if (product) {
+          controls.unitPrice.value = product.price;
+          if (controls.pricingMode) controls.pricingMode.value = 'retail';
+          setDescriptionIfSuggested(controls.description, product.description || product.name);
+        }
+      }
+      if (kind === 'package' && controls.package) {
+        controls.package.value = itemId;
+        if (controls.product) {
+          controls.product.value = '';
+        }
+        const packageItem = packageCatalog.get(String(itemId));
+        if (packageItem) {
+          controls.unitPrice.value = Number(parseMoney(packageItem.price)).toFixed(2);
+          setDescriptionIfSuggested(controls.description, packageItem.description || packageItem.name);
+        }
+      }
+      activateType(row, kind, { clearOther: false });
+    };
+
+    const bindRow = (row) => {
+      const controls = getRowControls(row);
+      row.querySelectorAll('.js-item-type').forEach((button) => {
+        button.addEventListener('click', () => activateType(row, button.dataset.type));
+      });
+      row.querySelectorAll('.js-clear-selection').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (button.dataset.clear === 'product' && controls.product) {
+            controls.product.value = '';
+          }
+          if (button.dataset.clear === 'package' && controls.package) {
+            controls.package.value = '';
+          }
+          syncRow(row);
+        });
+      });
+      [controls.product, controls.package].forEach((field) => {
+        if (!field) {
+          return;
+        }
+        field.addEventListener('change', () => {
+          if (field === controls.product && controls.product.value) {
+            applyCatalogSelection(row, 'product', controls.product.value);
+            return;
+          }
+          if (field === controls.package && controls.package.value) {
+            applyCatalogSelection(row, 'package', controls.package.value);
+            return;
+          }
+          syncRow(row);
+        });
+      });
+      if (controls.description) {
+        controls.description.addEventListener('input', () => {
+          controls.description.dataset.autofilled = '0';
+          syncRow(row);
+        });
+      }
+      [controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode].forEach((field) => {
+        if (field) {
+          field.addEventListener('input', () => syncRow(row));
+        }
+      });
+      row.querySelector('.js-remove-item')?.addEventListener('click', () => {
+        if (controls.deleteBox) {
+          controls.deleteBox.checked = true;
+          row.classList.add('hidden');
+        } else {
+          row.remove();
+        }
+        refreshSummary();
+      });
+      syncRow(row);
+    };
+
+    const createRow = (kind = 'custom') => {
+      const index = Number.parseInt(totalForms.value, 10);
+      const html = template.innerHTML.replaceAll('__prefix__', String(index));
+      const fragment = document.createRange().createContextualFragment(html);
+      const row = fragment.firstElementChild;
+      container.appendChild(row);
+      totalForms.value = String(index + 1);
+      bindRow(row);
+      activateType(row, kind);
+      return row;
+    };
+
+    document.querySelectorAll('.js-add-item').forEach((button) => {
+      button.addEventListener('click', () => {
+        createRow(button.dataset.kind || 'custom');
+      });
+    });
+
+    document.querySelectorAll('.js-quick-add').forEach((button) => {
+      button.addEventListener('click', () => {
+        const row = createRow(button.dataset.kind || 'custom');
+        applyCatalogSelection(row, button.dataset.kind, button.dataset.id);
+      });
+    });
+
+    if (currencyField) {
+      currencyField.addEventListener('input', refreshSummary);
+    }
+    if (taxRateField) {
+      taxRateField.addEventListener('input', refreshSummary);
+    }
+
+    container.querySelectorAll('.js-line-item').forEach((row) => bindRow(row));
+    refreshSummary();
+  })();
+</script>
+{% endblock %}

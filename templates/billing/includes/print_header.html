@@ -1,0 +1,117 @@
+<section class="header section no-break">
+  <div class="header-left">
+    <div class="brand-row{% if document.document_type == 'quotation' or document.document_type == 'invoice' or document.document_type == 'receipt' %} quotation-brand-stack{% endif %}">
+      <div class="brand-logo">
+        <div class="logo-wrap">
+          {% if LOGO_DATA_URI %}
+            <img class="logo" src="{{ LOGO_DATA_URI }}" alt="Company logo">
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="brand-copy">
+        {% comment %} <h1 class="brand-title">
+          {% if ACTIVE_BRANDING and ACTIVE_BRANDING.legal_name %}
+            {{ ACTIVE_BRANDING.legal_name }}
+          {% else %}
+            {{ COMPANY_NAME|default:"JS Internet Services" }}
+          {% endif %}
+        </h1> {% endcomment %}
+        {% comment %} {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+          <p class="brand-subtitle">{{ ACTIVE_BRANDING.address_line1 }}</p>
+        {% elif COMPANY_ADDRESS %}
+          <p class="brand-subtitle">{{ COMPANY_ADDRESS }}</p>
+        {% else %}
+          <p class="brand-subtitle">Professional Business Document</p>
+        {% endif %} {% endcomment %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.tin_number or ACTIVE_BRANDING and ACTIVE_BRANDING.vrn_number %}
+                  <div class="company-tax">
+                    {% if ACTIVE_BRANDING.tin_number %}TIN: {{ ACTIVE_BRANDING.tin_number }}{% endif %}
+                    {% if ACTIVE_BRANDING.vrn_number %}{% if ACTIVE_BRANDING.tin_number %} | {% endif %}VRN: {{ ACTIVE_BRANDING.vrn_number }}{% endif %}
+                  </div>
+        {% endif %}
+
+        {% comment %} <ul class="brand-list"> {% endcomment %}
+          {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}
+            {{ ACTIVE_BRANDING.address_line2 }}<br>
+            {{ COMPANY_ADDRESS }}<br>
+          {% endif %}
+          {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}
+            {{ ACTIVE_BRANDING.phone }}<br>
+          {% elif COMPANY_PHONE %}
+            {{ COMPANY_PHONE }}<br>
+          {% endif %}
+          {% if ACTIVE_BRANDING and ACTIVE_BRANDING.email %}
+            {{ ACTIVE_BRANDING.email }}<br>
+          {% elif CONTACT_EMAIL %}
+            {{ CONTACT_EMAIL }}<br>
+          {% endif %}
+        {% comment %} </ul>       {% endcomment %}
+      </div>
+    </div>
+  </div>
+
+  <div class="header-right">
+    <div class="meta-card">
+      <h2 class="document-title">{{ document.get_document_type_display }}</h2>
+      <div class="meta-grid">
+        <div class="meta-row">
+          <div class="meta-label">{% if document.document_type == "quotation" %}Quotation No.{% else %}Number{% endif %}</div>
+          <div class="meta-value">{{ document.number }}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">{% if document.document_type == "quotation" %}Date{% else %}Issue Date{% endif %}</div>
+          <div class="meta-value">{{ document.issue_date|date:"d M Y" }}</div>
+        </div>
+        {% if document.document_type != "receipt" %}
+          <div class="meta-row">
+            <div class="meta-label">{% if document.document_type == "quotation" %}Valid Until{% else %}Due Date{% endif %}</div>
+            <div class="meta-value">
+              {% if document.due_date %}
+                {{ document.due_date|date:"d M Y" }}
+              {% else %}
+                <span class="muted-empty">-</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+        {% if document.document_type == "receipt" and document.invoice %}
+          <div class="meta-row">
+            <div class="meta-label">Invoice</div>
+            <div class="meta-value">{{ document.invoice.number }}</div>
+          </div>
+        {% endif %}
+        {% if document.document_type == "receipt" and document.payment_date %}
+          <div class="meta-row">
+            <div class="meta-label">Payment Date</div>
+            <div class="meta-value">{{ document.payment_date|date:"d M Y" }}</div>
+          </div>
+        {% endif %}
+        {% if document.document_type == "receipt" %}
+          <div class="meta-row">
+            <div class="meta-label">Status</div>
+            <div class="meta-value"><span class="status-badge {{ document.status }}">{{ document.get_status_display }}</span></div>
+          </div>
+        {% endif %}
+        {% if document.document_type == "receipt" and document.payment_method %}
+          <div class="meta-row">
+            <div class="meta-label">Method</div>
+            <div class="meta-value">{{ document.payment_method }}</div>
+          </div>
+        {% endif %}
+        <div class="meta-row">
+          <div class="meta-label">Currency</div>
+          <div class="meta-value">{{ document.currency|upper }}</div>
+        </div>
+        {% if document.document_type == "quotation" or document.document_type == "invoice" %}
+          <div class="meta-row">
+            <div class="meta-label">Status</div>
+            <div class="meta-value">{{ document.get_status_display }}</div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>

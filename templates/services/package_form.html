@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if form.instance.pk %}Edit Package{% else %}New Package{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mx-auto w-full max-w-3xl space-y-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-semibold tracking-tight text-slate-900">
+                {% if form.instance.pk %}Edit{% else %}New{% endif %} service package
+            </h1>
+            <p class="mt-1 text-sm text-slate-600">Define speed, fees, and availability.</p>
+        </div>
+        <a href="{% url 'package-list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            Back
+        </a>
+    </div>
+
+    <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
+            {% include "components/form.html" with form=form %}
+
+            <div class="flex items-center justify-end gap-3">
+                <a href="{% url 'package-list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                    Cancel
+                </a>
+                <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                    Save
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+

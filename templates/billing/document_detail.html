@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}{{ document }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ document.get_document_type_display }} {{ document.number }}</h1>
+      <p class="mt-1 text-sm text-slate-600">
+        {{ document.customer.name }} &middot; {{ document.issue_date|date:"d M Y" }} &middot; {{ document.get_status_display }}
+        {% if document.document_type == "quotation" %}&middot; v{{ document.version_number }}{% endif %}
+      </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <a href="{% url 'billing:document_pdf' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Download PDF</a>
+      {% if document.document_type == 'quotation' %}
+        <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit quotation</a>
+        <form method="post" action="{% url 'billing:create_invoice_from_quotation' pk=document.id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create invoice</button>
+        </form>
+      {% endif %}
+      {% if document.document_type == 'invoice' and document.status == 'draft' %}
+        <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit draft</a>
+      {% endif %}
+      {% if document.document_type == 'invoice' and not has_receipt %}
+        <a href="{% url 'billing:create_receipt_from_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create receipt</a>
+      {% endif %}
+      {% if document.document_type == 'invoice' and invoice_locked %}
+        <form method="post" action="{% url 'billing:cancel_invoice' pk=document.id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        </form>
+        <form method="post" action="{% url 'billing:reissue_invoice' pk=document.id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reissue</button>
+        </form>
+        <form method="post" action="{% url 'billing:create_credit_note' pk=document.id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="lg:col-span-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900">Line items</div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Description</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Qty</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Unit</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-200">
+            {% for item in items %}
+              <tr>
+                <td class="px-4 py-3 text-sm text-slate-900">
+                  {% if item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}{{ item.description }}{% endif %}
+                  {% if item.description %}<div class="text-xs text-slate-500">{{ item.description }}</div>{% endif %}
+                  {% if item.discount_amount %}<div class="text-xs text-emerald-700">Discount: {{ item.discount_amount }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</div>{% endif %}
+                </td>
+                <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
+                <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price }}</td>
+                <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.line_total }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="4" class="px-4 py-10 text-center text-sm text-slate-500">No items.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="space-y-4">
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div class="text-sm font-semibold text-slate-900">Totals</div>
+        <dl class="mt-3 space-y-2 text-sm">
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-600">Subtotal</dt>
+            <dd class="font-medium text-slate-900">{{ document.subtotal }}</dd>
+          </div>
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-600">VAT ({{ document.tax_rate }}%)</dt>
+            <dd class="font-medium text-slate-900">{{ document.tax_amount }}</dd>
+          </div>
+          <div class="flex items-center justify-between border-t border-slate-200 pt-2">
+            <dt class="text-slate-900 font-semibold">Total</dt>
+            <dd class="text-slate-900 font-semibold">{{ document.total }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div class="text-sm font-semibold text-slate-900">Notes</div>
+        <p class="mt-2 text-sm text-slate-700">{{ document.notes|default:"-" }}</p>
+      </div>
+
+      {% if quotation_history %}
+        <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-sm font-semibold text-slate-900">Version history</div>
+          <div class="mt-3 space-y-2 text-sm">
+            {% for version in quotation_history %}
+              <div class="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                <div>
+                  <div class="font-medium text-slate-900">{{ version.number }} v{{ version.version_number }}</div>
+                  <div class="text-xs text-slate-500">{{ version.created_at|date:"d M Y H:i" }}</div>
+                </div>
+                <div class="flex items-center gap-2">
+                  {% if version.is_current_version %}<span class="text-xs font-semibold text-emerald-700">Current</span>{% endif %}
+                  {% if version.id != document.id %}
+                    <a href="?compare_to={{ version.id }}" class="text-xs font-medium text-slate-700 underline">Compare</a>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
+      {% if quotation_comparison %}
+        <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-sm font-semibold text-slate-900">Comparison</div>
+          <div class="mt-3 space-y-2 text-xs text-slate-700">
+            {% for field, change in quotation_comparison.changes.items %}
+              <div class="rounded-lg border border-slate-200 px-3 py-2">
+                <div class="font-semibold text-slate-900">{{ field }}</div>
+                <div>From: {{ change.from }}</div>
+                <div>To: {{ change.to }}</div>
+              </div>
+            {% empty %}
+              <div>No differences detected.</div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

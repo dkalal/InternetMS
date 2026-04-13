@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Promotion{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-6">
+  <div class="flex items-end justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{% if form.instance.pk %}Edit{% else %}Create{% endif %} promotion</h1>
+      <p class="mt-1 text-sm text-slate-600">Define discounts for packages, products, cart value, or multi-month subscription offers.</p>
+    </div>
+    <a href="{% url 'billing:promotion_list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Back</a>
+  </div>
+
+  <form method="post" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+        {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div class="md:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
+      {% include "components/form_field.html" with field=form.applies_to %}
+      {% include "components/form_field.html" with field=form.reward_type %}
+      {% include "components/form_field.html" with field=form.product %}
+      {% include "components/form_field.html" with field=form.package %}
+      {% include "components/form_field.html" with field=form.minimum_quantity %}
+      {% include "components/form_field.html" with field=form.minimum_months %}
+      {% include "components/form_field.html" with field=form.minimum_amount %}
+      {% include "components/form_field.html" with field=form.reward_value %}
+      {% include "components/form_field.html" with field=form.valid_from %}
+      {% include "components/form_field.html" with field=form.valid_until %}
+      <div class="md:col-span-2">{% include "components/form_field.html" with field=form.is_active %}</div>
+    </div>
+    <div class="mt-5 flex justify-end gap-3">
+      <a href="{% url 'billing:promotion_list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</a>
+      <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Save promotion</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

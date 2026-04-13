@@ -1,0 +1,65 @@
+{% load humanize %}
+<section class="section">
+  <div class="table-card">
+    <table class="items-table quotation-items-table">
+      <thead>
+        <tr>
+          <th style="width: 8%;">S/N</th>
+          <th style="width: 38%;">Product / Service Description</th>
+          <th style="width: 16%;">Unit</th>
+          <th style="width: 10%;" class="text-right">Qty</th>
+          <th style="width: 14%;" class="text-right">Unit Price</th>
+          <th style="width: 14%;" class="text-right">Total Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td class="quotation-serial">{{ forloop.counter|stringformat:"02d" }}</td>
+            <td>
+              <div class="item-cell">
+                <div class="item-copy">
+                  <span class="item-title">
+                    {% if item.package %}
+                      {{ item.package.name }}
+                    {% elif item.product %}
+                      {{ item.product.name }}
+                    {% elif item.description %}
+                      {{ item.description }}
+                    {% else %}
+                      Item {{ forloop.counter }}
+                    {% endif %}
+                  </span>
+                  {% if item.description %}
+                    {% if item.package or item.product %}
+                      <span class="item-subtitle">{{ item.description }}</span>
+                    {% endif %}
+                  {% endif %}
+                  {% if item.discount_amount %}
+                    <span class="item-subtitle">Discount: {{ document.currency|upper }} {{ item.discount_amount|floatformat:2|intcomma }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</span>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+            <td>
+              {% if item.package %}
+                {{ item.package.name }}
+              {% elif item.product %}
+                Product
+              {% else %}
+                Service
+              {% endif %}
+            </td>
+            <td class="text-right">{{ item.quantity }}</td>
+            <td class="text-right">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
+            <td class="text-right total-amount">{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="empty-state">No line items available.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

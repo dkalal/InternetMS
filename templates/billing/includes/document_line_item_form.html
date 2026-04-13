@@ -1,0 +1,95 @@
+<div
+  class="js-line-item rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition"
+  data-form-index="{{ item_form.prefix }}"
+>
+  {% for hidden in item_form.hidden_fields %}
+    {{ hidden }}
+  {% endfor %}
+  {% if item_form.DELETE %}
+    {{ item_form.DELETE.as_hidden }}
+  {% endif %}
+
+  {% if item_form.non_field_errors %}
+    <div class="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+      {% for error in item_form.non_field_errors %}
+        <div>{{ error }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="flex flex-col gap-3 border-b border-slate-100 pb-3 lg:flex-row lg:items-start lg:justify-between">
+    <div>
+      <div class="flex items-center gap-2">
+        <span class="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">Item</span>
+        <span class="text-sm font-semibold text-slate-900 js-item-label"></span>
+      </div>
+      <p class="mt-1 text-xs text-slate-500">Choose a product, a package, or keep this as a custom line.</p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+        <button type="button" class="js-item-type rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:text-slate-900" data-type="custom">Custom</button>
+        <button type="button" class="js-item-type rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:text-slate-900" data-type="product">Product</button>
+        <button type="button" class="js-item-type rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:text-slate-900" data-type="package">Package</button>
+      </div>
+      <button type="button" class="js-remove-item inline-flex items-center rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700">
+        Remove
+      </button>
+    </div>
+  </div>
+
+  <div class="mt-4 grid gap-4 xl:grid-cols-12">
+    <div class="xl:col-span-4">
+      <div class="space-y-3">
+        <div class="js-product-wrap hidden">
+          {% include "components/form_field.html" with field=item_form.product %}
+          <button type="button" class="js-clear-selection mt-2 text-xs font-medium text-slate-500 hover:text-slate-800" data-clear="product">Clear product</button>
+        </div>
+        <div class="js-package-wrap hidden">
+          {% include "components/form_field.html" with field=item_form.package %}
+          <button type="button" class="js-clear-selection mt-2 text-xs font-medium text-slate-500 hover:text-slate-800" data-clear="package">Clear package</button>
+        </div>
+        <div class="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 js-selection-summary">
+          No product or package selected yet.
+        </div>
+      </div>
+    </div>
+
+    <div class="xl:col-span-4">
+      {% include "components/form_field.html" with field=item_form.description %}
+    </div>
+
+    <div class="xl:col-span-2">
+      {% include "components/form_field.html" with field=item_form.quantity %}
+    </div>
+
+    <div class="xl:col-span-2">
+      {% include "components/form_field.html" with field=item_form.unit_price %}
+    </div>
+
+    <div class="xl:col-span-3">
+      {% include "components/form_field.html" with field=item_form.billing_behavior %}
+    </div>
+
+    <div class="xl:col-span-3">
+      {% include "components/form_field.html" with field=item_form.pricing_mode %}
+    </div>
+
+    <div class="xl:col-span-3">
+      {% include "components/form_field.html" with field=item_form.discount_amount %}
+    </div>
+
+    <div class="xl:col-span-3">
+      {% include "components/form_field.html" with field=item_form.promotion %}
+    </div>
+
+    <div class="xl:col-span-12">
+      {% include "components/form_field.html" with field=item_form.discount_reason %}
+    </div>
+  </div>
+
+  <div class="mt-4 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2">
+    <div class="text-xs text-slate-500">Line total</div>
+    <div class="text-sm font-semibold text-slate-900 js-line-total">0.00</div>
+  </div>
+</div>

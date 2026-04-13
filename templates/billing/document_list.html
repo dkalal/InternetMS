@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}{{ doc_type_display }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
+      <p class="mt-1 text-sm text-slate-600">Manage and export PDFs.</p>
+    </div>
+    <a href="{% url 'billing:document_create' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      Create {{ doc_type_display|lower }}
+    </a>
+  </div>
+
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Number</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Customer</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Issue Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Total</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% for document in documents %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ document.number }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ document.customer.name }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ document.issue_date|date:"d M Y" }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ document.get_status_display }}</td>
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ document.total }}</td>
+              <td class="px-4 py-3 text-right text-sm">
+                <div class="inline-flex items-center gap-2">
+                  <a href="{% url 'billing:document_detail' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
+                  <a href="{% url 'billing:document_pdf' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">PDF</a>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-500">No {{ doc_type_display|lower }} yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if is_paginated %}
+    <nav class="flex items-center justify-center gap-2" aria-label="Pagination">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}" class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Previous</a>
+      {% else %}
+        <span class="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400">Previous</span>
+      {% endif %}
+
+      <span class="text-sm text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Next</a>
+      {% else %}
+        <span class="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400">Next</span>
+      {% endif %}
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}

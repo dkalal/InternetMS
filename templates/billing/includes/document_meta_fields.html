@@ -1,0 +1,17 @@
+{% for field in primary_fields %}
+  <div>
+    {% include "components/form_field.html" with field=field %}
+  </div>
+{% endfor %}
+
+{% if notes_field %}
+  <div class="md:col-span-2 xl:col-span-6">
+    {% include "components/form_field.html" with field=notes_field %}
+  </div>
+{% endif %}
+
+{% for field in secondary_fields %}
+  <div class="md:col-span-2 xl:col-span-3">
+    {% include "components/form_field.html" with field=field %}
+  </div>
+{% endfor %}

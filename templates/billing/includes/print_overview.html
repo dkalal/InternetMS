@@ -1,0 +1,41 @@
+{% load humanize %}
+<section class="section no-break">
+  <div class="panel quote-panel quote-overview-panel">
+    <div class="panel-head">
+      {% if document.document_type == "receipt" %}
+        Received From
+      {% else %}
+        Bill To
+      {% endif %}
+    </div>
+    <div class="panel-body">
+      <div class="quote-bill-grid{% if document.document_type == 'receipt' %} extended{% endif %}">
+        <div class="quote-bill-main">
+          <h3 class="quote-bill-name">{{ document.customer.name }}</h3>
+          {{ document.customer.address }}
+          {% comment %} <p>
+            {% if document.customer.address %}
+              {{ document.customer.address }}
+            {% else %}
+              Address not provided.
+            {% endif %}
+          </p> {% endcomment %}
+        </div>
+        <div class="quote-bill-meta">
+          <span class="quote-bill-label">TIN</span>
+          <span class="quote-bill-meta-value">{{ document.customer.tin_number|default:"-" }}</span>
+        </div>
+        <div class="quote-bill-meta">
+          <span class="quote-bill-label">VRN</span>
+          <span class="quote-bill-meta-value">{{ document.customer.vrn_number|default:"-" }}</span>
+        </div>
+        {% if document.document_type == "receipt" %}
+          <div class="quote-bill-meta">
+            <span class="quote-bill-label">Method</span>
+            <span class="quote-bill-meta-value">{{ document.payment_method|default:"-" }}</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>

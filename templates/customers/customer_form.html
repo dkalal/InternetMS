@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mx-auto w-full max-w-6xl space-y-5">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <div class="text-sm text-slate-500">
+                <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
+                {% if form.instance.pk %}
+                    <span class="px-1">/</span>
+                    <a class="hover:underline" href="{{ form.instance.get_absolute_url }}">{{ form.instance.name }}</a>
+                    <span class="px-1">/</span>
+                    <span class="text-slate-700">Edit</span>
+                {% endif %}
+            </div>
+            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+                {% if form.instance.pk %}Edit customer{% else %}New customer{% endif %}
+            </h1>
+            <p class="mt-1 text-sm text-slate-600">Update profile, account state, service data, and billing identifiers in one pass.</p>
+        </div>
+        <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            Back
+        </a>
+    </div>
+
+    <form method="post" class="space-y-5" data-customer-form>
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <div class="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                {% for error in form.non_field_errors %}
+                    <div>{{ error }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% if internet_form.non_field_errors %}
+            <div class="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                {% for error in internet_form.non_field_errors %}
+                    <div>{{ error }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div class="border-b border-slate-200 px-5 py-4">
+                <h2 class="text-sm font-semibold text-slate-900">Customer essentials</h2>
+                <p class="mt-1 text-sm text-slate-600">The minimum information needed to identify and govern the customer account.</p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 p-5 lg:grid-cols-12">
+                <div class="lg:col-span-5">
+                    {% include "components/form_field.html" with field=form.name %}
+                </div>
+                <div class="lg:col-span-3">
+                    {% include "components/form_field.html" with field=form.customer_type %}
+                </div>
+                <div class="lg:col-span-2">
+                    {% include "components/form_field.html" with field=form.status %}
+                </div>
+                <div class="lg:col-span-2">
+                    {% include "components/form_field.html" with field=form.pricing_tier %}
+                </div>
+                <div id="status-reason-panel" class="hidden lg:col-span-12 rounded-md border border-amber-200 bg-amber-50 p-4">
+                    <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-amber-950">Status change reason</h3>
+                            <p class="text-sm text-amber-900">Required for auditability whenever this customer status changes.</p>
+                        </div>
+                        {% if form.instance.pk %}
+                            <span class="text-xs font-medium text-amber-900">Current: {{ form.instance.get_status_display }}</span>
+                        {% endif %}
+                    </div>
+                    {% include "components/form_field.html" with field=form.status_change_reason %}
+                </div>
+            </div>
+        </section>
+
+        <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <section class="rounded-lg border border-slate-200 bg-white shadow-sm lg:col-span-2">
+                <div class="border-b border-slate-200 px-5 py-4">
+                    <h2 class="text-sm font-semibold text-slate-900">Contact and network</h2>
+                    <p class="mt-1 text-sm text-slate-600">Communication details and service addressing kept compact for faster editing.</p>
+                </div>
+                <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+                    {% include "components/form_field.html" with field=form.email %}
+                    {% include "components/form_field.html" with field=form.phone %}
+                    <div class="md:col-span-2">
+                        {% include "components/form_field.html" with field=form.address %}
+                    </div>
+                    {% include "components/form_field.html" with field=form.location %}
+                    {% include "components/form_field.html" with field=form.ip_address %}
+                    {% include "components/form_field.html" with field=form.vlan_id %}
+                    {% include "components/form_field.html" with field=form.tin_number %}
+                    <div class="md:col-span-2">
+                        {% include "components/form_field.html" with field=form.vrn_number %}
+                    </div>
+                </div>
+            </section>
+
+            <aside class="space-y-5">
+                <section id="internet-section" class="rounded-lg border border-slate-200 bg-white shadow-sm {% if form.customer_type.value != 'internet' %}hidden{% endif %}">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Internet service</h2>
+                        <p class="mt-1 text-sm text-slate-600">Subscription configuration.</p>
+                    </div>
+                    <div class="space-y-4 p-5">
+                        {% include "components/form_field.html" with field=internet_form.package_type %}
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                            {% include "components/form_field.html" with field=internet_form.start_date %}
+                            {% include "components/form_field.html" with field=internet_form.end_date %}
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Service packages</h2>
+                        <p class="mt-1 text-sm text-slate-600">Assign active packages for this customer.</p>
+                    </div>
+                    <div class="max-h-72 overflow-y-auto p-5">
+                        {% include "components/form_field.html" with field=form.packages %}
+                    </div>
+                </section>
+            </aside>
+        </div>
+
+        <div class="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:bg-white">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-sm text-slate-600">Status changes are written to the audit trail with the reason you provide.</p>
+                <div class="flex items-center justify-end gap-3">
+                    <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                        Cancel
+                    </a>
+                    <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                        Save customer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var typeSelect = document.getElementById('customer-type-select');
+    var internetSection = document.getElementById('internet-section');
+    var statusSelect = document.getElementById('id_status');
+    var reasonPanel = document.getElementById('status-reason-panel');
+    var reasonInput = document.getElementById('id_status_change_reason');
+    var originalStatus = '{{ form.original_status|default_if_none:"" }}';
+
+    function syncInternetSection() {
+      if (!typeSelect || !internetSection) return;
+      internetSection.classList.toggle('hidden', typeSelect.value !== 'internet');
+    }
+
+    function syncStatusReason() {
+      if (!statusSelect || !reasonPanel || !reasonInput || !originalStatus) return;
+      var changed = statusSelect.value !== originalStatus;
+      reasonPanel.classList.toggle('hidden', !changed);
+      reasonInput.required = changed;
+      if (!changed) {
+        reasonInput.value = '';
+      }
+    }
+
+    if (typeSelect) typeSelect.addEventListener('change', syncInternetSection);
+    if (statusSelect) statusSelect.addEventListener('change', syncStatusReason);
+    syncInternetSection();
+    syncStatusReason();
+  })();
+</script>
+{% endblock %}

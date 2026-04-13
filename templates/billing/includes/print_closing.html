@@ -1,0 +1,69 @@
+{% load humanize %}
+<section class="section">
+  <div class="bottom-grid quotation-bottom-grid">
+    <div class="bottom-col payment-col">
+      <div class="panel no-break quotation-payment-panel">
+        <div class="panel-head green">Payment Details</div>
+        <div class="panel-body">
+          {% if ACTIVE_BRANDING and ACTIVE_BRANDING.bank_details %}
+            <p class="notes-copy">{{ ACTIVE_BRANDING.bank_details }}</p>
+          {% else %}
+            <div class="payment-grid">
+              <div class="payment-row">
+                <div class="payment-label">Bank Name</div>
+                <div class="payment-value">Not configured</div>
+              </div>
+              <div class="payment-row">
+                <div class="payment-label">Account</div>
+                <div class="payment-value">Add bank details in branding settings</div>
+              </div>
+            </div>
+          {% endif %}
+
+          <div class="small-tag-row">NOTE: Upon payment, please email us the transfer slip.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-col totals-col">
+      <div class="totals-card no-break quotation-totals-card">
+        <table class="totals-table">
+          <tr>
+            <td class="totals-label">Subtotal</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td>
+          </tr>
+          <tr>
+            <td class="totals-label">VAT ({{ document.tax_rate }}%)</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td>
+          </tr>
+          <tr class="grand-total">
+            <td>Total</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {% if document.document_type == "receipt" %}
+    {% if document.notes or document.payment_reference %}
+    <div class="section no-break closing-notes-section">
+      <div class="panel">
+        <div class="panel-head light">Notes</div>
+        <div class="panel-body">
+          <ul class="note-list compact">
+            {% if document.notes %}
+              <li>{{ document.notes }}</li>
+            {% else %}
+              <li>No additional notes provided.</li>
+            {% endif %}
+            {% if document.document_type == "receipt" and document.payment_reference %}
+              <li>Payment reference: <strong>{{ document.payment_reference }}</strong></li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  {% endif %}
+</section>

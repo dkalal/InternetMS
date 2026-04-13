@@ -1,0 +1,11 @@
+{% extends "billing/base_print.html" %}
+
+{% block print_title %}{{ document.get_document_type_display }} {{ document.number }}{% endblock %}
+
+{% block print_content %}
+  {% include "billing/includes/print_header.html" %}
+  {% include "billing/includes/print_overview.html" %}
+  {% include "billing/includes/print_items_table.html" %}
+  {% include "billing/includes/print_closing.html" %}
+  {% include "billing/includes/print_footer.html" %}
+{% endblock %}

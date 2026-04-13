@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Renew Subscription{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-3xl space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <div class="text-sm text-slate-500">
+        <a class="hover:underline" href="{{ subscription.customer.get_absolute_url }}">{{ subscription.customer.name }}</a>
+        <span class="px-1">/</span>
+        <span class="text-slate-700">Renew subscription</span>
+      </div>
+      <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Renew {{ subscription.package.name }}</h1>
+      <p class="mt-1 text-sm text-slate-600">Generate the monthly subscription period and invoice with eligible discounts applied.</p>
+    </div>
+    <a href="{{ subscription.customer.get_absolute_url }}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Back</a>
+  </div>
+
+  <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div>
+        <div class="text-xs text-slate-500">Monthly fee</div>
+        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">Paid through</div>
+        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.paid_through_date|date:"F d, Y"|default:"Not paid yet" }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">Status</div>
+        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.get_status_display }}</div>
+      </div>
+    </div>
+  </section>
+
+  <form method="post" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+        {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2">
+        {% include "components/form_field.html" with field=form.subscription %}
+      </div>
+      {% include "components/form_field.html" with field=form.period_start %}
+      {% include "components/form_field.html" with field=form.months %}
+      {% include "components/form_field.html" with field=form.promotion %}
+      {% include "components/form_field.html" with field=form.due_date %}
+      <div class="sm:col-span-2">
+        {% include "components/form_field.html" with field=form.issue_invoice %}
+      </div>
+    </div>
+    <div class="mt-5 flex items-center justify-end gap-3">
+      <a href="{{ subscription.customer.get_absolute_url }}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</a>
+      <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Renew and invoice</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

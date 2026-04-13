@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Promotions{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">Promotions</h1>
+      <p class="mt-1 text-sm text-slate-600">Create package discounts, product offers, wholesale rules, and subscription rewards.</p>
+    </div>
+    <a href="{% url 'billing:promotion_create' %}" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Add promotion</a>
+  </div>
+
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Name</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Applies to</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Condition</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Reward</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
+          <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-200">
+        {% for promotion in promotions %}
+          <tr>
+            <td class="px-4 py-3 font-medium text-slate-900">{{ promotion.name }}</td>
+            <td class="px-4 py-3 text-slate-700">
+              {{ promotion.get_applies_to_display }}
+              {% if promotion.package %}<div class="text-xs text-slate-500">{{ promotion.package.name }}</div>{% endif %}
+              {% if promotion.product %}<div class="text-xs text-slate-500">{{ promotion.product.name }}</div>{% endif %}
+            </td>
+            <td class="px-4 py-3 text-slate-700">
+              Min qty {{ promotion.minimum_quantity }} &middot; Min months {{ promotion.minimum_months }}
+            </td>
+            <td class="px-4 py-3 text-slate-700">{{ promotion.get_reward_type_display }}: {{ promotion.reward_value }}</td>
+            <td class="px-4 py-3">
+              {% if promotion.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <a href="{% url 'billing:promotion_update' promotion.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="px-4 py-10 text-center text-slate-500">No promotions yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

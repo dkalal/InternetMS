@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Log In{% endblock %}
+
+{% block content %}
+<div class="flex min-h-full items-center justify-center py-10">
+  <div class="w-full max-w-md">
+    <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">Log in</h1>
+      <p class="mt-1 text-sm text-slate-600">Welcome back to JS Internet Services.</p>
+
+      <form method="post" class="mt-6 space-y-4">
+        {% csrf_token %}
+        {% include "components/form.html" with form=form %}
+        <button type="submit" class="inline-flex w-full items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+          Log In
+        </button>
+      </form>
+
+      <div class="mt-6 text-sm text-slate-600">
+        <div class="flex items-center justify-between">
+          <a class="text-brand-700 hover:underline" href="{% url 'register' %}">Create account</a>
+          <a class="text-slate-700 hover:underline" href="{% url 'password_reset' %}">Forgot password?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
