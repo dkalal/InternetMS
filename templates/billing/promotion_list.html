@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load listing_tags %}
 
 {% block title %}Promotions{% endblock %}
 
@@ -12,49 +13,111 @@
     <a href="{% url 'billing:promotion_create' %}" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Add promotion</a>
   </div>
 
+  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <form method="get" class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+      <input type="hidden" name="sort" value="{{ active_sort }}">
+      <input type="hidden" name="page_size" value="{{ page_size }}">
+      <div class="lg:col-span-3">
+        <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
+        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Name, product, package..." class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+      </div>
+      <div class="lg:col-span-2">
+        <label for="is_active" class="block text-sm font-medium text-slate-700">Status</label>
+        <select id="is_active" name="is_active" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any status</option>
+          <option value="1" {% if request.GET.is_active == "1" %}selected{% endif %}>Active</option>
+          <option value="0" {% if request.GET.is_active == "0" %}selected{% endif %}>Inactive</option>
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label for="applies_to" class="block text-sm font-medium text-slate-700">Applies to</label>
+        <select id="applies_to" name="applies_to" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any target</option>
+          {% for value,label in applies_to_choices %}
+            <option value="{{ value }}" {% if request.GET.applies_to == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label for="reward_type" class="block text-sm font-medium text-slate-700">Reward</label>
+        <select id="reward_type" name="reward_type" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any reward</option>
+          {% for value,label in reward_type_choices %}
+            <option value="{{ value }}" {% if request.GET.reward_type == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="lg:col-span-1">
+        <label for="validity" class="block text-sm font-medium text-slate-700">Validity</label>
+        <select id="validity" name="validity" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any</option>
+          <option value="current" {% if request.GET.validity == "current" %}selected{% endif %}>Current</option>
+          <option value="scheduled" {% if request.GET.validity == "scheduled" %}selected{% endif %}>Scheduled</option>
+          <option value="expired" {% if request.GET.validity == "expired" %}selected{% endif %}>Expired</option>
+        </select>
+      </div>
+      <div class="flex gap-2 lg:col-span-2">
+        <button class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Apply</button>
+        <a href="{% url 'billing:promotion_list' %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</a>
+      </div>
+    </form>
+  </section>
+
   <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-    <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
-        <tr>
-          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Name</th>
-          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Applies to</th>
-          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Condition</th>
-          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Reward</th>
-          <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
-          <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-200">
-        {% for promotion in promotions %}
+    <div class="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
+      Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>-<span class="font-semibold text-slate-900">{{ end_index }}</span>
+      of <span class="font-semibold text-slate-900">{{ result_count }}</span> promotions
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200 text-sm">
+        <thead class="bg-slate-50">
           <tr>
-            <td class="px-4 py-3 font-medium text-slate-900">{{ promotion.name }}</td>
-            <td class="px-4 py-3 text-slate-700">
-              {{ promotion.get_applies_to_display }}
-              {% if promotion.package %}<div class="text-xs text-slate-500">{{ promotion.package.name }}</div>{% endif %}
-              {% if promotion.product %}<div class="text-xs text-slate-500">{{ promotion.product.name }}</div>{% endif %}
-            </td>
-            <td class="px-4 py-3 text-slate-700">
-              Min qty {{ promotion.minimum_quantity }} &middot; Min months {{ promotion.minimum_months }}
-            </td>
-            <td class="px-4 py-3 text-slate-700">{{ promotion.get_reward_type_display }}: {{ promotion.reward_value }}</td>
-            <td class="px-4 py-3">
-              {% if promotion.is_active %}
-                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
-              {% else %}
-                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
-              {% endif %}
-            </td>
-            <td class="px-4 py-3 text-right">
-              <a href="{% url 'billing:promotion_update' promotion.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
-            </td>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Name" sort_key="name" desc_sort_key="-name" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Applies to" sort_key="applies_to" desc_sort_key="-applies_to" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Condition</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Reward</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Valid until" sort_key="valid_until" desc_sort_key="-valid_until" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Status" sort_key="status" desc_sort_key="-status" %}</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
           </tr>
-        {% empty %}
-          <tr>
-            <td colspan="6" class="px-4 py-10 text-center text-slate-500">No promotions yet.</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% for promotion in promotions %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 font-medium text-slate-900">{{ promotion.name }}</td>
+              <td class="px-4 py-3 text-slate-700">
+                {{ promotion.get_applies_to_display }}
+                {% if promotion.package %}<div class="text-xs text-slate-500">{{ promotion.package.name }}</div>{% endif %}
+                {% if promotion.product %}<div class="text-xs text-slate-500">{{ promotion.product.name }}</div>{% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-700">Min qty {{ promotion.minimum_quantity }} &middot; Min months {{ promotion.minimum_months }}</td>
+              <td class="px-4 py-3 text-slate-700">{{ promotion.get_reward_type_display }}: {{ promotion.reward_value }}</td>
+              <td class="px-4 py-3 text-slate-700">
+                <div>{{ promotion.valid_from|date:"d M Y"|default:"No start" }}</div>
+                <div class="text-xs text-slate-500">to {{ promotion.valid_until|date:"d M Y"|default:"No end" }}</div>
+              </td>
+              <td class="px-4 py-3">
+                {% if promotion.list_status == "active" %}
+                  <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+                {% elif promotion.list_status == "scheduled" %}
+                  <span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">Scheduled</span>
+                {% elif promotion.list_status == "expired" %}
+                  <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">Expired</span>
+                {% else %}
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a href="{% url 'billing:promotion_update' promotion.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="px-4 py-10 text-center text-slate-500">No promotions found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include "components/list_pagination.html" %}
   </div>
 </div>
 {% endblock %}

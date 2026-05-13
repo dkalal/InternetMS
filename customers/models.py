@@ -99,6 +99,9 @@ class Customer(models.Model):
             models.Index(fields=['name', 'customer_type']),
             models.Index(fields=['status', 'customer_type']),
             models.Index(fields=['email']),
+            models.Index(fields=['organization', 'phone'], name="customers_org_phone_idx"),
+            models.Index(fields=['organization', 'ip_address'], name="customers_org_ip_idx"),
+            models.Index(fields=['organization', 'vlan_id'], name="customers_org_vlan_idx"),
         ]
         verbose_name = 'Customer'
         verbose_name_plural = 'Customers'

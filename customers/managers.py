@@ -50,6 +50,9 @@ class CustomerQuerySet(models.QuerySet):
             Q(email__icontains=query) |
             Q(phone__icontains=query) |
             Q(location__icontains=query) |
+            Q(ip_address__icontains=query) |
+            Q(vlan_id__icontains=query) |
+            Q(packages__name__icontains=query) |
             Q(tin_number__icontains=query) |
             Q(vrn_number__icontains=query)
         )

@@ -1,0 +1,131 @@
+{% extends "billing/base_print_tra.html" %}
+{% load humanize %}
+
+{% block print_title %}LEGAL RECEIPT {{ document.number }}{% endblock %}
+
+{% block print_content %}
+  <div class="center" style="margin-bottom: 6px;">
+    {% if LOGO_DATA_URI %}
+      <img src="{{ LOGO_DATA_URI }}" alt="Logo" style="max-width: 120px; max-height: 60px; margin: 0 auto 6px; display: block;" />
+    {% endif %}
+
+    <!-- <div style="font-weight: 800; text-transform: uppercase;">
+      {% if ACTIVE_BRANDING and ACTIVE_BRANDING.legal_name %}
+        {{ ACTIVE_BRANDING.legal_name }}
+      {% else %}
+        {{ document.organization.name|default:"" }}
+      {% endif %}
+    </div> -->
+
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+      <div class="small">{{ ACTIVE_BRANDING.address_line1 }}</div>
+    {% endif %}
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}
+      <div class="small">{{ ACTIVE_BRANDING.address_line2 }}</div>
+    {% endif %}
+    {% if COMPANY_ADDRESS and not ACTIVE_BRANDING.address_line1 and not ACTIVE_BRANDING.address_line2 %}
+      <div class="small">{{ COMPANY_ADDRESS }}</div>
+    {% endif %}
+
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}
+      <div class="small">MOBILE: {{ ACTIVE_BRANDING.phone }}</div>
+    {% elif COMPANY_PHONE %}
+      <div class="small">MOBILE: {{ COMPANY_PHONE }}</div>
+    {% endif %}
+
+    <!-- {% if ACTIVE_BRANDING and ACTIVE_BRANDING.email %}
+      <div class="small">{{ ACTIVE_BRANDING.email }}</div>
+    {% elif CONTACT_EMAIL %}
+      <div class="small">{{ CONTACT_EMAIL }}</div>
+    {% endif %} -->
+
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.tin_number %}
+      <div class="small">TIN: <span class="nowrap">{{ ACTIVE_BRANDING.tin_number }}</span></div>
+    {% endif %}
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.vrn_number %}
+      <div class="small">VRN: <span class="nowrap">{{ ACTIVE_BRANDING.vrn_number }}</span></div>
+    {% endif %}
+  </div>
+
+  <div class="sep-solid"></div>
+
+  <table class="kvs">
+    <tr><td class="k">CUSTOMER NAME:</td><td class="v">{{ document.customer.name|default:"" }}</td></tr>
+    <!-- <tr><td class="k">CUSTOMER ID TYPE:</td><td class="v">{{ document.customer.id_type|default:"-" }}</td></tr>
+    <tr><td class="k">CUSTOMER ID:</td><td class="v">{{ document.customer.id_number|default:"-" }}</td></tr> -->
+    <tr><td class="k">CUSTOMER MOBILE:</td><td class="v">{{ document.customer.phone|default:"-" }}</td></tr>
+  </table>
+
+  <div class="sep"></div>
+
+  <table class="kvs">
+    <tr><td class="k">RECEIPT NO:</td><td class="v">{{ document.number }}</td></tr>
+    <tr><td class="k">RECEIPT DATE:</td><td class="v">{% if document.payment_date %}{{ document.payment_date|date:"Y-m-d" }}{% else %}{{ document.issue_date|date:"Y-m-d" }}{% endif %}</td></tr>
+    <tr><td class="k">RECEIPT TIME:</td><td class="v">{{ document.created_at|date:"H:i:s" }}</td></tr>
+  </table>
+
+  <div class="sep-solid"></div>
+
+  <div style="font-weight: 800; margin-bottom: 4px;">Purchased Items</div>
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="desc">Description</th>
+        <th class="qty">Qty</th>
+        <th class="amt">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="desc">
+            {% if item.package %}
+              {{ item.package.name }}
+            {% elif item.product %}
+              {{ item.product.name }}
+            {% elif item.description %}
+              {{ item.description }}
+            {% else %}
+              Item {{ forloop.counter }}
+            {% endif %}
+          </td>
+          <td class="qty">{{ item.quantity }}</td>
+          <td class="amt">{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="3">No items.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="sep-solid"></div>
+
+  <table class="totals">
+    <tr>
+      <td class="label">TOTAL EXCL OF TAX:</td>
+      <td class="value">{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td>
+    </tr>
+    <tr>
+      <td class="label">TOTAL TAX ({{ document.tax_rate }}%):</td>
+      <td class="value">{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td>
+    </tr>
+    <tr>
+      <td class="label total-strong">TOTAL INCL OF TAX:</td>
+      <td class="value total-strong">{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td>
+    </tr>
+  </table>
+
+  <div class="sep"></div>
+
+  <div class="center" style="font-weight: 800;">RECEIPT VERIFICATION CODE</div>
+  <div class="center" style="margin-top: 4px; font-weight: 800;">
+    {% if document.payment_reference %}
+      {{ document.payment_reference }}
+    {% else %}
+      {{ document.number }}
+    {% endif %}
+  </div>
+{% endblock %}

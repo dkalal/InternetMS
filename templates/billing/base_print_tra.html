@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block print_title %}RECEIPT {{ document.number }}{% endblock %}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      color: #000000;
+      font-family: "Courier New", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      font-size: 10.5px;
+      line-height: 1.25;
+    }
+
+    .paper {
+      width: 80mm;
+      padding: 4mm;
+      margin: 0 auto;
+    }
+
+    @media print {
+      body {
+        width: 80mm;
+        margin: 0 auto;
+      }
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .sep {
+      margin: 7px 0;
+      border-top: 1px dashed #000;
+      height: 0;
+    }
+
+    .sep-solid {
+      margin: 7px 0;
+      border-top: 1px solid #000;
+      height: 0;
+    }
+
+    .kvs {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .kvs td {
+      padding: 1px 0;
+      vertical-align: top;
+    }
+
+    .k {
+      width: 48%;
+    }
+
+    .v {
+      width: 52%;
+      text-align: right;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .items {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .items th,
+    .items td {
+      padding: 2px 0;
+      vertical-align: top;
+    }
+
+    .items th {
+      font-weight: 700;
+      border-bottom: 1px solid #000;
+    }
+
+    .items .qty {
+      text-align: right;
+      width: 18%;
+      padding-left: 6px;
+    }
+
+    .items .amt {
+      text-align: right;
+      width: 28%;
+      padding-left: 6px;
+    }
+
+    .items .desc {
+      width: 54%;
+      padding-right: 6px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .totals {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .totals td {
+      padding: 2px 0;
+    }
+
+    .totals .label {
+      width: 60%;
+    }
+
+    .totals .value {
+      width: 40%;
+      text-align: right;
+    }
+
+    .total-strong {
+      font-weight: 800;
+      border-top: 1px solid #000;
+      padding-top: 4px;
+    }
+
+    .small {
+      font-size: 10px;
+    }
+
+    .qr-wrap {
+      margin-top: 10px;
+    }
+
+    .qr {
+      display: block;
+      width: 160px;
+      height: 160px;
+      margin: 0 auto;
+      border: 1px solid #000;
+    }
+
+    .legal-line {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .nowrap {
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="paper">
+    {% block print_content %}{% endblock %}
+  </div>
+</body>
+</html>

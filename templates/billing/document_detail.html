@@ -13,6 +13,14 @@
       </p>
     </div>
     <div class="flex flex-wrap items-center gap-2">
+      {% if document.document_type == "invoice" %}
+        {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=document.customer whatsapp_doc_type=document.document_type whatsapp_doc_id=document.id whatsapp_category="invoice" %}
+      {% elif document.document_type == "quotation" %}
+        {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=document.customer whatsapp_doc_type=document.document_type whatsapp_doc_id=document.id whatsapp_category="quotation" %}
+      {% elif document.document_type == "receipt" %}
+        {% url 'billing:document_pdf' doc_type=document.document_type pk=document.id as receipt_pdf_url %}
+        {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=document.customer whatsapp_doc_type=document.document_type whatsapp_doc_id=document.id whatsapp_category="receipt" whatsapp_pdf_url=receipt_pdf_url %}
+      {% endif %}
       <a href="{% url 'billing:document_pdf' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Download PDF</a>
       {% if document.document_type == 'quotation' %}
         <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit quotation</a>
@@ -27,7 +35,10 @@
       {% if document.document_type == 'invoice' and not has_receipt %}
         <a href="{% url 'billing:create_receipt_from_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create receipt</a>
       {% endif %}
-      {% if document.document_type == 'invoice' and invoice_locked %}
+      {% if can_resolve_subscription_issue %}
+        <a href="{% url 'billing:resolve_subscription_invoice_issue' period_id=linked_subscription_period.id %}" class="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100">Resolve issue</a>
+      {% endif %}
+      {% if document.document_type == 'invoice' and invoice_locked and not linked_subscription_period %}
         <form method="post" action="{% url 'billing:cancel_invoice' pk=document.id %}">
           {% csrf_token %}
           <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
@@ -40,9 +51,33 @@
           {% csrf_token %}
           <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</button>
         </form>
+      {% elif document.document_type == 'invoice' and invoice_locked and linked_subscription_period and has_receipt %}
+        <form method="post" action="{% url 'billing:create_credit_note' pk=document.id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</button>
+        </form>
       {% endif %}
     </div>
   </div>
+
+  {% if linked_subscription_period %}
+    <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-slate-900">Linked subscription period</div>
+          <p class="mt-1 text-sm text-slate-600">
+            {{ linked_subscription_period.subscription.package.name }} for {{ linked_subscription_period.period_start|date:"M Y" }}
+            &middot; {{ linked_subscription_period.get_status_display }}
+          </p>
+        </div>
+        {% if can_resolve_subscription_issue %}
+          <a href="{% url 'billing:resolve_subscription_invoice_issue' period_id=linked_subscription_period.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
+            Fix mistaken invoice
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
 
   <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
     <div class="lg:col-span-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

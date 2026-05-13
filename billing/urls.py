@@ -9,6 +9,7 @@ urlpatterns = [
     path("promotions/create/", views.PromotionCreateView.as_view(), name="promotion_create"),
     path("promotions/<int:pk>/edit/", views.PromotionUpdateView.as_view(), name="promotion_update"),
     path("subscription/<int:subscription_id>/renew/", views.renew_subscription, name="renew_subscription"),
+    path("subscription-period/<int:period_id>/resolve-issue/", views.resolve_subscription_invoice_issue, name="resolve_subscription_invoice_issue"),
     path("<str:doc_type>/", views.document_list, name="document_list"),
     path("<str:doc_type>/create/", views.document_create, name="document_create"),
     path("<str:doc_type>/<int:pk>/", views.document_detail, name="document_detail"),

@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% load humanize %}
+{% load listing_tags %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
 
@@ -14,16 +16,115 @@
     </a>
   </div>
 
+  {% if doc_type == "invoice" %}
+    <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="flex flex-wrap gap-2">
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}?worklist=unpaid" class="rounded-full px-3 py-2 text-sm font-semibold {% if request.GET.worklist == 'unpaid' %}bg-rose-700 text-white{% else %}bg-rose-50 text-rose-700 hover:bg-rose-100{% endif %}">Unpaid {{ invoice_worklists.unpaid }}</a>
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}?worklist=overdue" class="rounded-full px-3 py-2 text-sm font-semibold {% if request.GET.worklist == 'overdue' %}bg-amber-700 text-white{% else %}bg-amber-50 text-amber-800 hover:bg-amber-100{% endif %}">Overdue {{ invoice_worklists.overdue }}</a>
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}?worklist=draft" class="rounded-full px-3 py-2 text-sm font-semibold {% if request.GET.worklist == 'draft' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">Draft {{ invoice_worklists.draft }}</a>
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}?worklist=paid_month" class="rounded-full px-3 py-2 text-sm font-semibold {% if request.GET.worklist == 'paid_month' %}bg-emerald-700 text-white{% else %}bg-emerald-50 text-emerald-700 hover:bg-emerald-100{% endif %}">Paid this month {{ invoice_worklists.paid_month }}</a>
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="rounded-full bg-white px-3 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">All</a>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <form method="get" class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+      {% if request.GET.worklist %}<input type="hidden" name="worklist" value="{{ request.GET.worklist }}">{% endif %}
+      <input type="hidden" name="sort" value="{{ active_sort }}">
+      <input type="hidden" name="page_size" value="{{ page_size }}">
+
+      <div class="lg:col-span-3">
+        <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
+        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Number, customer, invoice, reference..." class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      </div>
+      <div class="lg:col-span-2">
+        <label for="customer" class="block text-sm font-medium text-slate-700">Customer</label>
+        <select id="customer" name="customer" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">All customers</option>
+          {% for customer in customer_catalog %}
+            <option value="{{ customer.id }}" {% if request.GET.customer == customer.id|stringformat:"s" %}selected{% endif %}>{{ customer.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label for="status" class="block text-sm font-medium text-slate-700">Status</label>
+        <select id="status" name="status" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any status</option>
+          {% for value,label in status_choices %}
+            <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label for="date_from" class="block text-sm font-medium text-slate-700">{% if doc_type == "receipt" %}Payment from{% else %}Issue from{% endif %}</label>
+        <input type="date" id="date_from" name="date_from" value="{{ request.GET.date_from }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+      </div>
+      <div class="lg:col-span-2">
+        <label for="date_to" class="block text-sm font-medium text-slate-700">{% if doc_type == "receipt" %}Payment to{% else %}Issue to{% endif %}</label>
+        <input type="date" id="date_to" name="date_to" value="{{ request.GET.date_to }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+      </div>
+      <div class="flex gap-2 lg:col-span-1">
+        <button class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Apply</button>
+      </div>
+
+      {% if doc_type != "quotation" %}
+        <div class="lg:col-span-2">
+          <label for="due_from" class="block text-sm font-medium text-slate-700">Due from</label>
+          <input type="date" id="due_from" name="due_from" value="{{ request.GET.due_from }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+        </div>
+        <div class="lg:col-span-2">
+          <label for="due_to" class="block text-sm font-medium text-slate-700">Due to</label>
+          <input type="date" id="due_to" name="due_to" value="{{ request.GET.due_to }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+        </div>
+      {% endif %}
+      <div class="lg:col-span-2">
+        <label for="min_total" class="block text-sm font-medium text-slate-700">Min total</label>
+        <input id="min_total" name="min_total" value="{{ request.GET.min_total }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+      </div>
+      <div class="lg:col-span-2">
+        <label for="max_total" class="block text-sm font-medium text-slate-700">Max total</label>
+        <input id="max_total" name="max_total" value="{{ request.GET.max_total }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+      </div>
+      {% if doc_type == "receipt" %}
+        <div class="lg:col-span-2">
+          <label for="payment_method" class="block text-sm font-medium text-slate-700">Payment method</label>
+          <input id="payment_method" name="payment_method" value="{{ request.GET.payment_method }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+        </div>
+      {% endif %}
+      {% if doc_type == "quotation" %}
+        <label class="flex items-center gap-2 text-sm text-slate-700 lg:col-span-2">
+          <input type="checkbox" name="include_history" value="1" {% if request.GET.include_history == "1" %}checked{% endif %} class="rounded border-slate-300 text-brand-600">
+          Include history
+        </label>
+      {% endif %}
+      <div class="lg:col-span-2">
+        <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</a>
+      </div>
+    </form>
+  </section>
+
   <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
+      Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>-<span class="font-semibold text-slate-900">{{ end_index }}</span>
+      of <span class="font-semibold text-slate-900">{{ result_count }}</span> {{ doc_type_display|lower }}
+    </div>
     <div class="overflow-x-auto">
       <table class="min-w-full divide-y divide-slate-200">
         <thead class="bg-slate-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Number</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Customer</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Issue Date</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Total</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Number" sort_key="number" desc_sort_key="-number" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Customer" sort_key="customer" desc_sort_key="-customer" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Date" sort_key="date" desc_sort_key="-date" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Status" sort_key="status" desc_sort_key="-status" %}</th>
+            {% if doc_type == "invoice" %}
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Due" sort_key="due" desc_sort_key="-due" %}</th>
+            {% elif doc_type == "receipt" %}
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Payment</th>
+            {% elif doc_type == "quotation" %}
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Version</th>
+            {% endif %}
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Total" sort_key="-total" desc_sort_key="total" %}</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
           </tr>
         </thead>
@@ -33,18 +134,46 @@
               <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ document.number }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ document.customer.name }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ document.issue_date|date:"d M Y" }}</td>
-              <td class="px-4 py-3 text-sm text-slate-700">{{ document.get_status_display }}</td>
-              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ document.total }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ document.get_status_display }}</span>
+              </td>
+              {% if doc_type == "invoice" %}
+                <td class="px-4 py-3 text-sm text-slate-700">{{ document.due_date|date:"d M Y"|default:"-" }}</td>
+              {% elif doc_type == "receipt" %}
+                <td class="px-4 py-3 text-sm text-slate-700">
+                  <div>{{ document.payment_date|date:"d M Y"|default:"-" }}</div>
+                  <div class="text-xs text-slate-500">{{ document.payment_method|default:"Payment method not set" }}</div>
+                  {% if document.payment_reference %}<div class="text-xs text-slate-500">{{ document.payment_reference }}</div>{% endif %}
+                  {% if document.invoice %}<div class="text-xs text-slate-500">Invoice {{ document.invoice.number }}</div>{% endif %}
+                </td>
+              {% elif doc_type == "quotation" %}
+                <td class="px-4 py-3 text-sm text-slate-700">
+                  v{{ document.version_number }}
+                  {% if document.is_current_version %}<span class="ml-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Current</span>{% endif %}
+                </td>
+              {% endif %}
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ document.total|intcomma }}</td>
               <td class="px-4 py-3 text-right text-sm">
-                <div class="inline-flex items-center gap-2">
+                <div class="inline-flex flex-wrap items-center justify-end gap-2">
                   <a href="{% url 'billing:document_detail' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
                   <a href="{% url 'billing:document_pdf' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">PDF</a>
+                  {% if doc_type == "quotation" and document.is_current_version %}
+                    <a href="{% url 'billing:document_edit' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">New version</a>
+                    <form method="post" action="{% url 'billing:create_invoice_from_quotation' document.id %}">
+                      {% csrf_token %}
+                      <button class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Invoice</button>
+                    </form>
+                  {% elif doc_type == "invoice" %}
+                    {% if document.status != "paid" and document.status != "cancelled" and document.status != "reissued" %}
+                      <a href="{% url 'billing:create_receipt_from_invoice' document.id %}" class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Receipt</a>
+                    {% endif %}
+                  {% endif %}
                 </div>
               </td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-500">No {{ doc_type_display|lower }} yet.</td>
+              <td colspan="7" class="px-4 py-10 text-center text-sm text-slate-500">No {{ doc_type_display|lower }} yet.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -52,22 +181,6 @@
     </div>
   </div>
 
-  {% if is_paginated %}
-    <nav class="flex items-center justify-center gap-2" aria-label="Pagination">
-      {% if page_obj.has_previous %}
-        <a href="?page={{ page_obj.previous_page_number }}" class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Previous</a>
-      {% else %}
-        <span class="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400">Previous</span>
-      {% endif %}
-
-      <span class="text-sm text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
-
-      {% if page_obj.has_next %}
-        <a href="?page={{ page_obj.next_page_number }}" class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Next</a>
-      {% else %}
-        <span class="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400">Next</span>
-      {% endif %}
-    </nav>
-  {% endif %}
+  {% include "components/list_pagination.html" %}
 </div>
 {% endblock %}

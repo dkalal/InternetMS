@@ -29,6 +29,7 @@
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
+            {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=customer whatsapp_category="general" %}
             <a href="{% url 'customer-list' %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 Back
             </a>
@@ -100,7 +101,7 @@
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Package</th>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Amount</th>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
-                            <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Document</th>
+                            <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Document and actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200">
@@ -125,7 +126,25 @@
                                 </td>
                                 <td class="px-3 py-2 text-right">
                                     {% if period.invoice %}
-                                        <a class="font-medium text-slate-700 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=period.invoice.id %}">{{ period.invoice.number }}</a>
+                                        <div>
+                                            <a class="font-medium text-slate-700 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=period.invoice.id %}">{{ period.invoice.number }}</a>
+                                        </div>
+                                        <div class="mt-2 flex flex-wrap justify-end gap-2">
+                                            {% if period.status == 'invoiced' or period.status == 'overdue' %}
+                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:create_receipt_from_invoice' pk=period.invoice.id %}">
+                                                    Register payment
+                                                </a>
+                                                <a class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100" href="{% url 'billing:resolve_subscription_invoice_issue' period_id=period.id %}">
+                                                    Resolve issue
+                                                </a>
+                                            {% elif period.status == 'paid' and period.receipt %}
+                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:document_detail' doc_type='receipt' pk=period.receipt.id %}">
+                                                    View receipt
+                                                </a>
+                                            {% elif period.status == 'cancelled' %}
+                                                <span class="text-xs text-slate-500">Cancelled for audit</span>
+                                            {% endif %}
+                                        </div>
                                     {% else %}
                                         <span class="text-slate-400">&mdash;</span>
                                     {% endif %}

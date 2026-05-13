@@ -1,0 +1,11 @@
+{% load listing_tags %}
+
+{% sort_url sort_key as target_url %}
+<a href="{{ target_url }}" class="inline-flex items-center gap-1 hover:text-slate-900">
+  {{ label }}
+  {% if active_sort == sort_key %}
+    <span aria-hidden="true">↑</span>
+  {% elif active_sort == desc_sort_key %}
+    <span aria-hidden="true">↓</span>
+  {% endif %}
+</a>

@@ -14,6 +14,7 @@ class PermissionCode:
     CUSTOMER_ARCHIVE = "customer.archive"
     BILLING_CREATE = "billing.create"
     PAYMENT_REGISTER = "payment.register"
+    WHATSAPP_SEND = "whatsapp.send"
     USER_MANAGE = "user.manage"
     BILLING_SETTINGS_CHANGE = "billing.settings.change"
     TENANT_MANAGE = "tenant.manage"
@@ -39,6 +40,7 @@ ROLE_PERMISSIONS: tuple[RolePermissionMap, ...] = (
             PermissionCode.CUSTOMER_ARCHIVE,
             PermissionCode.BILLING_CREATE,
             PermissionCode.PAYMENT_REGISTER,
+            PermissionCode.WHATSAPP_SEND,
             PermissionCode.USER_MANAGE,
             PermissionCode.BILLING_SETTINGS_CHANGE,
         },
@@ -50,6 +52,7 @@ ROLE_PERMISSIONS: tuple[RolePermissionMap, ...] = (
             PermissionCode.CUSTOMER_CREATE,
             PermissionCode.BILLING_CREATE,
             PermissionCode.PAYMENT_REGISTER,
+            PermissionCode.WHATSAPP_SEND,
         },
     ),
 )

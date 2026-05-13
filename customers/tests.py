@@ -13,6 +13,7 @@ from customers.models import Customer
 from customers.forms import CustomerForm
 from customers.services import CustomerService, CustomerServiceError
 from products.models import Product
+from services.models import Package
 from users.models import Organization, UserAccessProfile
 
 
@@ -239,6 +240,43 @@ class CustomerRBACIsolationTests(TestCase):
         customers = list(response.context["customers"])
         self.assertEqual(len(customers), 1)
         self.assertEqual(customers[0].id, self.customer_a.id)
+
+    def test_customer_list_searches_package_and_preserves_page_size(self):
+        package = Package.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Fiber Ultra",
+            package_type="indoor",
+            speed="50 Mbps",
+            monthly_fee=Decimal("100000.00"),
+            setup_fee=Decimal("0.00"),
+            description="Fast internet",
+        )
+        self.customer_a.packages.add(package)
+        for index in range(30):
+            Customer.all_objects.create(
+                organization=self.org1,
+                tenant=self.org1,
+                name=f"Extra {index:02d}",
+                customer_type="internet",
+                status=Customer.Status.ACTIVE,
+                location="Moshi",
+            )
+
+        self.client.login(username="staff", password="pass")
+        response = self.client.get(reverse("customer-list"), {"search": "Fiber", "page_size": "25"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(list(response.context["customers"]), [self.customer_a])
+        self.assertContains(response, "page_size=25")
+
+    def test_customer_create_page_renders_professional_sections(self):
+        self.client.login(username="staff", password="pass")
+        response = self.client.get(reverse("customer-create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Tax and billing identity")
+        self.assertContains(response, "Find package")
 
     def test_staff_cannot_archive_customer(self):
         self.client.login(username="staff", password="pass")

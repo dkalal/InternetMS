@@ -35,6 +35,13 @@ class Package(models.Model):
     is_active = models.BooleanField(default=True)
     objects = TenantScopedManager()
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["organization", "package_type", "is_active"], name="services_org_type_active_idx"),
+            models.Index(fields=["tenant", "package_type", "is_active"], name="services_ten_type_active_idx"),
+            models.Index(fields=["organization", "name"], name="services_org_name_idx"),
+            models.Index(fields=["organization", "monthly_fee"], name="services_org_monthly_idx"),
+        ]
     
     @property
     def price(self):

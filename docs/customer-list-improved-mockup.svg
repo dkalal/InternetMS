@@ -1,0 +1,213 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1390" height="965" viewBox="0 0 1390 965">
+  <defs>
+    <style>
+      .bg { fill: #f5f7fb; }
+      .surface { fill: #ffffff; stroke: #d9e1ec; stroke-width: 1; }
+      .surface-soft { fill: #f9fbff; stroke: #d9e1ec; stroke-width: 1; }
+      .line { stroke: #d9e1ec; stroke-width: 1; }
+      .text { font-family: Inter, Segoe UI, Arial, sans-serif; fill: #101828; }
+      .muted { fill: #5b6b82; }
+      .tiny { font-size: 12px; }
+      .small { font-size: 13px; }
+      .body { font-size: 14px; }
+      .title { font-size: 20px; font-weight: 700; }
+      .h2 { font-size: 15px; font-weight: 700; }
+      .strong { font-weight: 700; }
+      .nav { font-size: 14px; }
+      .chip { font-size: 13px; font-weight: 600; }
+      .btn { font-size: 13px; font-weight: 700; }
+      .success-bg { fill: #e9f9ef; }
+      .success { fill: #087443; }
+      .warn-bg { fill: #fff7df; }
+      .warn { fill: #925600; }
+      .danger-bg { fill: #fff0f1; }
+      .danger { fill: #c01f3f; }
+      .info-bg { fill: #eef4ff; }
+      .info { fill: #3155c8; }
+      .brand { fill: #4f46e5; }
+      .brand-dark { fill: #312e81; }
+      .dark { fill: #0f172a; }
+      .money { fill: #0f766e; }
+      .shadow { filter: drop-shadow(0 8px 20px rgba(15, 23, 42, 0.06)); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1390" height="965"/>
+
+  <rect x="0" y="0" width="1390" height="60" fill="#ffffff"/>
+  <line x1="0" y1="59.5" x2="1390" y2="59.5" class="line"/>
+  <text x="78" y="34" class="text nav strong">JS Internet Services</text>
+  <text x="218" y="34" class="text tiny muted">Org: Default Organization</text>
+  <text x="400" y="34" class="text nav">Customers</text>
+  <text x="504" y="34" class="text nav">Packages</text>
+  <text x="596" y="34" class="text nav">Products</text>
+  <text x="685" y="34" class="text nav">Quotations</text>
+  <text x="791" y="34" class="text nav">Invoices</text>
+  <text x="879" y="34" class="text nav">Receipts</text>
+  <text x="962" y="34" class="text nav">Promotions</text>
+  <text x="1070" y="34" class="text nav">Branding</text>
+  <text x="1161" y="34" class="text nav">Admin</text>
+  <rect x="1226" y="12" width="68" height="36" rx="5" class="dark"/>
+  <text x="1243" y="34" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Logout</text>
+
+  <g transform="translate(78 88)">
+    <text x="0" y="18" class="text title">Customers needing action</text>
+    <text x="0" y="43" class="text body muted">Daily work queue for renewals, payments, contact follow-ups, and missing service data.</text>
+    <rect x="1085" y="13" width="132" height="36" rx="5" class="brand"/>
+    <text x="1103" y="36" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Add customer</text>
+  </g>
+
+  <g transform="translate(78 154)">
+    <rect x="0" y="0" width="1216" height="86" rx="8" class="surface shadow"/>
+    <g transform="translate(18 18)">
+      <rect x="0" y="0" width="104" height="34" rx="17" class="dark"/>
+      <text x="19" y="22" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="chip">Today 4</text>
+
+      <rect x="116" y="0" width="103" height="34" rx="17" class="danger-bg"/>
+      <text x="136" y="22" class="text chip danger">Unpaid 2</text>
+
+      <rect x="231" y="0" width="120" height="34" rx="17" class="warn-bg"/>
+      <text x="249" y="22" class="text chip warn">Due soon 2</text>
+
+      <rect x="363" y="0" width="126" height="34" rx="17" class="info-bg"/>
+      <text x="382" y="22" class="text chip info">No contact 2</text>
+
+      <rect x="501" y="0" width="119" height="34" rx="17" class="surface-soft"/>
+      <text x="522" y="22" class="text chip muted">Inactive 2</text>
+
+      <rect x="632" y="0" width="117" height="34" rx="17" class="success-bg"/>
+      <text x="652" y="22" class="text chip success">Active 5</text>
+    </g>
+    <text x="18" y="66" class="text tiny muted">Tip: make these chips clickable filters so users start from the exact queue they need.</text>
+  </g>
+
+  <g transform="translate(78 262)">
+    <rect x="0" y="0" width="1216" height="84" rx="8" class="surface"/>
+    <text x="18" y="30" class="text small strong">Smart filters</text>
+    <rect x="18" y="42" width="235" height="30" rx="5" class="surface-soft"/>
+    <text x="31" y="62" class="text small muted">All customer types</text>
+    <rect x="267" y="42" width="235" height="30" rx="5" class="surface-soft"/>
+    <text x="280" y="62" class="text small muted">Any status</text>
+    <rect x="516" y="42" width="360" height="30" rx="5" class="surface-soft"/>
+    <text x="529" y="62" class="text small muted">Search name, phone, IP, VLAN, invoice...</text>
+    <rect x="890" y="42" width="96" height="30" rx="5" class="dark"/>
+    <text x="920" y="62" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="btn">Apply</text>
+    <rect x="998" y="42" width="95" height="30" rx="5" class="surface-soft"/>
+    <text x="1028" y="62" class="text btn">Reset</text>
+    <rect x="1105" y="42" width="93" height="30" rx="5" class="surface-soft"/>
+    <text x="1126" y="62" class="text btn muted">Save view</text>
+  </g>
+
+  <g transform="translate(78 372)">
+    <rect x="0" y="0" width="1216" height="68" rx="8" class="surface"/>
+    <text x="18" y="25" class="text h2">Today at a glance</text>
+    <text x="18" y="49" class="text small muted">2 unpaid subscriptions</text>
+    <line x1="210" y1="16" x2="210" y2="52" class="line"/>
+    <text x="235" y="25" class="text h2 money">240,000 TZS</text>
+    <text x="235" y="49" class="text small muted">estimated receivable</text>
+    <line x1="440" y1="16" x2="440" y2="52" class="line"/>
+    <text x="465" y="25" class="text h2">3 renewals</text>
+    <text x="465" y="49" class="text small muted">ready to invoice</text>
+    <line x1="650" y1="16" x2="650" y2="52" class="line"/>
+    <text x="675" y="25" class="text h2">2 profiles</text>
+    <text x="675" y="49" class="text small muted">missing contact details</text>
+    <line x1="870" y1="16" x2="870" y2="52" class="line"/>
+    <text x="895" y="25" class="text h2">0 suspended</text>
+    <text x="895" y="49" class="text small muted">service risk is low</text>
+  </g>
+
+  <g transform="translate(78 468)">
+    <rect x="0" y="0" width="1216" height="282" rx="8" class="surface"/>
+    <rect x="0" y="0" width="1216" height="42" rx="8" fill="#f8fafc"/>
+    <line x1="0" y1="42" x2="1216" y2="42" class="line"/>
+
+    <text x="18" y="27" class="text tiny strong muted">CUSTOMER</text>
+    <text x="258" y="27" class="text tiny strong muted">CONTACT</text>
+    <text x="430" y="27" class="text tiny strong muted">SERVICE</text>
+    <text x="650" y="27" class="text tiny strong muted">BILLING HEALTH</text>
+    <text x="925" y="27" class="text tiny strong muted">NEXT ACTION</text>
+    <text x="1125" y="27" class="text tiny strong muted">MORE</text>
+
+    <g transform="translate(0 42)">
+      <rect x="0" y="0" width="1216" height="58" fill="#ffffff"/>
+      <line x1="0" y1="58" x2="1216" y2="58" class="line"/>
+      <text x="18" y="22" class="text body strong">Lui Tour</text>
+      <text x="18" y="43" class="text tiny muted">Moshi</text>
+      <text x="258" y="22" class="text small">+255 7XX XXX XXX</text>
+      <text x="258" y="43" class="text tiny info">WhatsApp</text>
+      <text x="430" y="22" class="text small strong">Serengeti</text>
+      <text x="430" y="43" class="text tiny muted">Internet Customer</text>
+      <rect x="650" y="13" width="92" height="22" rx="11" class="danger-bg"/>
+      <text x="667" y="29" class="text tiny strong danger">Unpaid</text>
+      <text x="750" y="29" class="text tiny muted">No payment recorded</text>
+      <rect x="925" y="13" width="116" height="32" rx="5" class="brand"/>
+      <text x="950" y="34" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="btn">Renew</text>
+      <rect x="1050" y="13" width="92" height="32" rx="5" class="surface-soft"/>
+      <text x="1065" y="34" class="text btn">Receipt</text>
+      <text x="1134" y="34" class="text body muted">...</text>
+    </g>
+
+    <g transform="translate(0 100)">
+      <rect x="0" y="0" width="1216" height="58" fill="#ffffff"/>
+      <line x1="0" y1="58" x2="1216" y2="58" class="line"/>
+      <text x="18" y="22" class="text body strong">dk</text>
+      <text x="18" y="43" class="text tiny muted">moshi</text>
+      <text x="258" y="22" class="text small">admin@admin.com</text>
+      <text x="258" y="43" class="text tiny muted">+255 7XX XXX XXX</text>
+      <text x="430" y="22" class="text small strong">Serengeti</text>
+      <text x="430" y="43" class="text tiny muted">IP and VLAN missing</text>
+      <rect x="650" y="13" width="92" height="22" rx="11" class="danger-bg"/>
+      <text x="667" y="29" class="text tiny strong danger">Unpaid</text>
+      <text x="750" y="29" class="text tiny muted">Invoice ready for receipt</text>
+      <rect x="925" y="13" width="142" height="32" rx="5" class="brand"/>
+      <text x="947" y="34" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="btn">Register receipt</text>
+      <rect x="1076" y="13" width="66" height="32" rx="5" class="surface-soft"/>
+      <text x="1094" y="34" class="text btn">View</text>
+      <text x="1134" y="34" class="text body muted">...</text>
+    </g>
+
+    <g transform="translate(0 158)">
+      <rect x="0" y="0" width="1216" height="58" fill="#ffffff"/>
+      <line x1="0" y1="58" x2="1216" y2="58" class="line"/>
+      <text x="18" y="22" class="text body strong">Sara B Saloon</text>
+      <text x="18" y="43" class="text tiny muted">Moshi</text>
+      <text x="258" y="22" class="text small">+255 7XX XXX XXX</text>
+      <text x="258" y="43" class="text tiny info">Call customer</text>
+      <text x="430" y="22" class="text small strong">Serengeti</text>
+      <text x="430" y="43" class="text tiny muted">Paid through Apr 30, 2026</text>
+      <rect x="650" y="13" width="76" height="22" rx="11" class="warn-bg"/>
+      <text x="668" y="29" class="text tiny strong warn">Due soon</text>
+      <text x="750" y="29" class="text tiny muted">Renewal due this month</text>
+      <rect x="925" y="13" width="116" height="32" rx="5" class="brand"/>
+      <text x="950" y="34" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="btn">Renew</text>
+      <rect x="1050" y="13" width="92" height="32" rx="5" class="surface-soft"/>
+      <text x="1074" y="34" class="text btn">Invoice</text>
+      <text x="1134" y="34" class="text body muted">...</text>
+    </g>
+
+    <g transform="translate(0 216)">
+      <rect x="0" y="0" width="1216" height="66" fill="#ffffff"/>
+      <text x="18" y="25" class="text body strong">kal</text>
+      <text x="18" y="46" class="text tiny muted">moshi</text>
+      <text x="258" y="25" class="text small muted">No phone or email</text>
+      <text x="430" y="25" class="text small muted">No service package</text>
+      <rect x="650" y="15" width="86" height="22" rx="11" class="warn-bg"/>
+      <text x="671" y="31" class="text tiny strong warn">Inactive</text>
+      <text x="750" y="31" class="text tiny muted">Profile incomplete</text>
+      <rect x="925" y="15" width="142" height="32" rx="5" class="dark"/>
+      <text x="949" y="36" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" class="btn">Complete profile</text>
+      <rect x="1076" y="15" width="66" height="32" rx="5" class="surface-soft"/>
+      <text x="1094" y="36" class="text btn">View</text>
+      <text x="1134" y="36" class="text body muted">...</text>
+    </g>
+  </g>
+
+  <g transform="translate(78 780)">
+    <rect x="0" y="0" width="1216" height="82" rx="8" class="surface-soft"/>
+    <text x="18" y="28" class="text h2">Recommended behavior change</text>
+    <text x="18" y="53" class="text body muted">Move destructive actions into More, make the primary button match the customer's next useful task, and let daily users work from queues instead of scanning every row.</text>
+  </g>
+
+  <line x1="0" y1="894" x2="1390" y2="894" class="line"/>
+  <text x="78" y="933" class="text small muted">© 2026 JS Internet Services. Design mockup only.</text>
+</svg>

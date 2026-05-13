@@ -17,7 +17,8 @@ class CustomerForm(forms.ModelForm):
         queryset=Package.objects.filter(is_active=True),
         widget=forms.CheckboxSelectMultiple,
         required=False,
-        label='Service Packages',
+        label='Service packages',
+        help_text='Choose the active packages this customer can use.',
     )
 
     class Meta:
@@ -41,12 +42,25 @@ class CustomerForm(forms.ModelForm):
         widgets = {
             'customer_type': forms.Select(attrs={'id': 'customer-type-select'}),
         }
+        help_texts = {
+            'phone': 'Use an international format when possible, for example +255712345678.',
+            'ip_address': 'IPv4 or IPv6 address assigned to this customer.',
+            'vlan_id': 'Network VLAN or segment identifier, if applicable.',
+            'tin_number': 'Taxpayer Identification Number, if available.',
+            'vrn_number': 'VAT Registration Number for VAT-registered customers.',
+            'pricing_tier': 'Controls the default pricing behavior used when billing this customer.',
+        }
 
     def __init__(self, *args, organization=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.original_status = self.instance.status if self.instance and self.instance.pk else None
         if organization is not None:
             self.fields['packages'].queryset = Package.objects.filter(is_active=True, organization=organization)
+        self.fields['name'].widget.attrs.setdefault('placeholder', 'Customer or business name')
+        self.fields['location'].widget.attrs.setdefault('placeholder', 'Area, ward, street, or landmark')
+        self.fields['vlan_id'].widget.attrs.setdefault('placeholder', 'VLAN 120')
+        self.fields['tin_number'].widget.attrs.setdefault('placeholder', 'TIN')
+        self.fields['vrn_number'].widget.attrs.setdefault('placeholder', 'VRN')
         apply_tailwind(self)
 
     def clean_status_change_reason(self):

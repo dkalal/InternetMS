@@ -144,9 +144,30 @@ class ReceiptCreateForm(forms.Form):
     payment_reference = forms.CharField(max_length=80, required=False, help_text="Optional transaction reference / idempotency key.")
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, organization=None, invoice=None, **kwargs):
+        self.organization = organization
+        self.invoice = invoice
         super().__init__(*args, **kwargs)
         apply_tailwind(self)
+
+    def clean_payment_reference(self):
+        reference = (self.cleaned_data.get("payment_reference") or "").strip()
+        if not reference or self.organization is None:
+            return reference
+
+        existing = BillingDocument.objects.unscoped().filter(
+            organization=self.organization,
+            payment_reference=reference,
+        ).only("id", "document_type", "invoice_id").first()
+        if existing is None:
+            return reference
+        if (
+            self.invoice is not None
+            and existing.document_type == BillingDocument.DocumentType.RECEIPT
+            and existing.invoice_id == self.invoice.id
+        ):
+            return reference
+        raise forms.ValidationError("This payment reference has already been used.")
 
 
 class DraftInvoiceEditForm(forms.Form):
@@ -181,6 +202,36 @@ class SubscriptionRenewalForm(forms.Form):
                 applies_to=Promotion.AppliesTo.PACKAGE,
             )
         apply_tailwind(self)
+
+
+class SubscriptionInvoiceIssueForm(forms.Form):
+    class Action:
+        REISSUE = "reissue"
+        VOID = "void"
+
+    action = forms.ChoiceField(
+        choices=[
+            (Action.REISSUE, "Wrong amount, tax, package, or discount - reissue invoice"),
+            (Action.VOID, "Invoice should not exist - void this billing period"),
+        ],
+        widget=forms.RadioSelect,
+        label="What needs to happen?",
+    )
+    reason = forms.CharField(
+        label="Reason",
+        help_text="This is saved to the audit trail.",
+        widget=forms.Textarea(attrs={"rows": 3, "placeholder": "Example: Invoice was created for the wrong month."}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if len(reason) < 5:
+            raise forms.ValidationError("Add a short reason before resolving this invoice issue.")
+        return reason
 
 
 class PromotionForm(forms.ModelForm):

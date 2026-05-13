@@ -1,0 +1,173 @@
+<div data-whatsapp-composer data-customer-id="{{ whatsapp_customer.id }}" data-doc-type="{{ whatsapp_doc_type|default:'' }}" data-doc-id="{{ whatsapp_doc_id|default:'' }}" data-category="{{ whatsapp_category|default:'general' }}" data-phone="{{ whatsapp_customer.phone|default:'' }}" class="contents">
+  <button type="button" data-whatsapp-open class="inline-flex items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100">
+    Send via WhatsApp
+  </button>
+
+  <div data-whatsapp-modal class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <div class="absolute inset-0 bg-slate-900/40" data-whatsapp-close></div>
+    <div class="relative mx-auto mt-10 w-full max-w-2xl px-4">
+      <div class="overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-slate-900/10">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 class="text-base font-semibold text-slate-900">Send via WhatsApp</h2>
+            <p class="mt-1 text-sm text-slate-600">{{ whatsapp_customer.name }}{% if whatsapp_customer.phone %} &middot; {{ whatsapp_customer.phone }}{% endif %}</p>
+          </div>
+          <button type="button" data-whatsapp-close class="rounded-md px-2 py-1 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800">Close</button>
+        </div>
+
+        <div class="space-y-4 px-5 py-4">
+          {% if not whatsapp_customer.phone %}
+            <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">This customer does not have a phone number.</div>
+          {% endif %}
+          <div data-whatsapp-error class="hidden rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"></div>
+
+          <label class="block">
+            <span class="text-sm font-medium text-slate-700">Template</span>
+            <select data-whatsapp-template class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+              <option value="">Loading templates...</option>
+            </select>
+          </label>
+
+          <label class="block">
+            <span class="text-sm font-medium text-slate-700">Message preview</span>
+            <textarea data-whatsapp-message rows="9" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Select a template to generate a message."></textarea>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
+          <div>
+            {% if whatsapp_pdf_url %}
+              <a href="{{ whatsapp_pdf_url }}" target="_blank" class="text-sm font-medium text-slate-700 underline">Download PDF to attach</a>
+            {% endif %}
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" data-whatsapp-close class="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+            <button type="button" data-whatsapp-send {% if not whatsapp_customer.phone %}disabled{% endif %} class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+              Send via WhatsApp
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.currentScript.previousElementSibling;
+  if (!root || !root.matches('[data-whatsapp-composer]')) return;
+
+  var modal = root.querySelector('[data-whatsapp-modal]');
+  var openButton = root.querySelector('[data-whatsapp-open]');
+  var closeButtons = root.querySelectorAll('[data-whatsapp-close]');
+  var templateSelect = root.querySelector('[data-whatsapp-template]');
+  var messageInput = root.querySelector('[data-whatsapp-message]');
+  var sendButton = root.querySelector('[data-whatsapp-send]');
+  var errorBox = root.querySelector('[data-whatsapp-error]');
+  var csrfInput = document.querySelector('input[name="csrfmiddlewaretoken"]');
+  var csrfToken = csrfInput ? csrfInput.value : '{{ csrf_token }}';
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+  }
+
+  function clearError() {
+    errorBox.textContent = '';
+    errorBox.classList.add('hidden');
+  }
+
+  function formBody(extra) {
+    var params = new URLSearchParams();
+    params.set('customer', root.dataset.customerId || '');
+    params.set('doc_type', root.dataset.docType || '');
+    params.set('doc_id', root.dataset.docId || '');
+    Object.keys(extra || {}).forEach(function (key) {
+      params.set(key, extra[key]);
+    });
+    return params;
+  }
+
+  function fetchTemplates() {
+    var params = new URLSearchParams();
+    params.set('category', root.dataset.category || 'general');
+    params.set('customer', root.dataset.customerId || '');
+    params.set('doc_type', root.dataset.docType || '');
+    params.set('doc_id', root.dataset.docId || '');
+    fetch('{% url "messaging:template_options" %}?' + params.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || 'Could not load templates.');
+        templateSelect.innerHTML = '';
+        if (!data.templates.length) {
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = 'No templates available';
+          templateSelect.appendChild(empty);
+          return;
+        }
+        data.templates.forEach(function (template) {
+          var option = document.createElement('option');
+          option.value = template.id;
+          option.textContent = template.name + (template.scope === 'tenant' ? ' (tenant)' : '');
+          templateSelect.appendChild(option);
+        });
+        previewTemplate();
+      })
+      .catch(function (error) { showError(error.message); });
+  }
+
+  function previewTemplate() {
+    clearError();
+    if (!templateSelect.value) {
+      messageInput.value = '';
+      return;
+    }
+    fetch('{% url "messaging:preview_message" %}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
+      body: formBody({template_id: templateSelect.value})
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || 'Could not preview message.');
+        messageInput.value = data.message;
+      })
+      .catch(function (error) { showError(error.message); });
+  }
+
+  openButton.addEventListener('click', function () {
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    clearError();
+    if (templateSelect.options.length <= 1 && templateSelect.options[0] && templateSelect.options[0].value === '') {
+      fetchTemplates();
+    }
+  });
+  Array.prototype.forEach.call(closeButtons, function (button) {
+    button.addEventListener('click', function () {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+    });
+  });
+  templateSelect.addEventListener('change', previewTemplate);
+  sendButton.addEventListener('click', function () {
+    clearError();
+    sendButton.disabled = true;
+    fetch('{% url "messaging:send_manual_message" %}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
+      body: formBody({template_id: templateSelect.value, phone: root.dataset.phone || '', message: messageInput.value})
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || 'Could not create WhatsApp link.');
+        window.location.href = data.url;
+      })
+      .catch(function (error) {
+        showError(error.message);
+        sendButton.disabled = false;
+      });
+  });
+})();
+</script>

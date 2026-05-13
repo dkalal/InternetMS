@@ -45,6 +45,7 @@ urlpatterns = [
     path('services/', include('services.urls')),
     path('products/', include('products.urls')),
     path('billing/', include('billing.urls')),
+    path('messaging/', include('messaging.urls')),
     path('users/', include('users.urls')),  # This includes the register URL
     
 

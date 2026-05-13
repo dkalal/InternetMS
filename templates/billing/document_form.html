@@ -197,7 +197,21 @@
 <script id="package-catalog-data" type="application/json">
 [
   {% for package in package_catalog %}
-    {"id":"{{ package.id }}","name":"{{ package.name|escapejs }}","description":"{{ package.description|default_if_none:''|escapejs }}","speed":"{{ package.speed|escapejs }}","price":"{{ package.price }}"}{% if not forloop.last %},{% endif %}
+    {"id":"{{ package.id }}","name":"{{ package.name|escapejs }}","description":"{{ package.description|default_if_none:''|escapejs }}","speed":"{{ package.speed|escapejs }}","price":"{{ package.price }}","monthly_fee":"{{ package.monthly_fee }}"}{% if not forloop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script id="customer-catalog-data" type="application/json">
+[
+  {% for customer in customer_catalog %}
+    {"id":"{{ customer.id }}","pricing_tier":"{{ customer.pricing_tier }}","tax_rate":"{% if customer.vrn_number %}18.00{% else %}0.00{% endif %}"}{% if not forloop.last %},{% endif %}
+  {% endfor %}
+]
+</script>
+<script id="promotion-catalog-data" type="application/json">
+[
+  {% for promotion in promotion_catalog %}
+    {"id":"{{ promotion.id }}","name":"{{ promotion.name|escapejs }}","applies_to":"{{ promotion.applies_to }}","product_id":"{{ promotion.product_id|default_if_none:'' }}","package_id":"{{ promotion.package_id|default_if_none:'' }}","minimum_quantity":"{{ promotion.minimum_quantity }}","minimum_months":"{{ promotion.minimum_months }}","minimum_amount":"{{ promotion.minimum_amount }}","reward_type":"{{ promotion.reward_type }}","reward_value":"{{ promotion.reward_value }}"}{% if not forloop.last %},{% endif %}
   {% endfor %}
 ]
 </script>
@@ -210,6 +224,9 @@
     const template = document.getElementById('line-item-empty-template');
     const productCatalog = new Map((JSON.parse(document.getElementById('product-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
     const packageCatalog = new Map((JSON.parse(document.getElementById('package-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
+    const customerCatalog = new Map((JSON.parse(document.getElementById('customer-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
+    const promotionCatalog = new Map((JSON.parse(document.getElementById('promotion-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
+    const customerField = document.getElementById('id_customer');
     const currencyField = document.getElementById('id_currency');
     const taxRateField = document.getElementById('id_tax_rate');
     const summaryCurrency = document.getElementById('summary-currency');
@@ -230,6 +247,48 @@
 
     const formatMoney = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+    const getSelectedCustomer = () => customerCatalog.get(customerField?.value || '');
+
+    const promotionApplies = (promotion, productId, packageId, quantity, gross) => {
+      if (!promotion) return false;
+      if (parseMoney(promotion.minimum_quantity) > quantity) return false;
+      if (parseMoney(promotion.minimum_amount) > gross) return false;
+      if (packageId && parseMoney(promotion.minimum_months) > quantity) return false;
+      if (promotion.applies_to === 'product') return productId && promotion.product_id === productId;
+      if (promotion.applies_to === 'package') return packageId && promotion.package_id === packageId;
+      return promotion.applies_to === 'cart';
+    };
+
+    const calculatePromotion = (promotion, product, quantity, unitPrice, gross) => {
+      if (!promotion) return { unitPrice, discount: 0 };
+      if (promotion.reward_type === 'percent') {
+        return { unitPrice, discount: gross * (parseMoney(promotion.reward_value) / 100) };
+      }
+      if (promotion.reward_type === 'fixed') {
+        return { unitPrice, discount: Math.min(parseMoney(promotion.reward_value), gross) };
+      }
+      if (promotion.reward_type === 'wholesale_price' && product?.allow_wholesale && product.wholesale_price) {
+        return { unitPrice: parseMoney(product.wholesale_price), discount: 0 };
+      }
+      return { unitPrice, discount: 0 };
+    };
+
+    const findBestPromotion = (productId, packageId, quantity, gross) => {
+      let best = null;
+      let bestValue = 0;
+      promotionCatalog.forEach((promotion) => {
+        if (!promotionApplies(promotion, productId, packageId, quantity, gross)) return;
+        const product = productCatalog.get(productId);
+        const result = calculatePromotion(promotion, product, quantity, parseMoney(product?.price), gross);
+        const value = result.discount || Math.max(0, parseMoney(product?.price) - result.unitPrice) * quantity;
+        if (value > bestValue) {
+          best = promotion;
+          bestValue = value;
+        }
+      });
+      return best;
+    };
+
     const getRowControls = (row) => ({
       product: row.querySelector('[name$="-product"]'),
       package: row.querySelector('[name$="-package"]'),
@@ -237,7 +296,10 @@
       quantity: row.querySelector('[name$="-quantity"]'),
       unitPrice: row.querySelector('[name$="-unit_price"]'),
       discount: row.querySelector('[name$="-discount_amount"]'),
+      discountReason: row.querySelector('[name$="-discount_reason"]'),
       pricingMode: row.querySelector('[name$="-pricing_mode"]'),
+      billingBehavior: row.querySelector('[name$="-billing_behavior"]'),
+      promotion: row.querySelector('[name$="-promotion"]'),
       deleteBox: row.querySelector('[name$="-DELETE"]'),
       productWrap: row.querySelector('.js-product-wrap'),
       packageWrap: row.querySelector('.js-package-wrap'),
@@ -308,31 +370,56 @@
       const activeType = productId ? 'product' : packageId ? 'package' : 'custom';
       const product = productCatalog.get(productId);
       const packageItem = packageCatalog.get(packageId);
+      const customer = getSelectedCustomer();
+      const quantity = parseMoney(controls.quantity?.value);
 
       controls.productWrap?.classList.toggle('hidden', activeType !== 'product');
       controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
       setButtonState(row, activeType);
 
       if (activeType === 'product' && product) {
-        if (
-          controls.pricingMode?.value === 'wholesale' &&
-          product.allow_wholesale &&
-          product.wholesale_price &&
-          parseMoney(controls.quantity?.value) >= parseMoney(product.wholesale_min_quantity)
-        ) {
-          controls.unitPrice.value = product.wholesale_price;
-        } else if (controls.pricingMode?.value === 'retail') {
-          controls.unitPrice.value = product.price;
+        const tierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(customer?.pricing_tier || '');
+        const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
+        if (controls.pricingMode?.value !== 'manual') {
+          if ((controls.pricingMode?.value === 'wholesale' || tierWantsWholesale) && qualifiesWholesale) {
+            controls.unitPrice.value = Number(parseMoney(product.wholesale_price)).toFixed(2);
+            if (controls.pricingMode) controls.pricingMode.value = 'wholesale';
+          } else {
+            controls.unitPrice.value = Number(parseMoney(product.price)).toFixed(2);
+            if (controls.pricingMode) controls.pricingMode.value = 'retail';
+          }
         }
-        controls.summary.textContent = `${product.name} selected`;
+        controls.summary.textContent = qualifiesWholesale ? `${product.name} selected - wholesale available` : `${product.name} selected`;
       } else if (activeType === 'package' && packageItem) {
+        if (controls.pricingMode?.value !== 'manual') {
+          const packagePrice = controls.billingBehavior?.value === 'recurring_monthly' ? packageItem.monthly_fee : packageItem.price;
+          controls.unitPrice.value = Number(parseMoney(packagePrice)).toFixed(2);
+        }
         controls.summary.textContent = `${packageItem.name} selected`;
       } else {
         controls.summary.textContent = 'No product or package selected yet.';
       }
 
-      const gross = parseMoney(controls.quantity?.value) * parseMoney(controls.unitPrice?.value);
-      const total = Math.max(gross - parseMoney(controls.discount?.value), 0);
+      const gross = quantity * parseMoney(controls.unitPrice?.value);
+      if (controls.pricingMode?.value !== 'manual') {
+        const selectedPromotion = promotionCatalog.get(controls.promotion?.value || '') || findBestPromotion(productId, packageId, quantity, gross);
+        if (selectedPromotion && controls.promotion && !controls.promotion.value) {
+          controls.promotion.value = selectedPromotion.id;
+        }
+        if (selectedPromotion && promotionApplies(selectedPromotion, productId, packageId, quantity, gross)) {
+          const promotionResult = calculatePromotion(selectedPromotion, product, quantity, parseMoney(controls.unitPrice?.value), gross);
+          if (promotionResult.unitPrice !== parseMoney(controls.unitPrice?.value)) {
+            controls.unitPrice.value = Number(promotionResult.unitPrice).toFixed(2);
+          }
+          if (controls.discount) controls.discount.value = Number(promotionResult.discount).toFixed(2);
+          if (controls.discountReason && (!controls.discountReason.value || controls.discountReason.dataset.autofilled === '1')) {
+            controls.discountReason.value = selectedPromotion.name;
+            controls.discountReason.dataset.autofilled = '1';
+          }
+          if (controls.pricingMode) controls.pricingMode.value = 'promotion';
+        }
+      }
+      const total = Math.max((quantity * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value), 0);
       controls.lineTotal.textContent = formatMoney(total);
       refreshSummary();
     };
@@ -374,7 +461,8 @@
         }
         const packageItem = packageCatalog.get(String(itemId));
         if (packageItem) {
-          controls.unitPrice.value = Number(parseMoney(packageItem.price)).toFixed(2);
+          if (controls.billingBehavior) controls.billingBehavior.value = 'recurring_monthly';
+          controls.unitPrice.value = Number(parseMoney(packageItem.monthly_fee)).toFixed(2);
           setDescriptionIfSuggested(controls.description, packageItem.description || packageItem.name);
         }
       }
@@ -419,9 +507,15 @@
           syncRow(row);
         });
       }
-      [controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode].forEach((field) => {
+      if (controls.discountReason) {
+        controls.discountReason.addEventListener('input', () => {
+          controls.discountReason.dataset.autofilled = '0';
+        });
+      }
+      [controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
         if (field) {
           field.addEventListener('input', () => syncRow(row));
+          field.addEventListener('change', () => syncRow(row));
         }
       });
       row.querySelector('.js-remove-item')?.addEventListener('click', () => {
@@ -463,6 +557,16 @@
 
     if (currencyField) {
       currencyField.addEventListener('input', refreshSummary);
+    }
+    if (customerField) {
+      customerField.addEventListener('change', () => {
+        const customer = getSelectedCustomer();
+        if (customer && taxRateField) {
+          taxRateField.value = customer.tax_rate;
+        }
+        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row));
+        refreshSummary();
+      });
     }
     if (taxRateField) {
       taxRateField.addEventListener('input', refreshSummary);

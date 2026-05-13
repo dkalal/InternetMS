@@ -3,34 +3,186 @@
 {% block title %}{% if form.instance.pk %}Edit Product{% else %}New Product{% endif %}{% endblock %}
 
 {% block content %}
-<div class="mx-auto w-full max-w-3xl space-y-4">
-    <div class="flex items-center justify-between">
+<div class="mx-auto w-full max-w-6xl space-y-5">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-            <h1 class="text-xl font-semibold tracking-tight text-slate-900">
-                {% if form.instance.pk %}Edit{% else %}New{% endif %} product
+            <div class="text-sm text-slate-500">
+                <a class="hover:underline" href="{% url 'product-list' %}">Products</a>
+                {% if form.instance.pk %}
+                    <span class="px-1">/</span>
+                    <a class="hover:underline" href="{{ form.instance.get_absolute_url }}">{{ form.instance.name }}</a>
+                    <span class="px-1">/</span>
+                    <span class="text-slate-700">Edit</span>
+                {% endif %}
+            </div>
+            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+                {% if form.instance.pk %}Edit product{% else %}New product{% endif %}
             </h1>
-            <p class="mt-1 text-sm text-slate-600">Track pricing, stock, and customer association.</p>
+            <p class="mt-1 text-sm text-slate-600">Set up inventory, pricing, wholesale rules, and customer association.</p>
         </div>
         <a href="{% url 'product-list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
             Back
         </a>
     </div>
 
-    <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <form method="post" class="space-y-6">
-            {% csrf_token %}
-            {% include "components/form.html" with form=form %}
+    <form method="post" class="space-y-5" data-product-form>
+        {% csrf_token %}
 
-            <div class="flex items-center justify-end gap-3">
-                <a href="{% url 'product-list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                    Cancel
-                </a>
-                <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                    Save
-                </button>
+        {% if form.non_field_errors %}
+            <div class="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
             </div>
-        </form>
-    </div>
+        {% endif %}
+
+        <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <div class="space-y-5 lg:col-span-2">
+                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Product identity</h2>
+                        <p class="mt-1 text-sm text-slate-600">Name the item and classify it for catalog search and reporting.</p>
+                    </div>
+                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+                        <div class="md:col-span-2">
+                            {% include "components/form_field.html" with field=form.name %}
+                        </div>
+                        {% include "components/form_field.html" with field=form.category %}
+                        {% include "components/form_field.html" with field=form.is_active %}
+                        <div class="md:col-span-2">
+                            {% include "components/form_field.html" with field=form.description %}
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Inventory</h2>
+                        <p class="mt-1 text-sm text-slate-600">Keep quantity and units consistent with how the item is sold or assigned.</p>
+                    </div>
+                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+                        {% include "components/form_field.html" with field=form.quantity %}
+                        {% include "components/form_field.html" with field=form.measure_unit %}
+                        <div class="md:col-span-2">
+                            {% include "components/form_field.html" with field=form.customer %}
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <aside class="space-y-5">
+                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Pricing summary</h2>
+                    </div>
+                    <div class="space-y-3 p-5 text-sm">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-500">Margin</span>
+                            <span id="product-margin" class="font-semibold text-slate-900">-</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-500">Margin rate</span>
+                            <span id="product-margin-rate" class="font-semibold text-slate-900">-</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-500">Effective retail</span>
+                            <span id="product-effective-retail" class="font-semibold text-slate-900">-</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div class="border-b border-slate-200 px-5 py-4">
+                        <h2 class="text-sm font-semibold text-slate-900">Status</h2>
+                    </div>
+                    <div class="p-5 text-sm text-slate-600">
+                        Inactive products stay available in historical documents, but should not be selected for new work unless deliberately reactivated.
+                    </div>
+                </section>
+            </aside>
+        </div>
+
+        <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div class="border-b border-slate-200 px-5 py-4">
+                <h2 class="text-sm font-semibold text-slate-900">Pricing</h2>
+                <p class="mt-1 text-sm text-slate-600">Separate acquisition cost, default selling price, retail price, and wholesale rules.</p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 lg:grid-cols-4">
+                {% include "components/form_field.html" with field=form.buying_price %}
+                {% include "components/form_field.html" with field=form.selling_price %}
+                {% include "components/form_field.html" with field=form.retail_price %}
+                <div class="rounded-md border border-slate-200 bg-slate-50 p-4">
+                    {% include "components/form_field.html" with field=form.allow_wholesale %}
+                </div>
+                <div id="wholesale-panel" class="grid grid-cols-1 gap-4 md:col-span-2 lg:col-span-4 md:grid-cols-2">
+                    {% include "components/form_field.html" with field=form.wholesale_price %}
+                    {% include "components/form_field.html" with field=form.wholesale_min_quantity %}
+                </div>
+            </div>
+        </section>
+
+        <div class="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:bg-white">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-sm text-slate-600">Price and stock changes affect future documents only.</p>
+                <div class="flex items-center justify-end gap-3">
+                    <a href="{% url 'product-list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                        Cancel
+                    </a>
+                    <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                        Save product
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
 </div>
 {% endblock %}
 
+{% block extra_js %}
+<script>
+  (function () {
+    var form = document.querySelector('[data-product-form]');
+    if (!form) return;
+
+    var buying = document.getElementById('id_buying_price');
+    var selling = document.getElementById('id_selling_price');
+    var retail = document.getElementById('id_retail_price');
+    var wholesaleToggle = document.getElementById('id_allow_wholesale');
+    var wholesalePanel = document.getElementById('wholesale-panel');
+    var margin = document.getElementById('product-margin');
+    var marginRate = document.getElementById('product-margin-rate');
+    var effectiveRetail = document.getElementById('product-effective-retail');
+
+    function money(value) {
+      if (!isFinite(value)) return '-';
+      return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value) + ' TZS';
+    }
+
+    function numeric(input) {
+      var value = parseFloat(input && input.value ? input.value : '');
+      return isFinite(value) ? value : null;
+    }
+
+    function syncPricing() {
+      var buy = numeric(buying);
+      var sell = numeric(selling);
+      var retailValue = numeric(retail);
+      var effective = retailValue !== null ? retailValue : sell;
+      var profit = buy !== null && effective !== null ? effective - buy : null;
+      margin.textContent = profit !== null ? money(profit) : '-';
+      marginRate.textContent = profit !== null && effective ? ((profit / effective) * 100).toFixed(1) + '%' : '-';
+      effectiveRetail.textContent = effective !== null ? money(effective) : '-';
+    }
+
+    function syncWholesale() {
+      if (!wholesaleToggle || !wholesalePanel) return;
+      wholesalePanel.classList.toggle('hidden', !wholesaleToggle.checked);
+    }
+
+    [buying, selling, retail].forEach(function (input) {
+      if (input) input.addEventListener('input', syncPricing);
+    });
+    if (wholesaleToggle) wholesaleToggle.addEventListener('change', syncWholesale);
+    syncPricing();
+    syncWholesale();
+  })();
+</script>
+{% endblock %}

@@ -141,6 +141,10 @@ class BillingDocument(models.Model):
         indexes = [
             models.Index(fields=["organization", "document_type", "issue_date"]),
             models.Index(fields=["organization", "document_type", "status"]),
+            models.Index(fields=["organization", "document_type", "number"], name="billing_doc_org_type_num_idx"),
+            models.Index(fields=["organization", "document_type", "customer", "issue_date"], name="billing_doc_org_cust_date_idx"),
+            models.Index(fields=["organization", "document_type", "due_date"], name="billing_doc_org_due_idx"),
+            models.Index(fields=["organization", "document_type", "total"], name="billing_doc_org_total_idx"),
             models.Index(fields=["organization", "root_quotation", "version_number"]),
             models.Index(fields=["tenant", "document_type", "issue_date"]),
             models.Index(fields=["tenant", "status", "issue_date"]),
@@ -365,6 +369,9 @@ class Promotion(models.Model):
         indexes = [
             models.Index(fields=["organization", "is_active", "applies_to"]),
             models.Index(fields=["tenant", "is_active", "applies_to"]),
+            models.Index(fields=["organization", "name"], name="billing_promo_org_name_idx"),
+            models.Index(fields=["organization", "reward_type"], name="billing_promo_org_reward_idx"),
+            models.Index(fields=["organization", "valid_from", "valid_until"], name="billing_promo_org_valid_idx"),
         ]
 
     def __str__(self) -> str:
