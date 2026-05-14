@@ -1,1 +1,1 @@
-web: python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn internetservices.wsgi --bind 0.0.0.0:$PORT
+web: python manage.py migrate --noinput && python manage.py collectstatic --noinput && if [ -n "$SUPERUSER_USERNAME" ]; then python manage.py bootstrap_super_admin --username "$SUPERUSER_USERNAME" --email "$SUPERUSER_EMAIL" --password "$SUPERUSER_PASSWORD" --create; fi && gunicorn internetservices.wsgi --bind 0.0.0.0:$PORT

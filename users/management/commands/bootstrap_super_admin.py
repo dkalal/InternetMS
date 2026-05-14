@@ -36,13 +36,14 @@ class Command(BaseCommand):
                 raise CommandError("User not found. Pass --create to create it.")
             if not password:
                 raise CommandError("--password is required when using --create.")
-            user = User.objects.create_user(username=username, email=email, password=password)
-
-        user.is_staff = True
-        user.is_superuser = True
-        if email and not getattr(user, "email", ""):
-            user.email = email
-        user.save(update_fields=["is_staff", "is_superuser", "email"])
+            user = User.objects.create_superuser(username=username, email=email, password=password)
+            self.stdout.write(self.style.SUCCESS(f"Created superuser: {username}"))
+        else:
+            user.is_staff = True
+            user.is_superuser = True
+            if email:
+                user.email = email
+            user.save(update_fields=["is_staff", "is_superuser", "email"])
 
         profile, created_profile = UserAccessProfile.objects.get_or_create(
             user=user,
