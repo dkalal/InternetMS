@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: js-internetservices-db
+    environment:
+      POSTGRES_DB: js_internetservices
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  web:
+    build: .
+    container_name: js-internetservices-web
+    command: sh -c "python manage.py migrate && gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - internetservices.wsgi:application"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/js_internetservices
+      - DJANGO_DEBUG=1
+      - DJANGO_SECRET_KEY=django-insecure-local-development-key-change-for-production
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-10.10.10.254,localhost,127.0.0.1,web}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS:-http://10.10.10.254:8000,http://localhost:8000,http://127.0.0.1:8000,http://web:8000}
+    volumes:
+      - ./media:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

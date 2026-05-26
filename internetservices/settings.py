@@ -5,16 +5,22 @@ Django settings for internetservices project.
 import os
 import dj_database_url
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
+
+def env_list(name: str, default: str = "") -> list[str]:
+    return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-secret-key')
 
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h]
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '10.10.10.254,localhost,127.0.0.1')
+
 # Always trust the Railway domain + any extra origins from env
-_extra_origins = [o for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if o]
+_extra_origins = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 CSRF_TRUSTED_ORIGINS = ['https://internetms.up.railway.app'] + _extra_origins
 
 USE_X_FORWARDED_HOST = True
@@ -26,12 +32,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework.authtoken',
     'customers',
     'services',
     'products',
     'billing',
     'messaging',
     'audit',
+    'integrations',
     'crispy_forms',
     'crispy_bootstrap5',
     'users',
@@ -133,21 +142,49 @@ LOGOUT_REDIRECT_URL = None
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'integrations.pagination.IntegrationPagination',
+    'PAGE_SIZE': int(os.environ.get('INTEGRATION_API_PAGE_SIZE', '50')),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'integrations.services.IntegrationBurstThrottle',
+        'integrations.services.IntegrationSustainedThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'integration_burst': os.environ.get('INTEGRATION_API_BURST_RATE', '30/min'),
+        'integration_sustained': os.environ.get('INTEGRATION_API_SUSTAINED_RATE', '500/day'),
+    },
+}
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'email_debug.log',
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
         },
     },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
     'loggers': {
-        'email_tests': {
-            'handlers': ['file'],
-            'level': 'INFO',
-            'propagate': True,
+        'django': {
+            'handlers': ['console'],
+            'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
         },
     },
 }

@@ -24,6 +24,7 @@ from django.conf.urls.static import static
 # Add this import for auth_views
 from django.contrib.auth import views as auth_views
 from users.forms import TailwindAuthenticationForm
+from internetservices.health import health_check, readiness_check, liveness_check
 
 # Import views for test_email and test_email_multiple
 # from users import views
@@ -40,7 +41,13 @@ AdminSite.has_permission = _strict_admin_has_permission
 
 
 urlpatterns = [
+    # Health check endpoints
+    path('health/', health_check, name='health'),
+    path('ready/', readiness_check, name='readiness'),
+    path('alive/', liveness_check, name='liveness'),
+    
     path('admin/', admin.site.urls),
+    path('api/integrations/', include('integrations.urls')),
     path('customers/', include('customers.urls')),
     path('services/', include('services.urls')),
     path('products/', include('products.urls')),

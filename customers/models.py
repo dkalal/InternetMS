@@ -1,3 +1,5 @@
+import uuid as uuid_lib
+
 from django.db import models
 from django.urls import reverse
 from django.conf import settings
@@ -39,6 +41,7 @@ class Customer(models.Model):
         blank=True,
         db_index=True,
     )
+    uuid = models.UUIDField(default=uuid_lib.uuid4, editable=False, unique=True, db_index=True)
     name = models.CharField(max_length=200, db_index=True)
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
