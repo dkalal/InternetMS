@@ -1,0 +1,15 @@
+{% load humanize %}
+{% if cart.status == "draft" and lines %}
+  <form method="post" action="{% url 'inventory:cart_convert' cart.pk 'invoice' %}" data-confirm="Create an invoice and continue to payment? Stock is deducted only after full payment." data-confirm-title="Continue to payment?" data-confirm-action="Create invoice" data-submit-lock>
+    {% csrf_token %}
+    <button class="jims-btn jims-btn-primary pos-pay-button w-full" type="submit" data-loading-label="Creating invoice...">
+      <span>Continue to payment</span>
+      <span class="pos-pay-amount"><span data-pos-payment-total>{{ grand_total|intcomma }}</span> TZS</span>
+    </button>
+  </form>
+  <form method="post" action="{% url 'inventory:cart_convert' cart.pk 'quotation' %}" data-submit-lock>{% csrf_token %}<button class="jims-btn jims-btn-quiet w-full" type="submit">Save as quotation</button></form>
+{% elif cart.quotation %}
+  <a class="jims-btn jims-btn-primary w-full" href="{% url 'billing:document_detail' 'quotation' cart.quotation.pk %}">Open quotation {{ cart.quotation.number }}</a>
+{% elif cart.invoice %}
+  <a class="jims-btn jims-btn-primary w-full" href="{% url 'billing:document_detail' 'invoice' cart.invoice.pk %}">Open invoice {{ cart.invoice.number }}</a>
+{% endif %}

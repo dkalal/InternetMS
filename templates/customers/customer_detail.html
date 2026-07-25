@@ -4,8 +4,8 @@
 {% block title %}{{ customer.name }}{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-detail-page space-y-6">
+    <header class="jims-detail-hero flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
             <div class="text-sm text-slate-500">
                 <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
@@ -48,10 +48,17 @@
               </a>
             {% endif %}
         </div>
-    </div>
+    </header>
 
-    <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <dl class="jims-detail-kpis" aria-label="Customer account overview">
+        <div class="jims-detail-kpi"><dt>Active services</dt><dd>{{ subscriptions|length }}</dd></div>
+        <div class="jims-detail-kpi"><dt>Recent billing periods</dt><dd>{{ subscription_periods|length }}</dd></div>
+        <div class="jims-detail-kpi"><dt>Service sites</dt><dd>{{ sites|length }}</dd></div>
+        <div class="jims-detail-kpi"><dt>Documents</dt><dd>{{ billing_documents|length }}</dd></div>
+    </dl>
+
+    <section class="jims-detail-section">
+        <div class="jims-detail-section-header flex-col sm:flex-row">
             <div>
                 <h2 class="text-sm font-semibold text-slate-900">Monthly subscriptions</h2>
                 <p class="mt-1 text-sm text-slate-600">Renew packages, track paid-through dates, and see unpaid billing periods.</p>
@@ -61,26 +68,40 @@
             </a>
         </div>
 
+        <div class="jims-detail-section-body">
         {% if subscriptions %}
-            <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {% for subscription in subscriptions %}
                     <div class="rounded-lg border border-slate-200 p-4">
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <div class="text-sm font-semibold text-slate-900">{{ subscription.package.name }}</div>
+                                <div class="mt-1 text-xs text-slate-500">{{ subscription.site.name|default:"Main Office" }}</div>
                                 <div class="mt-1 text-sm text-slate-600">{{ subscription.package.speed }} &middot; {{ subscription.monthly_fee_at_signup|intcomma }} TZS / month</div>
+                                {% if subscription.latest_period and subscription.latest_billing_amount %}
+                                    <div class="mt-1 text-xs text-slate-500">
+                                        Latest invoice for {{ subscription.latest_period_label }}: {{ subscription.latest_billing_amount|intcomma }} TZS
+                                    </div>
+                                {% endif %}
                                 <div class="mt-2 text-sm">
-                                    {% if subscription.paid_through_date %}
-                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Paid through {{ subscription.paid_through_date|date:"M d, Y" }}</span>
+                                    {% if subscription.latest_paid_through %}
+                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Paid through {{ subscription.latest_paid_through|date:"M d, Y" }}</span>
                                     {% else %}
                                         <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">No payment recorded</span>
                                     {% endif %}
                                 </div>
                             </div>
                             {% if customer.status == 'active' %}
-                                <a href="{% url 'billing:renew_subscription' subscription.id %}" class="shrink-0 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
-                                    Renew
-                                </a>
+                                <div class="flex shrink-0 flex-col gap-2">
+                                    <a href="{% url 'billing:renew_subscription' subscription.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
+                                        Renew
+                                    </a>
+                                    {% if subscription.status == 'active' %}
+                                        <a href="{% url 'billing:cancel_subscription' subscription.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
+                                            Cancel
+                                        </a>
+                                    {% endif %}
+                                </div>
                             {% else %}
                                 <span class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-slate-500">Customer not active</span>
                             {% endif %}
@@ -89,12 +110,13 @@
                 {% endfor %}
             </div>
         {% else %}
-            <p class="mt-4 text-sm text-slate-600">No monthly subscriptions yet. Assign a service package to create one.</p>
+            <p class="text-sm text-slate-600">No monthly subscriptions yet. Assign a service package to create one.</p>
         {% endif %}
 
         {% if subscription_periods %}
-            <div class="mt-5 overflow-hidden rounded-lg border border-slate-200">
+            <div class="jims-scroll-region mt-5 rounded-lg border border-slate-200" tabindex="0" role="region" aria-label="Recent subscription billing">
                 <table class="min-w-full divide-y divide-slate-200 text-sm">
+                    <caption class="sr-only">Recent subscription billing periods</caption>
                     <thead class="bg-slate-50">
                         <tr>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Month</th>
@@ -155,6 +177,7 @@
                 </table>
             </div>
         {% endif %}
+        </div>
     </section>
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -206,13 +229,25 @@
                     <h2 class="text-sm font-semibold text-slate-900">Internet package</h2>
                     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
-                            <dt class="text-xs text-slate-500">Package type</dt>
-                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ internet_profile.get_package_type_display }}</dd>
+                            <dt class="text-xs text-slate-500">Package</dt>
+                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ internet_profile.package_label|default:"—" }}</dd>
                         </div>
                         <div>
                             <dt class="text-xs text-slate-500">Days remaining</dt>
                             <dd class="mt-1 text-sm font-medium text-slate-900">
-                                {% if internet_profile.end_date %}{{ internet_profile.end_date|timeuntil }}{% else %}—{% endif %}
+                                {% if internet_profile.end_date %}
+                                    {% if internet_profile.days_remaining is not None %}
+                                        {% if internet_profile.days_remaining > 0 %}
+                                            {{ internet_profile.days_remaining }} day{{ internet_profile.days_remaining|pluralize }}
+                                        {% else %}
+                                            Expired
+                                        {% endif %}
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                {% else %}
+                                    —
+                                {% endif %}
                             </dd>
                         </div>
                         <div>
@@ -229,7 +264,58 @@
 
             <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-3">
-                    <h2 class="text-sm font-semibold text-slate-900">Service packages</h2>
+                    <div>
+                        <h2 class="text-sm font-semibold text-slate-900">Service sites</h2>
+                        <p class="mt-1 text-sm text-slate-600">Each office or branch can carry its own packages and subscriptions.</p>
+                    </div>
+                    <a href="{% url 'customer-site-create' customer.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
+                        Add site
+                    </a>
+                </div>
+
+                {% if sites %}
+                    <div class="mt-4 space-y-3">
+                        {% for site in sites %}
+                            <div class="rounded-lg border border-slate-200 p-4">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <div class="text-sm font-semibold text-slate-900">{{ site.name }}</div>
+                                            {% if site.is_primary %}
+                                                <span class="inline-flex items-center rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Primary</span>
+                                            {% endif %}
+                                            {% if not site.is_active %}
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="mt-1 text-sm text-slate-600">{{ site.summary }}</div>
+                                        <div class="mt-2 text-xs text-slate-500">Manage packages from this site to keep billing separate by office.</div>
+                                        <div class="mt-2 flex flex-wrap gap-2">
+                                            {% for package in site.packages.all %}
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ package.name }}</span>
+                                            {% empty %}
+                                                <span class="text-xs text-slate-500">No packages assigned.</span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <a href="{% url 'customer-site-update' site.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                        Manage site
+                                    </a>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="mt-4 text-sm text-slate-600">No sites have been added yet.</p>
+                {% endif %}
+            </div>
+
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-sm font-semibold text-slate-900">Account packages</h2>
+                        <p class="mt-1 text-sm text-slate-600">These are mirrored to the account's primary site and drive default billing.</p>
+                    </div>
                     <a href="{% url 'customer-update' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                         Manage
                     </a>
@@ -263,6 +349,10 @@
             </div>
         </section>
     </div>
+
+    {% include "includes/custom_fields_detail.html" %}
+
+    {% include "includes/custom_field_definition_modal.html" %}
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

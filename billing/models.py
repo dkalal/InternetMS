@@ -19,12 +19,33 @@ class BillingDocument(models.Model):
         DRAFT = "draft", "Draft"
         SENT = "sent", "Sent"
         ISSUED = "issued", "Issued"
+        ACCEPTED = "accepted", "Accepted"
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
+        EXPIRED = "expired", "Expired"
+        CONVERTED = "converted", "Converted"
         PARTIALLY_PAID = "partially_paid", "Partially Paid"
         PAID = "paid", "Paid"
+        VOID = "void", "Void"
+        SUPERSEDED = "superseded", "Superseded"
         CANCELLED = "cancelled", "Cancelled"
         REISSUED = "reissued", "Reissued"
+
+    class InvoiceStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        ISSUED = "issued", "Issued"
+        PARTIALLY_PAID = "partially_paid", "Partially Paid"
+        PAID = "paid", "Paid"
+        VOID = "void", "Void"
+        SUPERSEDED = "superseded", "Superseded"
+
+    class QuotationStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SENT = "sent", "Sent"
+        ACCEPTED = "accepted", "Accepted"
+        REJECTED = "rejected", "Rejected"
+        EXPIRED = "expired", "Expired"
+        CONVERTED = "converted", "Converted"
 
     organization = models.ForeignKey(
         "users.Organization",
@@ -47,6 +68,12 @@ class BillingDocument(models.Model):
 
     issue_date = models.DateField(db_index=True)
     issued_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    converted_at = models.DateTimeField(null=True, blank=True)
+    voided_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateField(blank=True, null=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
     version_number = models.PositiveIntegerField(default=1)
@@ -70,9 +97,16 @@ class BillingDocument(models.Model):
 
     currency = models.CharField(max_length=10, default="TZS")
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("18.00"))
     tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    balance_brought_forward = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Outstanding customer balance captured when this invoice was created.",
+    )
     notes = models.TextField(blank=True, default="")
 
     created_by = models.ForeignKey(
@@ -99,12 +133,36 @@ class BillingDocument(models.Model):
         related_name="reissued_versions",
         limit_choices_to={"document_type": DocumentType.INVOICE},
     )
+    superseded_by = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="superseded_invoices",
+        limit_choices_to={"document_type": DocumentType.INVOICE},
+    )
     corrected_invoice = models.ForeignKey(
         "self",
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="correction_credit_notes",
+        limit_choices_to={"document_type": DocumentType.INVOICE},
+    )
+    source_quotation = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="generated_invoices",
+        limit_choices_to={"document_type": DocumentType.QUOTATION},
+    )
+    converted_invoice = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="source_quotation_versions",
         limit_choices_to={"document_type": DocumentType.INVOICE},
     )
     payment_date = models.DateField(blank=True, null=True)
@@ -155,6 +213,46 @@ class BillingDocument(models.Model):
     def __str__(self) -> str:
         return f"{self.get_document_type_display()} #{self.number}"
 
+    @classmethod
+    def invoice_status_choices(cls):
+        allowed = {
+            cls.InvoiceStatus.DRAFT,
+            cls.InvoiceStatus.ISSUED,
+            cls.InvoiceStatus.PARTIALLY_PAID,
+            cls.InvoiceStatus.PAID,
+            cls.InvoiceStatus.VOID,
+            cls.InvoiceStatus.SUPERSEDED,
+        }
+        return [choice for choice in cls.Status.choices if choice[0] in allowed]
+
+    @classmethod
+    def quotation_status_choices(cls):
+        allowed = {
+            cls.QuotationStatus.DRAFT,
+            cls.QuotationStatus.SENT,
+            cls.QuotationStatus.ACCEPTED,
+            cls.QuotationStatus.REJECTED,
+            cls.QuotationStatus.EXPIRED,
+            cls.QuotationStatus.CONVERTED,
+        }
+        return [choice for choice in cls.Status.choices if choice[0] in allowed]
+
+    @property
+    def can_edit(self) -> bool:
+        if self.document_type == self.DocumentType.INVOICE:
+            return self.status == self.InvoiceStatus.DRAFT
+        if self.document_type == self.DocumentType.QUOTATION:
+            return self.status == self.QuotationStatus.DRAFT and self.is_current_version
+        return False
+
+    @property
+    def can_convert(self) -> bool:
+        return self.document_type == self.DocumentType.QUOTATION and self.status in {
+            self.QuotationStatus.DRAFT,
+            self.QuotationStatus.SENT,
+            self.QuotationStatus.ACCEPTED,
+        }
+
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.unscoped().filter(pk=self.pk).only("document_type", "status").first()
@@ -166,9 +264,11 @@ class BillingDocument(models.Model):
                     self.Status.ISSUED,
                     self.Status.PARTIALLY_PAID,
                     self.Status.PAID,
+                    self.Status.VOID,
+                    self.Status.SUPERSEDED,
                 }:
                     raise ValidationError(
-                        "This invoice has already been issued. To modify it, create a credit note or cancel and reissue."
+                        "This invoice has already been issued. To modify it, create a credit note or void and reissue."
                     )
         if self.tenant_id is None and self.organization_id is not None:
             self.tenant_id = self.organization_id
@@ -252,9 +352,11 @@ class BillingLineItem(models.Model):
                 BillingDocument.Status.ISSUED,
                 BillingDocument.Status.PARTIALLY_PAID,
                 BillingDocument.Status.PAID,
+                BillingDocument.Status.VOID,
+                BillingDocument.Status.SUPERSEDED,
             }:
                 raise ValidationError(
-                    "This invoice has already been issued. To modify it, create a credit note or cancel and reissue."
+                    "This invoice has already been issued. To modify it, create a credit note or void and reissue."
                 )
         if self.tenant_id is None and self.organization_id is not None:
             self.tenant_id = self.organization_id
@@ -276,9 +378,11 @@ class BillingLineItem(models.Model):
                 BillingDocument.Status.ISSUED,
                 BillingDocument.Status.PARTIALLY_PAID,
                 BillingDocument.Status.PAID,
+                BillingDocument.Status.VOID,
+                BillingDocument.Status.SUPERSEDED,
             }:
                 raise ValidationError(
-                    "This invoice has already been issued. To modify it, create a credit note or cancel and reissue."
+                    "This invoice has already been issued. To modify it, create a credit note or void and reissue."
                 )
         return super().delete(*args, **kwargs)
 
@@ -412,6 +516,7 @@ class CustomerSubscription(models.Model):
         db_index=True,
     )
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="subscriptions")
+    site = models.ForeignKey("customers.CustomerSite", on_delete=models.PROTECT, related_name="subscriptions", null=True, blank=True)
     package = models.ForeignKey("services.Package", on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     start_date = models.DateField()
@@ -426,20 +531,22 @@ class CustomerSubscription(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "customer", "package"],
+                fields=["organization", "customer", "site", "package"],
                 condition=models.Q(status="active"),
-                name="uniq_active_subscription_per_customer_package",
+                name="uniq_active_subscription_per_customer_site_package",
             )
         ]
         indexes = [
             models.Index(fields=["organization", "status"]),
             models.Index(fields=["tenant", "status"]),
             models.Index(fields=["customer", "status"]),
+            models.Index(fields=["site", "status"]),
             models.Index(fields=["package", "status"]),
         ]
 
     def __str__(self) -> str:
-        return f"{self.customer} - {self.package}"
+        site_name = self.site.name if self.site_id and self.site_id is not None else "Main Office"
+        return f"{self.customer} - {site_name} - {self.package}"
 
     def save(self, *args, **kwargs):
         if self.tenant_id is None and self.organization_id is not None:
@@ -448,6 +555,112 @@ class CustomerSubscription(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.site_id is None and self.customer_id is not None:
+            from customers.models import Customer
+            from customers.services import CustomerService
+
+            customer = Customer.all_objects.filter(pk=self.customer_id).first()
+            if customer is not None and self.organization_id is not None:
+                self.site = CustomerService.ensure_primary_site(organization=self.organization, customer=customer)
+        super().save(*args, **kwargs)
+
+
+class BillingSheet(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        INVOICED = "invoiced", "Invoiced"
+
+    organization = models.ForeignKey(
+        "users.Organization",
+        on_delete=models.PROTECT,
+        related_name="billing_sheets",
+        db_index=True,
+    )
+    tenant = models.ForeignKey(
+        "users.Organization",
+        on_delete=models.PROTECT,
+        related_name="tenant_billing_sheets",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_sheets")
+    reference_number = models.CharField(max_length=60, db_index=True)
+    title = models.CharField(max_length=200)
+    notes = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN, db_index=True)
+    invoice = models.ForeignKey(
+        BillingDocument,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="source_billing_sheets",
+        limit_choices_to={"document_type": BillingDocument.DocumentType.INVOICE},
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="created_billing_sheets",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "reference_number"],
+                name="uniq_billing_sheet_ref_per_org",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status", "created_at"]),
+            models.Index(fields=["tenant", "status", "created_at"]),
+            models.Index(fields=["organization", "customer", "status"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.reference_number} — {self.title}"
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.organization_id is not None:
+            self.tenant_id = self.organization_id
+        if self.organization_id is None and self.tenant_id is not None:
+            self.organization_id = self.tenant_id
+        if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
+            self.organization_id = self.tenant_id
+        super().save(*args, **kwargs)
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == self.Status.OPEN
+
+    @property
+    def subtotal(self) -> Decimal:
+        return sum((item.total_price for item in self.items.all()), Decimal("0.00"))
+
+
+class BillingItem(models.Model):
+    billing_sheet = models.ForeignKey(BillingSheet, on_delete=models.CASCADE, related_name="items")
+    description = models.CharField(max_length=300)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1.00"))
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return self.description
+
+    def save(self, *args, **kwargs):
+        self.total_price = (self.quantity * self.unit_price).quantize(Decimal("0.01"))
         super().save(*args, **kwargs)
 
 

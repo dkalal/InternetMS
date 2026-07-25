@@ -1,118 +1,202 @@
 {% extends 'base.html' %}
-{% load humanize %}
-{% load listing_tags %}
-
-{% block title %}Products{% endblock %}
-
+{% load humanize listing_tags %}
+{% block title %}Product and service catalog{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
-<div class="space-y-6">
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">Products</h1>
-      <p class="mt-1 text-sm text-slate-600">Track stock, pricing, and customer associations.</p>
-    </div>
-    <a href="{% url 'product-create' %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-      Add product
-    </a>
-  </div>
+{% include "inventory/includes/module_nav.html" %}
 
-  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-    <form method="get" class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+<div class="jims-list-page space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="text-sm font-semibold text-brand-700">Catalog</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Products and services</h1>
+      <p class="mt-1 text-sm text-slate-600">Find stock items and billable services, with live availability at a glance.</p>
+    </div>
+    {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-create' %}" class="jims-btn jims-btn-primary">Add item</a>{% endif %}
+  </header>
+
+  <section class="jims-panel p-4" aria-label="Catalog filters">
+    <form method="get" class="space-y-4">
       <input type="hidden" name="sort" value="{{ active_sort }}">
       <input type="hidden" name="page_size" value="{{ page_size }}">
-      <div class="lg:col-span-3">
-        <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
-        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Name, description, customer..." class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
-      </div>
-      <div class="lg:col-span-2">
-        <label for="category" class="block text-sm font-medium text-slate-700">Category</label>
-        <select id="category" name="category" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
-          <option value="">All categories</option>
-          {% for value,label in category_choices %}
-            <option value="{{ value }}" {% if request.GET.category == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="lg:col-span-2">
-        <label for="is_active" class="block text-sm font-medium text-slate-700">Status</label>
-        <select id="is_active" name="is_active" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
-          <option value="">Any status</option>
-          <option value="1" {% if request.GET.is_active == "1" %}selected{% endif %}>Active</option>
-          <option value="0" {% if request.GET.is_active == "0" %}selected{% endif %}>Inactive</option>
-        </select>
-      </div>
-      <div class="lg:col-span-2">
-        <label for="stock_state" class="block text-sm font-medium text-slate-700">Stock</label>
-        <select id="stock_state" name="stock_state" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
-          <option value="">Any stock</option>
-          <option value="available" {% if request.GET.stock_state == "available" %}selected{% endif %}>Available</option>
-          <option value="low" {% if request.GET.stock_state == "low" %}selected{% endif %}>Low stock</option>
-          <option value="out" {% if request.GET.stock_state == "out" %}selected{% endif %}>Out of stock</option>
-        </select>
-      </div>
-      <div class="flex gap-2 lg:col-span-3">
-        <button class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Apply</button>
-        <a href="{% url 'product-list' %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</a>
+      <div class="flex flex-col gap-3 sm:flex-row">
+        <div class="flex-1">
+          <label for="search" class="sr-only">Search catalog</label>
+          <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Search name, SKU, brand, model, serial…" class="min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+        </div>
+        <button class="jims-btn jims-btn-primary">Search</button>
+        <details class="jims-filter-drawer sm:relative" {% if request.GET.catalog_category or request.GET.item_type or request.GET.is_active or request.GET.stock_state or request.GET.serialized %}open{% endif %}>
+          <summary class="jims-btn jims-btn-secondary cursor-pointer">Filters</summary>
+          <div class="mt-3 grid gap-4 border-t border-slate-200 pt-4 sm:absolute sm:right-0 sm:z-20 sm:w-[36rem] sm:grid-cols-2 sm:rounded-xl sm:border sm:bg-white sm:p-5 sm:shadow-xl lg:grid-cols-3">
+            <div>
+              <label for="catalog_category" class="block text-sm font-medium text-slate-700">Category</label>
+              <select id="catalog_category" name="catalog_category" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All categories</option>
+                {% for category in catalog_categories %}<option value="{{ category.pk }}" {% if request.GET.catalog_category == category.pk|stringformat:"s" %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="item_type" class="block text-sm font-medium text-slate-700">Item type</label>
+              <select id="item_type" name="item_type" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Products and services</option>
+                <option value="physical" {% if request.GET.item_type == "physical" %}selected{% endif %}>Physical product</option>
+                <option value="service" {% if request.GET.item_type == "service" %}selected{% endif %}>Service</option>
+              </select>
+            </div>
+            <div>
+              <label for="stock_state" class="block text-sm font-medium text-slate-700">Stock state</label>
+              <select id="stock_state" name="stock_state" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Any stock state</option>
+                <option value="available" {% if request.GET.stock_state == "available" %}selected{% endif %}>Available</option>
+                <option value="low" {% if request.GET.stock_state == "low" %}selected{% endif %}>Low stock</option>
+                <option value="out" {% if request.GET.stock_state == "out" %}selected{% endif %}>Out of stock</option>
+              </select>
+            </div>
+            <div>
+              <label for="serialized" class="block text-sm font-medium text-slate-700">Serial tracking</label>
+              <select id="serialized" name="serialized" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Any tracking</option>
+                <option value="1" {% if request.GET.serialized == "1" %}selected{% endif %}>Serialized</option>
+                <option value="0" {% if request.GET.serialized == "0" %}selected{% endif %}>Not serialized</option>
+              </select>
+            </div>
+            <div>
+              <label for="is_active" class="block text-sm font-medium text-slate-700">Status</label>
+              <select id="is_active" name="is_active" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Active and inactive</option>
+                <option value="1" {% if request.GET.is_active == "1" %}selected{% endif %}>Active</option>
+                <option value="0" {% if request.GET.is_active == "0" %}selected{% endif %}>Inactive</option>
+              </select>
+            </div>
+            <div class="flex items-end gap-2">
+              <button class="jims-btn jims-btn-primary flex-1">Apply</button>
+              <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary flex-1">Reset</a>
+            </div>
+          </div>
+        </details>
       </div>
     </form>
+
+    {% if request.GET.search or request.GET.catalog_category or request.GET.item_type or request.GET.is_active or request.GET.stock_state or request.GET.serialized %}
+      <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 text-xs">
+        <span class="font-semibold text-slate-500">Active filters:</span>
+        {% if request.GET.search %}<span class="rounded-full bg-brand-50 px-2.5 py-1 text-brand-800">Search: {{ request.GET.search }}</span>{% endif %}
+        {% if request.GET.item_type %}<span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Type: {{ request.GET.item_type|title }}</span>{% endif %}
+        {% if request.GET.stock_state %}<span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Stock: {{ request.GET.stock_state|title }}</span>{% endif %}
+        {% if request.GET.is_active %}<span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Status filtered</span>{% endif %}
+        {% if request.GET.serialized %}<span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Serial tracking filtered</span>{% endif %}
+        <a href="{% url 'product-list' %}" class="font-semibold text-brand-700">Clear all</a>
+      </div>
+    {% endif %}
   </section>
 
-  <div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-    <div class="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
-      Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>-<span class="font-semibold text-slate-900">{{ end_index }}</span>
-      of <span class="font-semibold text-slate-900">{{ result_count }}</span> products
+  <section class="jims-list-results jims-panel overflow-hidden" aria-labelledby="catalog-results">
+    <div class="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+      <div id="catalog-results">Showing <strong class="text-slate-900">{{ start_index }}–{{ end_index }}</strong> of <strong class="text-slate-900">{{ result_count }}</strong> items</div>
+      <div class="flex gap-3">
+        {% if INVENTORY_CAN_EXPORT %}<a class="font-semibold text-brand-700" href="{% url 'inventory:export_records' 'products' %}">Export Excel</a>{% endif %}
+        <a class="font-semibold text-brand-700" href="{% url 'inventory:category_list' %}">Manage categories</a>
+      </div>
     </div>
-    <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-slate-200">
-        <thead class="bg-slate-50">
-          <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Product" sort_key="name" desc_sort_key="-name" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Category" sort_key="category" desc_sort_key="-category" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Stock" sort_key="stock" desc_sort_key="-stock" %}</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Retail" sort_key="retail" desc_sort_key="-retail" %}</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Wholesale" sort_key="wholesale" desc_sort_key="-wholesale" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Linked customer</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-200">
-          {% for product in products %}
-            <tr class="hover:bg-slate-50">
-              <td class="px-4 py-3 text-sm">
-                <div class="font-semibold text-slate-900">{{ product.name }}</div>
-                {% if product.description %}<div class="mt-1 max-w-md truncate text-xs text-slate-500">{{ product.description }}</div>{% endif %}
-                {% if not product.is_active %}<span class="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>{% endif %}
-              </td>
-              <td class="px-4 py-3 text-sm text-slate-700">{{ product.get_category_display }}</td>
-              <td class="px-4 py-3 text-sm">
-                <span class="font-medium text-slate-900">{{ product.quantity }} {{ product.measure_unit }}</span>
-                {% if product.quantity <= 0 %}
-                  <span class="ml-2 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Out</span>
-                {% elif product.quantity <= 5 %}
-                  <span class="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">Low</span>
-                {% endif %}
-              </td>
-              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</td>
-              <td class="px-4 py-3 text-right text-sm text-slate-700">
-                {% if product.allow_wholesale and product.wholesale_price %}
-                  {{ product.wholesale_price|intcomma }} TZS
-                  <div class="text-xs text-slate-500">Min {{ product.wholesale_min_quantity }}</div>
-                {% else %}
-                  -
-                {% endif %}
-              </td>
-              <td class="px-4 py-3 text-sm text-slate-700">{{ product.customer.name|default:"-" }}</td>
-              <td class="px-4 py-3 text-right text-sm">
-                <a href="{% url 'product-detail' product.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
-              </td>
+
+    {% if products %}
+      <div class="jims-table-wrap jims-desktop-table">
+        <table class="jims-table">
+          <thead>
+            <tr>
+              <th>{% include "components/table_sort_link.html" with label="Product" sort_key="name" desc_sort_key="-name" %}</th>
+              <th>SKU</th>
+              <th>{% include "components/table_sort_link.html" with label="Category" sort_key="category" desc_sort_key="-category" %}</th>
+              <th>Type</th>
+              <th>{% include "components/table_sort_link.html" with label="Available" sort_key="stock" desc_sort_key="-stock" %}</th>
+              <th>Stock status</th>
+              <th class="text-right">{% include "components/table_sort_link.html" with label="Selling price" sort_key="retail" desc_sort_key="-retail" %}</th>
+              <th>Status</th>
+              <th><span class="sr-only">Actions</span></th>
             </tr>
-          {% empty %}
-            <tr><td colspan="7" class="px-4 py-10 text-center text-sm text-slate-500">No products found.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% include "components/list_pagination.html" %}
-  </div>
+          </thead>
+          <tbody>
+            {% for product in products %}
+              <tr>
+                <td>
+                  <a href="{% url 'product-detail' product.pk %}" class="font-semibold text-slate-950 hover:text-brand-700">{{ product.name }}</a>
+                  {% if product.brand or product.model_number %}<div class="mt-1 text-xs text-slate-500">{{ product.brand }}{% if product.brand and product.model_number %} · {% endif %}{{ product.model_number }}</div>{% endif %}
+                </td>
+                <td class="font-mono text-xs text-slate-600">{{ product.sku|default:"—" }}</td>
+                <td>{{ product.catalog_category|default:product.get_category_display }}</td>
+                <td>
+                  {% if product.item_type == "service" %}<span class="font-medium text-sky-800">Service</span>{% else %}Product{% if product.is_serialized %}<div class="text-xs text-slate-500">Serialized</div>{% endif %}{% endif %}
+                </td>
+                <td>
+                  {% if product.item_type == "service" %}<span class="text-slate-500">Not tracked</span>{% else %}<span class="font-semibold text-slate-950">{{ product.available_stock|intcomma }}</span> {{ product.measure_unit }}{% endif %}
+                </td>
+                <td>
+                  {% if product.item_type == "service" %}
+                    {% include "components/status_badge.html" with value="service" label="No stock" %}
+                  {% elif product.available_stock <= 0 %}
+                    {% include "components/status_badge.html" with value="out" label="Out of stock" %}
+                  {% elif product.available_stock <= product.reorder_threshold %}
+                    {% include "components/status_badge.html" with value="low" label="Low stock" %}
+                  {% else %}
+                    {% include "components/status_badge.html" with value="available" label="Available" %}
+                  {% endif %}
+                </td>
+                <td class="text-right font-semibold text-slate-950">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</td>
+                <td>{% if product.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</td>
+                <td class="text-right">
+                  <div class="jims-menu">
+                    <button type="button" class="jims-btn jims-btn-quiet px-2" data-menu-button aria-controls="product-actions-{{ product.pk }}" aria-expanded="false"><span class="sr-only">Actions for {{ product.name }}</span>•••</button>
+                    <div id="product-actions-{{ product.pk }}" class="jims-menu-panel" data-menu-panel hidden>
+                      <a href="{% url 'product-detail' product.pk %}">View details</a>
+                      {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-update' product.pk %}">Edit item</a>{% endif %}
+                      {% if product.item_type == "physical" %}<a href="{% url 'inventory:movement_list' %}?product={{ product.pk }}">Movement history</a>{% endif %}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="jims-mobile-list">
+        {% for product in products %}
+          <article class="rounded-xl border border-slate-200 bg-white p-4">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <a href="{% url 'product-detail' product.pk %}" class="font-semibold text-slate-950">{{ product.name }}</a>
+                <div class="mt-1 text-xs text-slate-500">{{ product.sku|default:"No SKU" }} · {{ product.catalog_category|default:product.get_category_display }}</div>
+              </div>
+              {% if product.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}
+            </div>
+            <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div><div class="text-xs text-slate-500">Type</div><div class="mt-1 font-medium">{% if product.item_type == "service" %}Service{% else %}Physical product{% endif %}</div></div>
+              <div class="text-right"><div class="text-xs text-slate-500">Price</div><div class="mt-1 font-semibold">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</div></div>
+              <div class="col-span-2 border-t border-slate-100 pt-3">
+                {% if product.item_type == "service" %}
+                  {% include "components/status_badge.html" with value="service" label="Service · no stock tracking" %}
+                {% elif product.available_stock <= 0 %}
+                  {% include "components/status_badge.html" with value="out" label="Out of stock" %}
+                {% elif product.available_stock <= product.reorder_threshold %}
+                  {% include "components/status_badge.html" with value="low" label="Low stock" %}
+                {% else %}
+                  {% include "components/status_badge.html" with value="available" label="Available" %}
+                {% endif %}
+                {% if product.item_type == "physical" %}<span class="ml-2 font-semibold">{{ product.available_stock|intcomma }} {{ product.measure_unit }}</span>{% endif %}
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      {% include "components/list_pagination.html" %}
+    {% else %}
+      {% url 'product-create' as create_product_url %}
+      {% if INVENTORY_CAN_MANAGE_PRODUCTS %}
+        {% include "components/empty_state.html" with title="No catalog items found" message="Clear the filters or add the first product or billable service." action_url=create_product_url action_label="Add item" %}
+      {% else %}
+        {% include "components/empty_state.html" with title="No catalog items found" message="Clear the filters to broaden your search." %}
+      {% endif %}
+    {% endif %}
+  </section>
 </div>
 {% endblock %}

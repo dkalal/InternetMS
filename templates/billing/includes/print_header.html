@@ -34,6 +34,9 @@
         {% comment %} <ul class="brand-list"> {% endcomment %}
           {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}
             {{ ACTIVE_BRANDING.address_line2 }}<br>
+          {% elif ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+            {{ ACTIVE_BRANDING.address_line1 }}<br>
+          {% elif COMPANY_ADDRESS %}
             {{ COMPANY_ADDRESS }}<br>
           {% endif %}
           {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}
@@ -53,7 +56,9 @@
 
   <div class="header-right">
     <div class="meta-card">
-      <h2 class="document-title">{{ document.get_document_type_display }}</h2>
+      <h2 class="document-title{% if document.document_type == "invoice" %} invoice-title{% endif %}">
+        {% if document.document_type == "invoice" %}Proforma Invoice{% else %}{{ document.get_document_type_display }}{% endif %}
+      </h2>
       <div class="meta-grid">
         <div class="meta-row">
           <div class="meta-label">{% if document.document_type == "quotation" %}Quotation No.{% else %}Number{% endif %}</div>

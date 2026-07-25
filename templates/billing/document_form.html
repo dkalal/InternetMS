@@ -7,12 +7,7 @@
   <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
-      <p class="mt-1 max-w-3xl text-sm text-slate-600">Prepare a polished billing document with compact details, flexible product and package selection, and live totals before saving.</p>
-    </div>
-    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Compact document metadata</span>
-      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Multiple products and packages</span>
-      <span class="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-200">Live pricing summary</span>
+      <p class="mt-1 max-w-3xl text-sm text-slate-600">Build the document line by line and keep totals visible while you work.</p>
     </div>
   </div>
 
@@ -21,14 +16,13 @@
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
       <div class="space-y-6">
-        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div class="mb-4">
             <h2 class="text-base font-semibold text-slate-900">Document details</h2>
-            <p class="mt-1 text-sm text-slate-500">Keep customer, dates, status, currency, and tax visible without forcing a long stacked form.</p>
           </div>
 
           {% if form.non_field_errors %}
-            <div class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
               {% for error in form.non_field_errors %}
                 <div>{{ error }}</div>
               {% endfor %}
@@ -40,27 +34,27 @@
           </div>
         </section>
 
-        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div class="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 class="text-base font-semibold text-slate-900">Line items</h2>
-              <p class="mt-1 text-sm text-slate-500">Add multiple products, packages, or custom items in one quotation and keep totals visible as you work.</p>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800" data-kind="custom">
-                Add custom item
+            <div class="relative flex flex-wrap items-center justify-end gap-2">
+              <button type="button" class="js-toggle-item-menu inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-lg leading-none text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-expanded="false" aria-label="Choose line item type" title="Add line item">
+                +
               </button>
-              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50" data-kind="product">
-                Add product row
-              </button>
-              <button type="button" class="js-add-item inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50" data-kind="package">
-                Add package row
-              </button>
+              <div class="js-add-item-menu hidden flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-white p-1 shadow-sm">
+                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="custom">Custom</button>
+                <span class="text-slate-300" aria-hidden="true">|</span>
+                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="product">Product</button>
+                <span class="text-slate-300" aria-hidden="true">|</span>
+                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="package">Package</button>
+              </div>
             </div>
           </div>
 
           {% if formset.non_form_errors %}
-            <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            <div class="mt-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
               {% for error in formset.non_form_errors %}
                 <div>{{ error }}</div>
               {% endfor %}
@@ -75,7 +69,7 @@
               {% endfor %}
             </div>
 
-            <div id="line-items-empty" class="mt-4 hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+            <div id="line-items-empty" class="mt-4 hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
               No active line items yet. Add a product, package, or custom item to continue.
             </div>
           </div>
@@ -83,11 +77,10 @@
       </div>
 
       <aside class="space-y-6 xl:sticky xl:top-6 xl:self-start">
-        <section class="rounded-3xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+        <section class="rounded-lg border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold">Quotation summary</h2>
-              <p class="mt-1 text-sm text-slate-300">Live totals update as line items and tax change.</p>
+              <h2 class="text-base font-semibold">Document summary</h2>
             </div>
             <span class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200" id="summary-currency">{{ form.currency.value|default:"TZS"|upper }}</span>
           </div>
@@ -111,70 +104,12 @@
             </div>
           </dl>
         </section>
-
-        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h2 class="text-base font-semibold text-slate-900">Product quick add</h2>
-              <p class="mt-1 text-sm text-slate-500">Select any active product and append it as a line item.</p>
-            </div>
-            <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">{{ product_catalog|length }} active</span>
-          </div>
-
-          <div class="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
-            {% for product in product_catalog %}
-              <button
-                type="button"
-                class="js-quick-add flex w-full items-start justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
-                data-kind="product"
-                data-id="{{ product.id }}"
-              >
-                <span>
-                  <span class="block text-sm font-semibold text-slate-900">{{ product.name }}</span>
-                  <span class="mt-1 block text-xs text-slate-500">{{ product.description|default:"No description" }}</span>
-                </span>
-                <span class="ml-3 text-sm font-semibold text-slate-700">{{ product.selling_price }}</span>
-              </button>
-            {% empty %}
-              <div class="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">No active products available.</div>
-            {% endfor %}
-          </div>
-        </section>
-
-        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h2 class="text-base font-semibold text-slate-900">Package quick add</h2>
-              <p class="mt-1 text-sm text-slate-500">Add multiple packages to the same quotation with one click.</p>
-            </div>
-            <span class="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">{{ package_catalog|length }} active</span>
-          </div>
-
-          <div class="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
-            {% for package in package_catalog %}
-              <button
-                type="button"
-                class="js-quick-add flex w-full items-start justify-between rounded-2xl border border-slate-200 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
-                data-kind="package"
-                data-id="{{ package.id }}"
-              >
-                <span>
-                  <span class="block text-sm font-semibold text-slate-900">{{ package.name }}</span>
-                  <span class="mt-1 block text-xs text-slate-500">{{ package.speed }} - {{ package.description|default:"No description" }}</span>
-                </span>
-                <span class="ml-3 text-sm font-semibold text-slate-700">{{ package.price }}</span>
-              </button>
-            {% empty %}
-              <div class="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">No active packages available.</div>
-            {% endfor %}
-          </div>
-        </section>
       </aside>
     </div>
 
     <div class="flex items-center justify-end gap-2">
-      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
-      <button type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
         {% if document %}Save changes{% else %}Create {{ doc_type_display|lower }}{% endif %}
       </button>
     </div>
@@ -308,15 +243,6 @@
       label: row.querySelector('.js-item-label'),
     });
 
-    const setButtonState = (row, activeType) => {
-      row.querySelectorAll('.js-item-type').forEach((button) => {
-        const active = button.dataset.type === activeType;
-        button.classList.toggle('bg-white', active);
-        button.classList.toggle('text-slate-900', active);
-        button.classList.toggle('shadow-sm', active);
-        button.classList.toggle('text-slate-600', !active);
-      });
-    };
 
     const setDescriptionIfSuggested = (field, value) => {
       if (!field) {
@@ -329,8 +255,25 @@
       }
     };
 
+    const isDeleteMarked = (deleteField) => {
+      if (!deleteField) return false;
+      return deleteField.checked || ['1', 'true', 'on', 'yes'].includes(String(deleteField.value || '').toLowerCase());
+    };
+
+    const markForDelete = (deleteField) => {
+      if (!deleteField) return;
+      deleteField.checked = true;
+      deleteField.value = 'on';
+      deleteField.setAttribute('value', 'on');
+    };
+
+    const isActiveRow = (row) => {
+      const controls = getRowControls(row);
+      return !row.classList.contains('hidden') && !isDeleteMarked(controls.deleteBox);
+    };
+
     const refreshLabels = () => {
-      const activeRows = [...container.querySelectorAll('.js-line-item')].filter((row) => !row.classList.contains('hidden'));
+      const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
       activeRows.forEach((row, index) => {
         const label = row.querySelector('.js-item-label');
         if (label) {
@@ -345,7 +288,7 @@
 
     const refreshSummary = () => {
       refreshLabels();
-      const activeRows = [...container.querySelectorAll('.js-line-item')].filter((row) => !row.classList.contains('hidden'));
+      const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
       const subtotal = activeRows.reduce((sum, row) => {
         const controls = getRowControls(row);
         const line = (parseMoney(controls.quantity?.value) * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value);
@@ -367,15 +310,20 @@
       const controls = getRowControls(row);
       const productId = controls.product?.value || '';
       const packageId = controls.package?.value || '';
-      const activeType = productId ? 'product' : packageId ? 'package' : 'custom';
+      const activeType = productId ? 'product' : packageId ? 'package' : (row.dataset.itemType || 'custom');
       const product = productCatalog.get(productId);
       const packageItem = packageCatalog.get(packageId);
       const customer = getSelectedCustomer();
       const quantity = parseMoney(controls.quantity?.value);
 
+      const catalogCol = row.querySelector('.js-catalog-col');
+      const isCustom = activeType === 'custom';
+      if (catalogCol) {
+        catalogCol.classList.toggle('hidden', isCustom);
+      }
+
       controls.productWrap?.classList.toggle('hidden', activeType !== 'product');
       controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
-      setButtonState(row, activeType);
 
       if (activeType === 'product' && product) {
         const tierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(customer?.pricing_tier || '');
@@ -397,7 +345,7 @@
         }
         controls.summary.textContent = `${packageItem.name} selected`;
       } else {
-        controls.summary.textContent = 'No product or package selected yet.';
+        controls.summary.textContent = activeType === 'product' ? 'Select a product.' : activeType === 'package' ? 'Select a package.' : 'Custom line';
       }
 
       const gross = quantity * parseMoney(controls.unitPrice?.value);
@@ -426,6 +374,7 @@
 
     const activateType = (row, type, options = {}) => {
       const controls = getRowControls(row);
+      row.dataset.itemType = type;
       const clearOther = options.clearOther !== false;
       if (type === 'product' && clearOther && controls.package) {
         controls.package.value = '';
@@ -471,9 +420,21 @@
 
     const bindRow = (row) => {
       const controls = getRowControls(row);
-      row.querySelectorAll('.js-item-type').forEach((button) => {
-        button.addEventListener('click', () => activateType(row, button.dataset.type));
-      });
+      if (controls.product?.value) row.dataset.itemType = 'product';
+      if (controls.package?.value) row.dataset.itemType = 'package';
+      if (controls.pricingMode?.value && !['retail', ''].includes(controls.pricingMode.value)) {
+        row.querySelector('[data-cell="pricing"]')?.classList.remove('hidden');
+      }
+      if (parseMoney(controls.discount?.value) > 0) {
+        row.querySelector('[data-cell="discount"]')?.classList.remove('hidden');
+      }
+      if (controls.promotion?.value) {
+        row.querySelector('[data-cell="promotion"]')?.classList.remove('hidden');
+      }
+      if ((controls.discountReason?.value || '').trim()) {
+        row.querySelector('[data-cell="reason"]')?.classList.remove('hidden');
+      }
+
       row.querySelectorAll('.js-clear-selection').forEach((button) => {
         button.addEventListener('click', () => {
           if (button.dataset.clear === 'product' && controls.product) {
@@ -520,7 +481,7 @@
       });
       row.querySelector('.js-remove-item')?.addEventListener('click', () => {
         if (controls.deleteBox) {
-          controls.deleteBox.checked = true;
+          markForDelete(controls.deleteBox);
           row.classList.add('hidden');
         } else {
           row.remove();
@@ -530,29 +491,84 @@
       syncRow(row);
     };
 
-    const createRow = (kind = 'custom') => {
+    const createRow = (kind = 'custom', afterRow = null) => {
       const index = Number.parseInt(totalForms.value, 10);
       const html = template.innerHTML.replaceAll('__prefix__', String(index));
       const fragment = document.createRange().createContextualFragment(html);
       const row = fragment.firstElementChild;
-      container.appendChild(row);
+      if (afterRow && afterRow.parentElement === container) {
+        afterRow.insertAdjacentElement('afterend', row);
+      } else {
+        container.appendChild(row);
+      }
       totalForms.value = String(index + 1);
       bindRow(row);
       activateType(row, kind);
+      const focusTarget = kind === 'product'
+        ? row.querySelector('[name$="-product"]')
+        : kind === 'package'
+          ? row.querySelector('[name$="-package"]')
+          : row.querySelector('[name$="-description"]');
+      focusTarget?.focus();
       return row;
     };
 
-    document.querySelectorAll('.js-add-item').forEach((button) => {
-      button.addEventListener('click', () => {
-        createRow(button.dataset.kind || 'custom');
-      });
-    });
+    document.addEventListener('click', (event) => {
+      const toggleItemMenuButton = event.target.closest('.js-toggle-item-menu');
+      if (toggleItemMenuButton) {
+        const menu = toggleItemMenuButton.parentElement?.querySelector('.js-add-item-menu');
+        if (menu) {
+          const isOpening = menu.classList.contains('hidden');
+          document.querySelectorAll('.js-add-item-menu').forEach((otherMenu) => {
+            if (otherMenu !== menu) {
+              otherMenu.classList.add('hidden');
+              otherMenu.classList.remove('flex');
+            }
+          });
+          menu.classList.toggle('hidden', !isOpening);
+          menu.classList.toggle('flex', isOpening);
+          toggleItemMenuButton.setAttribute('aria-expanded', String(isOpening));
+        }
+        return;
+      }
 
-    document.querySelectorAll('.js-quick-add').forEach((button) => {
-      button.addEventListener('click', () => {
-        const row = createRow(button.dataset.kind || 'custom');
-        applyCatalogSelection(row, button.dataset.kind, button.dataset.id);
-      });
+      const addButton = event.target.closest('.js-add-item');
+      if (addButton) {
+        const afterRow = addButton.closest('.js-line-item');
+        createRow(addButton.dataset.kind || 'custom', afterRow);
+        const menu = addButton.closest('.js-add-item-menu');
+        menu?.classList.add('hidden');
+        menu?.classList.remove('flex');
+        return;
+      }
+
+      const toggleCellMenuButton = event.target.closest('.js-toggle-cell-menu');
+      if (toggleCellMenuButton) {
+        const menu = toggleCellMenuButton.parentElement?.querySelector('.js-cell-menu');
+        if (menu) {
+          const isOpening = menu.classList.contains('hidden');
+          document.querySelectorAll('.js-cell-menu').forEach((otherMenu) => {
+            if (otherMenu !== menu) otherMenu.classList.add('hidden');
+          });
+          menu.classList.toggle('hidden', !isOpening);
+          toggleCellMenuButton.setAttribute('aria-expanded', String(isOpening));
+        }
+        return;
+      }
+
+      const showCellButton = event.target.closest('.js-show-cell');
+      if (showCellButton) {
+        const row = showCellButton.closest('.js-line-item');
+        row?.querySelector(`[data-cell="${showCellButton.dataset.target}"]`)?.classList.remove('hidden');
+        showCellButton.closest('.js-cell-menu')?.classList.add('hidden');
+        return;
+      }
+
+      const hideCellButton = event.target.closest('.js-hide-cell');
+      if (hideCellButton) {
+        const row = hideCellButton.closest('.js-line-item');
+        row?.querySelector(`[data-cell="${hideCellButton.dataset.target}"]`)?.classList.add('hidden');
+      }
     });
 
     if (currencyField) {

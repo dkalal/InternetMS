@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ sheet.reference_number }} — {{ sheet.title }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ sheet.reference_number }}</h1>
+      <p class="mt-1 text-sm text-slate-600">
+        {{ sheet.customer.name }} &middot; {{ sheet.title }}
+        &middot;
+        {% if sheet.status == "open" %}
+          <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Open</span>
+        {% else %}
+          <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Invoiced</span>
+        {% endif %}
+      </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      {% if sheet.is_open %}
+        <a href="{% url 'billing:billing_sheet_edit' pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit sheet</a>
+        <a href="{% url 'billing:billing_item_add' sheet_pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add item</a>
+
+        <form method="post" action="{% url 'billing:billing_sheet_generate_invoice' pk=sheet.id %}" class="inline-flex items-center gap-2">
+          {% csrf_token %}
+          <label for="id_due_date_{{ sheet.id }}" class="sr-only">Due date</label>
+          <input id="id_due_date_{{ sheet.id }}" type="date" name="due_date" class="block rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Due date">
+          <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">Generate invoice</button>
+        </form>
+      {% endif %}
+      {% if sheet.invoice %}
+        <a href="{% url 'billing:document_detail' doc_type='invoice' pk=sheet.invoice.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">View invoice</a>
+      {% endif %}
+      <a href="{% url 'billing:billing_sheet_list' %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Back to list</a>
+    </div>
+  </div>
+
+  {% if sheet.notes %}
+    <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="text-sm font-semibold text-slate-900">Notes</div>
+      <p class="mt-2 text-sm text-slate-700">{{ sheet.notes }}</p>
+    </div>
+  {% endif %}
+
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+      <span class="text-sm font-semibold text-slate-900">Billing items</span>
+      {% if sheet.is_open %}
+        <a href="{% url 'billing:billing_item_add' sheet_pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700">+ Add item</a>
+      {% endif %}
+    </div>
+    <div class="js-table-wrap">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Description</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Qty</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Unit price</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Total</th>
+            {% if sheet.is_open %}<th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% for item in items %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 text-sm text-slate-900">
+                {{ item.description }}
+                {% if item.notes %}<div class="text-xs text-slate-500">{{ item.notes }}</div>{% endif %}
+              </td>
+              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
+              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price|intcomma }}</td>
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.total_price|intcomma }}</td>
+              {% if sheet.is_open %}
+                <td class="px-4 py-3 text-right text-sm">
+                  <div class="inline-flex items-center gap-2">
+                    <a href="{% url 'billing:billing_item_edit' sheet_pk=sheet.id item_pk=item.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+                    <form method="post" action="{% url 'billing:billing_item_delete' sheet_pk=sheet.id item_pk=item.id %}">
+                      {% csrf_token %}
+                      <button type="submit" class="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
+                        onclick="return confirm('Remove this item?')">Remove</button>
+                    </form>
+                  </div>
+                </td>
+              {% endif %}
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="{% if sheet.is_open %}5{% else %}4{% endif %}" class="px-4 py-10 text-center text-sm text-slate-500">
+                No items yet.
+                {% if sheet.is_open %}<a href="{% url 'billing:billing_item_add' sheet_pk=sheet.id %}" class="ml-1 text-brand-600 underline">Add the first item</a>.{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        {% if items %}
+          <tfoot class="bg-slate-50">
+            <tr>
+              <td colspan="3" class="px-4 py-3 text-right text-sm font-semibold text-slate-900">Subtotal</td>
+              <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ sheet.subtotal|intcomma }}</td>
+              {% if sheet.is_open %}<td></td>{% endif %}
+            </tr>
+          </tfoot>
+        {% endif %}
+      </table>
+    </div>
+  </div>
+
+  <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <dl class="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
+      <div>
+        <dt class="font-medium text-slate-500">Created by</dt>
+        <dd class="mt-1 text-slate-900">{{ sheet.created_by|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="font-medium text-slate-500">Created</dt>
+        <dd class="mt-1 text-slate-900">{{ sheet.created_at|date:"d M Y H:i" }}</dd>
+      </div>
+      <div>
+        <dt class="font-medium text-slate-500">Last updated</dt>
+        <dd class="mt-1 text-slate-900">{{ sheet.updated_at|date:"d M Y H:i" }}</dd>
+      </div>
+      {% if sheet.invoice %}
+        <div>
+          <dt class="font-medium text-slate-500">Invoice</dt>
+          <dd class="mt-1 text-slate-900">
+            <a href="{% url 'billing:document_detail' doc_type='invoice' pk=sheet.invoice.id %}" class="text-brand-600 underline">{{ sheet.invoice.number }}</a>
+          </dd>
+        </div>
+      {% endif %}
+    </dl>
+  </div>
+</div>
+{% endblock %}

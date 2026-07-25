@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-sm font-semibold text-brand-700">Inventory reports</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1><p class="mt-1 max-w-3xl text-sm text-slate-600">{{ description }}</p></div>
+    {% if INVENTORY_CAN_EXPORT %}<a class="jims-btn jims-btn-secondary" href="?export=xlsx&q={{ query|urlencode }}&date_from={{ date_from }}&date_to={{ date_to }}">Export Excel</a>{% endif %}
+  </header>
+
+  <nav class="flex gap-2 overflow-x-auto pb-2" aria-label="Report type">
+    {% for slug,label in report_names.items %}<a class="whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold {% if slug == report_name %}border-brand-700 bg-brand-700 text-white{% else %}border-slate-300 bg-white text-slate-700 hover:border-brand-300{% endif %}" href="{% url 'inventory:report' slug %}" {% if slug == report_name %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+  </nav>
+
+  <div class="grid gap-4 sm:grid-cols-3">
+    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Matching records</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ result_count }}</div></div>
+    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Date from</div><div class="mt-2 text-lg font-bold text-slate-950">{{ date_from|default:"All dates" }}</div></div>
+    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Date to</div><div class="mt-2 text-lg font-bold text-slate-950">{{ date_to|default:"Latest" }}</div></div>
+  </div>
+
+  <details class="jims-filter-drawer jims-panel p-4" {% if query or date_from or date_to %}open{% endif %}>
+    <summary class="flex cursor-pointer items-center justify-between text-sm font-semibold text-slate-900"><span>Report filters</span><span class="text-brand-700">Show / hide</span></summary>
+    <form method="get" class="mt-4 grid gap-3 border-t border-slate-200 pt-4 sm:grid-cols-4 sm:items-end">
+      <div><label for="report-search" class="block text-sm font-medium text-slate-700">Search rows</label><input id="report-search" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" name="q" value="{{ query }}" placeholder="Search this report"></div>
+      <div><label for="report-from" class="block text-sm font-medium text-slate-700">From date</label><input id="report-from" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" type="date" name="date_from" value="{{ date_from }}"></div>
+      <div><label for="report-to" class="block text-sm font-medium text-slate-700">To date</label><input id="report-to" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" type="date" name="date_to" value="{{ date_to }}"></div>
+      <div class="flex gap-2"><button class="jims-btn jims-btn-primary flex-1">Apply</button><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:report' report_name %}">Reset</a></div>
+    </form>
+  </details>
+
+  <section class="jims-panel overflow-hidden">
+    {% if rows %}
+      <div class="jims-table-wrap"><table class="jims-table"><thead><tr>{% for header in headers %}<th class="whitespace-nowrap">{{ header }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr>{% for value in row %}<td class="whitespace-nowrap">{{ value|default_if_none:"—" }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+      {% if page_obj.paginator.num_pages > 1 %}<nav class="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm" aria-label="Report pagination"><span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span><div class="flex gap-2">{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&q={{ query|urlencode }}&date_from={{ date_from }}&date_to={{ date_to }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&q={{ query|urlencode }}&date_from={{ date_from }}&date_to={{ date_to }}">Next</a>{% endif %}</div></nav>{% endif %}
+    {% else %}
+      {% include "components/empty_state.html" with title="No report records" message="Change the filters or date range to find matching inventory activity." %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

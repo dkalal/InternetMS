@@ -36,6 +36,8 @@ Browser
 
 `templates` owns shared templates and cross-app UI fragments.
 
+`integrations` owns authenticated read-only export APIs used by external systems, including the customer sync contract for AssetMS consumers.
+
 ## Development Invariants
 
 Run all Django commands from the repository root:
@@ -49,6 +51,12 @@ Do not put application code, templates, media, or databases under `.venv`.
 Do not import across apps for convenience if the dependency is really a domain action. Prefer a small service function in the owning app.
 
 Keep migrations committed with their app. Never edit old migrations after they have been applied outside your machine.
+
+### Inventory boundaries
+
+`products.Product` remains the shared product/service catalog and `billing.BillingDocument` remains the only quotation, invoice, and receipt system. The `inventory` app owns suppliers, purchases, balances, immutable movements, serial units, carts, sale-cost records, reports, imports, and inventory APIs.
+
+All balance mutations go through `InventoryService` under `transaction.atomic()` with row locks. `BillingService.create_receipt_from_invoice()` locks the invoice and invokes inventory completion in the same transaction only for catalog/inventory sales. This makes retries idempotent and prevents negative stock or double-selling serialized units.
 
 Keep uploaded media and generated files out of source control. Use `.gitignore` for local artifacts and a real object store for production uploads when deploying.
 
@@ -72,3 +80,28 @@ The settings include WhiteNoise static-file support. For production, run:
 ```
 
 Use PostgreSQL for production rather than SQLite. The project already pins `psycopg2-binary`, but database URL parsing has not been introduced yet; add that when the deployment target is known.
+
+## Integration Contract
+
+The customer sync contract is intentionally read-only and token-authenticated.
+
+Base rule:
+
+- Do not point consumers at a UI route such as `/customers`
+- Do point them at the host root, then append the API path
+
+Supported customer endpoints:
+
+- `GET /api/integrations/customers/`
+- `GET /api/customers/` as a compatibility alias
+
+Payload note:
+
+- `uuid` is the stable machine identifier for linking and updates
+- `display_label` is the human-friendly label for dropdowns and tables
+- The consumer UI should render `display_label` and keep `uuid` as the selected value
+
+Deployment note:
+
+- In Docker, `localhost` inside a container refers to that same container, not the other service
+- Use the compose service name or network alias when the consumer runs in a different container

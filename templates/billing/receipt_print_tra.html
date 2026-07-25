@@ -17,11 +17,10 @@
       {% endif %}
     </div> -->
 
-    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
-      <div class="small">{{ ACTIVE_BRANDING.address_line1 }}</div>
-    {% endif %}
     {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}
       <div class="small">{{ ACTIVE_BRANDING.address_line2 }}</div>
+    {% elif ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+      <div class="small">{{ ACTIVE_BRANDING.address_line1 }}</div>
     {% endif %}
     {% if COMPANY_ADDRESS and not ACTIVE_BRANDING.address_line1 and not ACTIVE_BRANDING.address_line2 %}
       <div class="small">{{ COMPANY_ADDRESS }}</div>
@@ -85,7 +84,7 @@
             {% elif item.product %}
               {{ item.product.name }}
             {% elif item.description %}
-              {{ item.description }}
+              <span style="white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;">{{ item.description }}</span>
             {% else %}
               Item {{ forloop.counter }}
             {% endif %}

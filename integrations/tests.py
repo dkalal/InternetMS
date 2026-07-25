@@ -89,6 +89,10 @@ class IntegrationCustomerApiTests(TestCase):
         response = self.client.get('/api/integrations/customers/')
         self.assertEqual(response.status_code, 401)
 
+    def test_alias_list_requires_authentication(self):
+        response = self.client.get('/api/customers/')
+        self.assertEqual(response.status_code, 401)
+
     def test_list_returns_only_active_non_deleted_customers_in_consumer_tenant(self):
         self.authenticate()
         response = self.client.get('/api/integrations/customers/')
@@ -96,9 +100,31 @@ class IntegrationCustomerApiTests(TestCase):
         self.assertEqual(response.data['count'], 1)
         self.assertEqual(response.data['results'][0]['uuid'], str(self.active_customer.uuid))
         self.assertEqual(
-            set(response.data['results'][0].keys()),
-            {'uuid', 'full_name', 'phone', 'email', 'address', 'customer_status', 'customer_type', 'created_at'},
+            response.data['results'][0]['display_label'],
+            'John Active (+255712345678 | john@example.com)',
         )
+        self.assertEqual(
+            set(response.data['results'][0].keys()),
+            {
+                'uuid',
+                'full_name',
+                'phone',
+                'email',
+                'address',
+                'customer_status',
+                'customer_type',
+                'created_at',
+                'display_label',
+                'contact_summary',
+            },
+        )
+
+    def test_alias_list_returns_the_same_payload_shape(self):
+        self.authenticate()
+        response = self.client.get('/api/customers/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['uuid'], str(self.active_customer.uuid))
 
     def test_detail_respects_tenant_scope(self):
         self.authenticate()
@@ -107,6 +133,15 @@ class IntegrationCustomerApiTests(TestCase):
         self.assertEqual(response.data['uuid'], str(self.active_customer.uuid))
 
         blocked = self.client.get(f'/api/integrations/customers/{self.other_org_customer.uuid}/')
+        self.assertEqual(blocked.status_code, 404)
+
+    def test_alias_detail_respects_tenant_scope(self):
+        self.authenticate()
+        response = self.client.get(f'/api/customers/{self.active_customer.uuid}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['uuid'], str(self.active_customer.uuid))
+
+        blocked = self.client.get(f'/api/customers/{self.other_org_customer.uuid}/')
         self.assertEqual(blocked.status_code, 404)
 
     def test_search_matches_name_phone_and_email(self):

@@ -1,6 +1,7 @@
 import uuid as uuid_lib
 
 from django.db import models
+from django.db.models import Q
 from django.urls import reverse
 from django.conf import settings
 from django.core.validators import RegexValidator
@@ -140,6 +141,84 @@ class Customer(models.Model):
         if self.phone:
             contact.append(f"Phone: {self.phone}")
         return ' | '.join(contact) if contact else 'No contact info'
+
+    @property
+    def primary_site(self):
+        primary = getattr(self, "_primary_site_cache", None)
+        if primary is not None:
+            return primary
+        return self.sites.filter(is_primary=True).order_by("id").first() or self.sites.order_by("id").first()
+
+
+class CustomerSite(models.Model):
+    organization = models.ForeignKey(
+        'users.Organization',
+        on_delete=models.PROTECT,
+        related_name='customer_sites',
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    tenant = models.ForeignKey(
+        'users.Organization',
+        on_delete=models.PROTECT,
+        related_name='tenant_customer_sites',
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='sites')
+    name = models.CharField(max_length=120)
+    location = models.CharField(max_length=255, db_index=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    vlan_id = models.CharField(max_length=50, blank=True, null=True)
+    notes = models.TextField(blank=True, default="")
+    is_primary = models.BooleanField(default=False, db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    packages = models.ManyToManyField('services.Package', related_name='customer_sites', blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_primary', 'name', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer'],
+                condition=Q(is_primary=True),
+                name='uniq_primary_site_per_customer',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['organization', 'customer', 'is_active']),
+            models.Index(fields=['organization', 'customer', 'is_primary']),
+            models.Index(fields=['tenant', 'customer', 'is_active']),
+        ]
+        verbose_name = 'Customer Site'
+        verbose_name_plural = 'Customer Sites'
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.organization_id is not None:
+            self.tenant_id = self.organization_id
+        if self.organization_id is None and self.tenant_id is not None:
+            self.organization_id = self.tenant_id
+        if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
+            self.organization_id = self.tenant_id
+        super().save(*args, **kwargs)
+
+    @property
+    def display_label(self):
+        return self.name if self.name else self.location
+
+    @property
+    def summary(self):
+        parts = [self.location]
+        if self.address:
+            parts.append(self.address)
+        return " · ".join(parts)
 
 class InternetCustomer(models.Model):
     customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='internet_profile')

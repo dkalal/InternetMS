@@ -47,12 +47,16 @@ urlpatterns = [
     path('alive/', liveness_check, name='liveness'),
     
     path('admin/', admin.site.urls),
+    path('api/customers/', include('integrations.customer_alias_urls')),
     path('api/integrations/', include('integrations.urls')),
     path('customers/', include('customers.urls')),
     path('services/', include('services.urls')),
     path('products/', include('products.urls')),
     path('billing/', include('billing.urls')),
     path('messaging/', include('messaging.urls')),
+    path('settings/custom-fields/', include('custom_fields.urls')),
+    path('inventory/', include('inventory.urls')),
+    path('api/inventory/', include('inventory.api_urls')),
     path('users/', include('users.urls')),  # This includes the register URL
     
 

@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
@@ -22,16 +22,31 @@ from internetservices.listing import apply_sort, clean_page_size, page_context, 
 
 from .forms import (
     BillingDocumentForm,
+    BillingItemForm,
     BillingLineItemFormSet,
+    BillingSheetForm,
+    BillingSheetGenerateForm,
+    CancelSubscriptionForm,
+    CreditNoteCreateForm,
     DraftInvoiceEditForm,
+    InvoiceActionForm,
     PromotionForm,
+    QuotationActionForm,
     ReceiptCreateForm,
     SubscriptionInvoiceIssueForm,
     SubscriptionRenewalForm,
 )
-from .models import BillingDocument, BillingLineItem, CustomerSubscription, Promotion, SubscriptionPeriod
+from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion, SubscriptionPeriod
 from .pdf import build_image_data_uri, render_pdf_or_html
-from .services import BillingService, BillingServiceError, LineItemInput, SubscriptionBillingService, first_day_of_month
+from .services import (
+    BillingService,
+    BillingServiceError,
+    BillingSheetService,
+    LineItemInput,
+    QuotationLifecycleService,
+    SubscriptionBillingService,
+    first_day_of_month,
+)
 
 
 DOC_TYPE_DISPLAY = dict(BillingDocument.DocumentType.choices)
@@ -213,6 +228,95 @@ def _extract_items(formset) -> list[LineItemInput]:
     return items
 
 
+def _attach_invoice_list_state(organization, document: BillingDocument) -> BillingDocument:
+    state = BillingService.get_invoice_action_state(organization=organization, invoice=document)
+    document.can_register_payment = state["can_register_payment"]
+    document.remaining_balance = state["remaining_balance"]
+    return document
+
+
+def _attach_quotation_list_state(organization, document: BillingDocument) -> BillingDocument:
+    state = QuotationLifecycleService.get_action_state(organization=organization, quotation=document)
+    document.list_can_edit = state["can_edit"]
+    document.list_can_convert = state["can_convert"]
+    document.list_can_send = state["can_send"]
+    document.list_can_accept = state["can_accept"]
+    document.list_can_reject = state["can_reject"]
+    document.list_can_expire = state["can_expire"]
+    return document
+
+
+def _build_invoice_action_form(*, request, organization, pk: int, form_class, action_title: str, submit_label: str, action_url_name: str, success_message: str, service_call, form_kwargs: dict | None = None, initial: dict | None = None, extra_context: dict | None = None):
+    invoice = get_object_or_404(
+        BillingDocument.objects.select_related("customer"),
+        organization=organization,
+        document_type=BillingDocument.DocumentType.INVOICE,
+        pk=pk,
+    )
+    state = BillingService.get_invoice_action_state(organization=organization, invoice=invoice)
+
+    if request.method == "POST":
+        form = form_class(request.POST, **(form_kwargs or {}))
+        if form.is_valid():
+            try:
+                result = service_call(invoice=invoice, form=form)
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, success_message)
+                return redirect("billing:document_detail", doc_type=result.document_type, pk=result.pk)
+    else:
+        form = form_class(initial=initial or {}, **(form_kwargs or {}))
+
+    context = {
+        "form": form,
+        "invoice": invoice,
+        "action_title": action_title,
+        "submit_label": submit_label,
+        "action_url": reverse_lazy(action_url_name, kwargs={"pk": invoice.pk}),
+        "state": state,
+    }
+    if extra_context:
+        context.update(extra_context)
+    return render(request, "billing/invoice_action_form.html", context)
+
+
+def _build_quotation_action_form(*, request, organization, pk: int, action_title: str, submit_label: str, action_url_name: str, success_message: str, service_call, form_kwargs: dict | None = None):
+    quotation = get_object_or_404(
+        BillingDocument.objects.select_related("customer", "converted_invoice"),
+        organization=organization,
+        document_type=BillingDocument.DocumentType.QUOTATION,
+        pk=pk,
+    )
+    state = QuotationLifecycleService.get_action_state(organization=organization, quotation=quotation)
+
+    if request.method == "POST":
+        form = QuotationActionForm(request.POST, **(form_kwargs or {}))
+        if form.is_valid():
+            try:
+                result = service_call(quotation=quotation, form=form)
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, success_message)
+                return redirect("billing:document_detail", doc_type=result.document_type, pk=result.pk)
+    else:
+        form = QuotationActionForm(**(form_kwargs or {}))
+
+    return render(
+        request,
+        "billing/quotation_action_form.html",
+        {
+            "form": form,
+            "quotation": quotation,
+            "state": state,
+            "action_title": action_title,
+            "submit_label": submit_label,
+            "action_url": reverse_lazy(action_url_name, kwargs={"pk": quotation.pk}),
+        },
+    )
+
+
 @login_required
 def document_list(request, doc_type: str):
     organization = require_organization(request)
@@ -265,9 +369,9 @@ def document_list(request, doc_type: str):
     worklist = request.GET.get("worklist")
     if doc_type == BillingDocument.DocumentType.INVOICE:
         if worklist == "unpaid":
-            documents = documents.exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED])
+            documents = documents.exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.VOID, BillingDocument.Status.SUPERSEDED, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED])
         elif worklist == "overdue":
-            documents = documents.filter(due_date__lt=today).exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED])
+            documents = documents.filter(due_date__lt=today).exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.VOID, BillingDocument.Status.SUPERSEDED, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED])
         elif worklist == "draft":
             documents = documents.filter(status=BillingDocument.Status.DRAFT)
         elif worklist == "paid_month":
@@ -298,8 +402,8 @@ def document_list(request, doc_type: str):
     invoice_worklists = {}
     if doc_type == BillingDocument.DocumentType.INVOICE:
         invoice_worklists = {
-            "unpaid": invoice_base.exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED]).count(),
-            "overdue": invoice_base.filter(due_date__lt=today).exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED]).count(),
+            "unpaid": invoice_base.exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.VOID, BillingDocument.Status.SUPERSEDED, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED]).count(),
+            "overdue": invoice_base.filter(due_date__lt=today).exclude(status__in=[BillingDocument.Status.PAID, BillingDocument.Status.VOID, BillingDocument.Status.SUPERSEDED, BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED]).count(),
             "draft": invoice_base.filter(status=BillingDocument.Status.DRAFT).count(),
             "paid_month": invoice_base.filter(status=BillingDocument.Status.PAID, issue_date__year=today.year, issue_date__month=today.month).count(),
         }
@@ -308,11 +412,24 @@ def document_list(request, doc_type: str):
         request,
         "billing/document_list.html",
         {
-            "documents": page_obj.object_list,
+            "documents": [
+                _attach_invoice_list_state(organization, document)
+                if doc_type == BillingDocument.DocumentType.INVOICE
+                else _attach_quotation_list_state(organization, document)
+                if doc_type == BillingDocument.DocumentType.QUOTATION
+                else document
+                for document in page_obj.object_list
+            ],
             "doc_type": doc_type,
             "doc_type_display": doc_type_display,
             "active_sort": active_sort,
-            "status_choices": BillingDocument.Status.choices,
+            "status_choices": (
+                BillingDocument.invoice_status_choices()
+                if doc_type == BillingDocument.DocumentType.INVOICE
+                else BillingDocument.quotation_status_choices()
+                if doc_type == BillingDocument.DocumentType.QUOTATION
+                else BillingDocument.Status.choices
+            ),
             "customer_catalog": organization.customers.order_by("name"),
             "invoice_worklists": invoice_worklists,
             **pagination,
@@ -327,28 +444,93 @@ def document_detail(request, doc_type: str, pk: int):
     _require_valid_doc_type(doc_type)
 
     document = get_object_or_404(
-        BillingDocument.objects.select_related("customer"),
+        BillingDocument.objects.select_related("customer", "created_by", "source_quotation", "converted_invoice", "invoice", "superseded_by"),
         organization=organization,
         document_type=doc_type,
         pk=pk,
     )
-    items = BillingLineItem.objects.filter(organization=organization, document=document).select_related("product", "package")
+    items = BillingLineItem.objects.filter(organization=organization, document=document).select_related(
+        "product", "package"
+    ).prefetch_related("serial_selections__stock_unit")
     has_receipt = False
     quotation_history = []
     quotation_comparison = None
     linked_subscription_period = None
+    payment_summary = None
+    payment_receipts = []
+    can_register_payment = False
+    invoice_action_state = None
+    can_void_invoice = False
+    can_reissue_invoice = False
+    can_create_credit_note = False
+    quotation_action_state = None
+    invoice_supersession_details = None
+    invoice_carry_forward = None
+
     if document.document_type == BillingDocument.DocumentType.INVOICE:
-        has_receipt = BillingDocument.objects.filter(
-            organization=organization,
-            document_type=BillingDocument.DocumentType.RECEIPT,
-            invoice_id=document.id,
-        ).exists()
+        invoice_action_state = BillingService.get_invoice_action_state(organization=organization, invoice=document)
+        invoice_supersession_details = BillingService.get_invoice_supersession_details(organization=organization, invoice=document)
+        payment_receipts = list(
+            BillingDocument.objects.filter(
+                organization=organization,
+                document_type=BillingDocument.DocumentType.RECEIPT,
+                invoice_id=document.id,
+            )
+            .select_related("created_by")
+            .order_by("created_at", "id")
+        )
+        has_receipt = invoice_action_state["paid_total"] > Decimal("0.00")
+        can_register_payment = invoice_action_state["can_register_payment"]
+        can_void_invoice = invoice_action_state["can_void"]
+        can_reissue_invoice = invoice_action_state["can_reissue"]
+        can_create_credit_note = invoice_action_state["can_create_credit_note"]
+        payment_summary = {
+            "invoice_number": document.number,
+            "invoice_total": document.total,
+            "amount_paid": invoice_action_state["paid_total"],
+            "credited_total": invoice_action_state["credited_total"],
+            "outstanding_balance": invoice_action_state["remaining_balance"],
+            "credit_capacity": invoice_action_state["credit_capacity"],
+            "receipt_count": len(payment_receipts),
+            "latest_receipt": payment_receipts[-1] if payment_receipts else None,
+        }
+        invoice_carry_forward = {
+            "brought_forward": document.balance_brought_forward,
+            "current_balance": invoice_action_state["remaining_balance"],
+            "account_balance": BillingService.customer_open_invoice_balance(
+                organization=organization,
+                customer=document.customer,
+            ),
+        }
         linked_subscription_period = (
             SubscriptionPeriod.objects.filter(organization=organization, invoice=document)
             .select_related("subscription", "subscription__customer", "subscription__package", "receipt")
             .first()
         )
+    elif document.document_type == BillingDocument.DocumentType.RECEIPT and document.invoice_id:
+        payment_receipts = list(
+            BillingDocument.objects.filter(
+                organization=organization,
+                document_type=BillingDocument.DocumentType.RECEIPT,
+                invoice_id=document.invoice_id,
+            )
+            .select_related("created_by")
+            .order_by("created_at", "id")
+        )
+        source_invoice = document.invoice
+        invoice_state = BillingService.get_invoice_action_state(organization=organization, invoice=source_invoice)
+        payment_summary = {
+            "invoice_number": source_invoice.number if source_invoice else None,
+            "invoice_total": source_invoice.total if source_invoice else Decimal("0.00"),
+            "amount_paid": document.total,
+            "paid_total": invoice_state["paid_total"],
+            "credited_total": invoice_state["credited_total"],
+            "outstanding_balance": invoice_state["remaining_balance"],
+            "receipt_count": len(payment_receipts),
+            "latest_receipt": payment_receipts[-1] if payment_receipts else None,
+        }
     if document.document_type == BillingDocument.DocumentType.QUOTATION:
+        quotation_action_state = QuotationLifecycleService.get_action_state(organization=organization, quotation=document)
         quotation_history = list(
             BillingService.get_quotation_history(organization=organization, quotation_id=document.id)
             .select_related("created_by")
@@ -372,16 +554,26 @@ def document_detail(request, doc_type: str, pk: int):
             "items": items,
             "doc_type": doc_type,
             "has_receipt": has_receipt,
+            "payment_summary": payment_summary,
+            "payment_receipts": payment_receipts,
+            "can_register_payment": can_register_payment,
             "quotation_history": quotation_history,
             "quotation_comparison": quotation_comparison,
-            "invoice_locked": document.document_type == BillingDocument.DocumentType.INVOICE
-            and document.status != BillingDocument.Status.DRAFT,
+            "quotation_action_state": quotation_action_state,
+            "invoice_action_state": invoice_action_state,
+            "invoice_locked": invoice_action_state["is_locked"] if invoice_action_state else document.document_type == BillingDocument.DocumentType.INVOICE and document.status != BillingDocument.Status.DRAFT,
             "linked_subscription_period": linked_subscription_period,
+            "can_void_invoice": can_void_invoice,
+            "can_reissue_invoice": can_reissue_invoice,
+            "can_create_credit_note": can_create_credit_note,
+            "has_serialized_inventory_items": document.document_type == BillingDocument.DocumentType.INVOICE
+            and document.items.filter(product__is_serialized=True).exists(),
+            "has_inventory_items": document.items.filter(product__isnull=False).exists(),
+            "invoice_supersession_details": invoice_supersession_details,
+            "invoice_carry_forward": invoice_carry_forward,
             "can_resolve_subscription_issue": linked_subscription_period is not None
-            and linked_subscription_period.status
-            in {SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE}
-            and document.status not in {BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED}
-            and not has_receipt,
+            and linked_subscription_period.status in {SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE}
+            and (can_void_invoice or can_reissue_invoice),
         },
     )
 
@@ -465,7 +657,7 @@ def document_edit(request, doc_type: str, pk: int):
     _require_valid_doc_type(doc_type)
 
     document = get_object_or_404(
-        BillingDocument.objects.select_related("customer"),
+        BillingDocument.objects.select_related("customer", "created_by"),
         organization=organization,
         document_type=doc_type,
         pk=pk,
@@ -475,6 +667,10 @@ def document_edit(request, doc_type: str, pk: int):
     if doc_type == BillingDocument.DocumentType.QUOTATION:
         form_class = BillingDocumentForm
         form_kwargs = {"organization": organization, "doc_type": doc_type}
+        quotation_state = QuotationLifecycleService.get_action_state(organization=organization, quotation=document)
+        if not quotation_state["can_edit"]:
+            messages.error(request, "Only the current draft quotation can be revised from this screen.")
+            return redirect("billing:document_detail", doc_type=doc_type, pk=document.pk)
     elif doc_type == BillingDocument.DocumentType.INVOICE:
         form_class = DraftInvoiceEditForm
         form_kwargs = {}
@@ -508,6 +704,7 @@ def document_edit(request, doc_type: str, pk: int):
                         performed_by=request.user,
                         invoice_id=document.id,
                         tax_rate=form.cleaned_data["tax_rate"],
+                        status=form.cleaned_data["status"],
                         items=items,
                     )
                     messages.success(request, "Draft invoice updated.")
@@ -529,7 +726,7 @@ def document_edit(request, doc_type: str, pk: int):
                 **form_kwargs,
             )
         else:
-            form = form_class(initial={"tax_rate": document.tax_rate}, **form_kwargs)
+            form = form_class(initial={"tax_rate": document.tax_rate, "status": document.status}, **form_kwargs)
         formset = BillingLineItemFormSet(prefix="items", form_kwargs={"organization": organization}, instance=document)
 
     return render(
@@ -580,10 +777,26 @@ def document_pdf(request, doc_type: str, pk: int):
     template_name = "billing/document_print.html"
     if doc_type == BillingDocument.DocumentType.RECEIPT:
         template_name = "billing/receipt_print_tra.html"
+    invoice_carry_forward = None
+    if doc_type == BillingDocument.DocumentType.INVOICE:
+        state = BillingService.get_invoice_action_state(organization=organization, invoice=document)
+        invoice_carry_forward = {
+            "brought_forward": document.balance_brought_forward,
+            "current_balance": state["remaining_balance"],
+            "account_balance": BillingService.customer_open_invoice_balance(
+                organization=organization,
+                customer=document.customer,
+            ),
+        }
     return render_pdf_or_html(
         request=request,
         template_name=template_name,
-        context={"document": document, "items": items, "LOGO_DATA_URI": logo_data_uri},
+        context={
+            "document": document,
+            "items": items,
+            "LOGO_DATA_URI": logo_data_uri,
+            "invoice_carry_forward": invoice_carry_forward,
+        },
         filename=filename,
         as_attachment=as_attachment,
     )
@@ -612,48 +825,187 @@ def create_invoice_from_quotation(request, pk: int):
 
 
 @login_required
-def cancel_invoice(request, pk: int):
+def send_quotation(request, pk: int):
     organization = require_organization(request)
     _require_billing_write(request)
-    if request.method != "POST":
-        raise PermissionDenied("POST required.")
-    try:
-        invoice = BillingService.cancel_invoice(organization=organization, performed_by=request.user, invoice_id=pk)
-    except BillingServiceError as exc:
-        messages.error(request, str(exc))
-        return redirect("billing:document_detail", doc_type="invoice", pk=pk)
-    messages.success(request, "Invoice cancelled.")
-    return redirect("billing:document_detail", doc_type="invoice", pk=invoice.pk)
+    return _build_quotation_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        action_title="Send quotation",
+        submit_label="Mark as sent",
+        action_url_name="billing:send_quotation",
+        success_message="Quotation marked as sent.",
+        form_kwargs={"action_label": "send", "placeholder": "Optional note about how or when the quotation was sent."},
+        service_call=lambda quotation, form: QuotationLifecycleService.send(
+            organization=organization,
+            performed_by=request.user,
+            quotation_id=quotation.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
+
+
+@login_required
+def accept_quotation(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+    return _build_quotation_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        action_title="Accept quotation",
+        submit_label="Mark as accepted",
+        action_url_name="billing:accept_quotation",
+        success_message="Quotation marked as accepted.",
+        form_kwargs={"action_label": "accept", "placeholder": "Optional note about the customer's approval."},
+        service_call=lambda quotation, form: QuotationLifecycleService.accept(
+            organization=organization,
+            performed_by=request.user,
+            quotation_id=quotation.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
+
+
+@login_required
+def reject_quotation(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+    return _build_quotation_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        action_title="Reject quotation",
+        submit_label="Mark as rejected",
+        action_url_name="billing:reject_quotation",
+        success_message="Quotation marked as rejected.",
+        form_kwargs={"action_label": "reject", "placeholder": "Optional note about why the quotation was declined."},
+        service_call=lambda quotation, form: QuotationLifecycleService.reject(
+            organization=organization,
+            performed_by=request.user,
+            quotation_id=quotation.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
+
+
+@login_required
+def expire_quotation(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+    return _build_quotation_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        action_title="Expire quotation",
+        submit_label="Mark as expired",
+        action_url_name="billing:expire_quotation",
+        success_message="Quotation marked as expired.",
+        form_kwargs={"action_label": "expire", "placeholder": "Optional note about why this quotation was expired."},
+        service_call=lambda quotation, form: QuotationLifecycleService.expire(
+            organization=organization,
+            performed_by=request.user,
+            quotation_id=quotation.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
+
+
+@login_required
+def void_invoice(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    return _build_invoice_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        form_class=InvoiceActionForm,
+        form_kwargs={"action_label": "be voided", "placeholder": "Example: This invoice was issued for the wrong customer."},
+        action_title="Void invoice",
+        submit_label="Void invoice",
+        action_url_name="billing:void_invoice",
+        success_message="Invoice voided.",
+        service_call=lambda invoice, form: BillingService.void_invoice(
+            organization=organization,
+            performed_by=request.user,
+            invoice_id=invoice.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
 
 
 @login_required
 def reissue_invoice(request, pk: int):
     organization = require_organization(request)
     _require_billing_write(request)
-    if request.method != "POST":
-        raise PermissionDenied("POST required.")
-    try:
-        invoice = BillingService.reissue_invoice(organization=organization, performed_by=request.user, invoice_id=pk)
-    except BillingServiceError as exc:
-        messages.error(request, str(exc))
-        return redirect("billing:document_detail", doc_type="invoice", pk=pk)
-    messages.success(request, "Replacement invoice created.")
-    return redirect("billing:document_detail", doc_type="invoice", pk=invoice.pk)
+
+    return _build_invoice_action_form(
+        request=request,
+        organization=organization,
+        pk=pk,
+        form_class=InvoiceActionForm,
+        form_kwargs={"action_label": "be reissued", "placeholder": "Example: Wrong package price was used on the original invoice."},
+        action_title="Reissue invoice",
+        submit_label="Create replacement draft",
+        action_url_name="billing:reissue_invoice",
+        success_message="Replacement draft invoice created.",
+        service_call=lambda invoice, form: BillingService.reissue_invoice(
+            organization=organization,
+            performed_by=request.user,
+            invoice_id=invoice.id,
+            reason=form.cleaned_data["reason"],
+        ),
+    )
 
 
 @login_required
 def create_credit_note(request, pk: int):
     organization = require_organization(request)
     _require_billing_write(request)
-    if request.method != "POST":
-        raise PermissionDenied("POST required.")
-    try:
-        credit_note = BillingService.create_credit_note(organization=organization, performed_by=request.user, invoice_id=pk)
-    except BillingServiceError as exc:
-        messages.error(request, str(exc))
-        return redirect("billing:document_detail", doc_type="invoice", pk=pk)
-    messages.success(request, "Credit note created.")
-    return redirect("billing:document_detail", doc_type="credit_note", pk=credit_note.pk)
+
+    invoice = get_object_or_404(
+        BillingDocument.objects.select_related("customer"),
+        organization=organization,
+        document_type=BillingDocument.DocumentType.INVOICE,
+        pk=pk,
+    )
+    state = BillingService.get_invoice_action_state(organization=organization, invoice=invoice)
+    initial = {"issue_date": timezone.now().date(), "amount": state["credit_capacity"]}
+
+    if request.method == "POST":
+        form = CreditNoteCreateForm(request.POST)
+        if form.is_valid():
+            try:
+                credit_note = BillingService.create_credit_note(
+                    organization=organization,
+                    performed_by=request.user,
+                    invoice_id=invoice.id,
+                    amount=form.cleaned_data["amount"],
+                    reason=form.cleaned_data["reason"],
+                    issue_date=form.cleaned_data.get("issue_date") or timezone.now().date(),
+                )
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Credit note created.")
+                return redirect("billing:document_detail", doc_type="credit_note", pk=credit_note.pk)
+    else:
+        form = CreditNoteCreateForm(initial=initial)
+
+    return render(
+        request,
+        "billing/invoice_action_form.html",
+        {
+            "form": form,
+            "invoice": invoice,
+            "action_title": "Create credit note",
+            "submit_label": "Create credit note",
+            "action_url": reverse_lazy("billing:create_credit_note", kwargs={"pk": invoice.pk}),
+            "state": state,
+        },
+    )
 
 
 @login_required
@@ -676,11 +1028,11 @@ def resolve_subscription_invoice_issue(request, period_id: int):
         messages.error(request, "This subscription period does not have an invoice to resolve.")
         return redirect(period.subscription.customer.get_absolute_url())
 
+    invoice_state = BillingService.get_invoice_action_state(organization=organization, invoice=period.invoice)
     can_resolve = (
         period.status in {SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE}
         and period.receipt_id is None
-        and period.invoice.status != BillingDocument.Status.PAID
-        and period.invoice.status not in {BillingDocument.Status.CANCELLED, BillingDocument.Status.REISSUED}
+        and (invoice_state["can_void"] or invoice_state["can_reissue"])
     )
     if not can_resolve:
         messages.error(request, "Only unpaid subscription invoices can be resolved here.")
@@ -744,6 +1096,10 @@ def create_receipt_from_invoice(request, pk: int):
         document_type=BillingDocument.DocumentType.RECEIPT,
         invoice=invoice,
     ).order_by("-created_at").first()
+    invoice_state = BillingService.get_invoice_action_state(organization=organization, invoice=invoice)
+    if not invoice_state["can_register_payment"] and request.method != "POST":
+        messages.error(request, "This invoice cannot accept a payment in its current state.")
+        return redirect("billing:document_detail", doc_type="invoice", pk=invoice.id)
 
     if request.method == "POST":
         form = ReceiptCreateForm(request.POST, organization=organization, invoice=invoice)
@@ -753,6 +1109,7 @@ def create_receipt_from_invoice(request, pk: int):
                     organization=organization,
                     created_by=request.user,
                     invoice_id=invoice.id,
+                    amount_paid=form.cleaned_data["amount_paid"],
                     payment_date=form.cleaned_data["payment_date"],
                     payment_method=form.cleaned_data["payment_method"],
                     payment_reference=form.cleaned_data.get("payment_reference") or "",
@@ -764,16 +1121,41 @@ def create_receipt_from_invoice(request, pk: int):
                 if existing_receipt is not None and receipt.id == existing_receipt.id:
                     messages.info(request, "This invoice already has a receipt. Opened the existing receipt.")
                 else:
-                    messages.success(request, "Receipt created and invoice marked as paid.")
+                    invoice.refresh_from_db(fields=["status"])
+                    if invoice.status == BillingDocument.Status.PARTIALLY_PAID:
+                        messages.success(request, "Receipt recorded and invoice is partially paid.")
+                    else:
+                        messages.success(request, "Receipt recorded and invoice is fully paid.")
                 return redirect("billing:document_detail", doc_type="receipt", pk=receipt.pk)
     else:
+        # Suggest an initial amount: prefer explicit `amount` query param, else
+        # default to the outstanding balance (invoice total minus any recorded receipts).
+        try:
+            amount_q = request.GET.get("amount")
+            if amount_q:
+                initial_amount = Decimal(amount_q)
+            else:
+                initial_amount = BillingService.invoice_remaining_balance(organization=organization, invoice=invoice)
+        except Exception:
+            initial_amount = BillingService.invoice_remaining_balance(organization=organization, invoice=invoice)
+
         form = ReceiptCreateForm(
             organization=organization,
             invoice=invoice,
-            initial={"payment_date": timezone.now().date()},
+            initial={"payment_date": timezone.now().date(), "amount_paid": initial_amount},
         )
 
-    return render(request, "billing/receipt_from_invoice.html", {"invoice": invoice, "form": form})
+    return render(
+        request,
+        "billing/receipt_from_invoice.html",
+        {
+            "invoice": invoice,
+            "form": form,
+            "has_inventory_items": getattr(form, "has_inventory_items", False),
+            "outstanding_balance": BillingService.invoice_remaining_balance(organization=organization, invoice=invoice),
+            "credited_total": BillingService.invoice_credited_total(organization=organization, invoice=invoice),
+        },
+    )
 
 
 @login_required
@@ -833,4 +1215,284 @@ def renew_subscription(request, subscription_id: int):
         request,
         "billing/subscription_renewal.html",
         {"form": form, "subscription": subscription},
+    )
+
+
+@login_required
+def cancel_subscription(request, subscription_id: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    subscription = get_object_or_404(
+        CustomerSubscription.objects.select_related("customer", "package", "site"),
+        organization=organization,
+        pk=subscription_id,
+    )
+
+    if subscription.status == CustomerSubscription.Status.CANCELLED:
+        messages.info(request, "This subscription is already cancelled.")
+        return redirect(subscription.customer.get_absolute_url())
+
+    if request.method == "POST":
+        form = CancelSubscriptionForm(request.POST)
+        if form.is_valid():
+            try:
+                SubscriptionBillingService.cancel_subscription(
+                    organization=organization,
+                    performed_by=request.user,
+                    subscription_id=subscription.id,
+                    reason=form.cleaned_data["reason"],
+                )
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Subscription cancelled.")
+                return redirect(subscription.customer.get_absolute_url())
+    else:
+        form = CancelSubscriptionForm()
+
+    return render(
+        request,
+        "billing/subscription_cancel.html",
+        {"form": form, "subscription": subscription, "customer": subscription.customer},
+    )
+
+
+# ── Billing Sheet views ──────────────────────────────────────────────────────
+
+@login_required
+def billing_sheet_list(request):
+    organization = require_organization(request)
+    _require_billing_read(request)
+
+    sheets = BillingSheet.objects.filter(organization=organization).select_related("customer", "invoice")
+
+    q = request.GET.get("search")
+    if q:
+        sheets = sheets.filter(
+            Q(reference_number__icontains=q)
+            | Q(title__icontains=q)
+            | Q(customer__name__icontains=q)
+        )
+    status = request.GET.get("status")
+    if status:
+        sheets = sheets.filter(status=status)
+    customer_id = request.GET.get("customer")
+    if customer_id:
+        sheets = sheets.filter(customer_id=customer_id)
+
+    sort_options = {
+        "date": ("-created_at",),
+        "-date": ("created_at",),
+        "customer": ("customer__name", "-created_at"),
+        "-customer": ("-customer__name", "-created_at"),
+        "status": ("status", "-created_at"),
+        "-status": ("-status", "-created_at"),
+        "reference": ("reference_number",),
+        "-reference": ("-reference_number",),
+    }
+    sheets, active_sort = apply_sort(sheets, request.GET.get("sort"), sort_options, "date")
+    pagination = paginate_queryset(request, sheets)
+
+    return render(
+        request,
+        "billing/billing_sheet_list.html",
+        {
+            "sheets": pagination["page_obj"].object_list,
+            "status_choices": BillingSheet.Status.choices,
+            "customer_catalog": organization.customers.filter(status="active").order_by("name"),
+            "active_sort": active_sort,
+            **pagination,
+        },
+    )
+
+
+@login_required
+def billing_sheet_create(request):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    if request.method == "POST":
+        form = BillingSheetForm(request.POST, organization=organization)
+        if form.is_valid():
+            try:
+                sheet = BillingSheetService.create_sheet(
+                    organization=organization,
+                    created_by=request.user,
+                    customer_id=form.cleaned_data["customer"].id,
+                    title=form.cleaned_data["title"],
+                    notes=form.cleaned_data.get("notes") or "",
+                )
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Billing sheet created.")
+                return redirect("billing:billing_sheet_detail", pk=sheet.pk)
+    else:
+        customer_id = request.GET.get("customer")
+        initial = {}
+        if customer_id:
+            try:
+                initial["customer"] = int(customer_id)
+            except (TypeError, ValueError):
+                pass
+        form = BillingSheetForm(organization=organization, initial=initial)
+
+    return render(request, "billing/billing_sheet_form.html", {"form": form, "sheet": None})
+
+
+@login_required
+def billing_sheet_detail(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_read(request)
+
+    sheet = get_object_or_404(
+        BillingSheet.objects.select_related("customer", "invoice", "created_by"),
+        organization=organization,
+        pk=pk,
+    )
+    items = sheet.items.all()
+
+    return render(
+        request,
+        "billing/billing_sheet_detail.html",
+        {
+            "sheet": sheet,
+            "items": items,
+        },
+    )
+
+
+@login_required
+def billing_sheet_edit(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    sheet = get_object_or_404(
+        BillingSheet,
+        organization=organization,
+        pk=pk,
+    )
+    if not sheet.is_open:
+        messages.error(request, "Only OPEN billing sheets can be edited.")
+        return redirect("billing:billing_sheet_detail", pk=pk)
+
+    if request.method == "POST":
+        form = BillingSheetForm(request.POST, instance=sheet, organization=organization)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Billing sheet updated.")
+            return redirect("billing:billing_sheet_detail", pk=pk)
+    else:
+        form = BillingSheetForm(instance=sheet, organization=organization)
+
+    return render(request, "billing/billing_sheet_form.html", {"form": form, "sheet": sheet})
+
+
+@login_required
+def billing_item_add(request, sheet_pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    sheet = get_object_or_404(BillingSheet, organization=organization, pk=sheet_pk)
+    if not sheet.is_open:
+        messages.error(request, "This billing sheet is locked and cannot be modified.")
+        return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+
+    if request.method == "POST":
+        form = BillingItemForm(request.POST)
+        if form.is_valid():
+            item = form.save(commit=False)
+            item.billing_sheet = sheet
+            item.save()
+            BillingSheet.objects.filter(pk=sheet_pk).update(updated_at=timezone.now())
+            messages.success(request, "Item added.")
+            return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+    else:
+        form = BillingItemForm()
+
+    return render(request, "billing/billing_item_form.html", {"form": form, "sheet": sheet, "item": None})
+
+
+@login_required
+def billing_item_edit(request, sheet_pk: int, item_pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    sheet = get_object_or_404(BillingSheet, organization=organization, pk=sheet_pk)
+    if not sheet.is_open:
+        messages.error(request, "This billing sheet is locked and cannot be modified.")
+        return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+
+    item = get_object_or_404(BillingItem, billing_sheet=sheet, pk=item_pk)
+
+    if request.method == "POST":
+        form = BillingItemForm(request.POST, instance=item)
+        if form.is_valid():
+            form.save()
+            BillingSheet.objects.filter(pk=sheet_pk).update(updated_at=timezone.now())
+            messages.success(request, "Item updated.")
+            return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+    else:
+        form = BillingItemForm(instance=item)
+
+    return render(request, "billing/billing_item_form.html", {"form": form, "sheet": sheet, "item": item})
+
+
+@login_required
+def billing_item_delete(request, sheet_pk: int, item_pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    if request.method != "POST":
+        raise PermissionDenied("POST required.")
+
+    sheet = get_object_or_404(BillingSheet, organization=organization, pk=sheet_pk)
+    if not sheet.is_open:
+        messages.error(request, "This billing sheet is locked and cannot be modified.")
+        return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+
+    item = get_object_or_404(BillingItem, billing_sheet=sheet, pk=item_pk)
+    item.delete()
+    BillingSheet.objects.filter(pk=sheet_pk).update(updated_at=timezone.now())
+    messages.success(request, "Item removed.")
+    return redirect("billing:billing_sheet_detail", pk=sheet_pk)
+
+
+@login_required
+def billing_sheet_generate_invoice(request, pk: int):
+    organization = require_organization(request)
+    _require_billing_write(request)
+
+    sheet = get_object_or_404(
+        BillingSheet.objects.select_related("customer"),
+        organization=organization,
+        pk=pk,
+    )
+    if not sheet.is_open:
+        messages.error(request, "Only OPEN billing sheets can be converted to an invoice.")
+        return redirect("billing:billing_sheet_detail", pk=pk)
+
+    if request.method == "POST":
+        form = BillingSheetGenerateForm(request.POST)
+        if form.is_valid():
+            try:
+                invoice = BillingSheetService.generate_invoice(
+                    organization=organization,
+                    performed_by=request.user,
+                    sheet_id=pk,
+                    due_date=form.cleaned_data.get("due_date"),
+                )
+            except BillingServiceError as exc:
+                messages.error(request, str(exc))
+                return redirect("billing:billing_sheet_detail", pk=pk)
+            messages.success(request, "Invoice generated successfully.")
+            return redirect("billing:document_detail", doc_type="invoice", pk=invoice.pk)
+    else:
+        form = BillingSheetGenerateForm()
+
+    return render(
+        request,
+        "billing/billing_sheet_generate.html",
+        {"form": form, "sheet": sheet},
     )

@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}Stock workspace{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="jims-list-page space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-sm font-semibold text-brand-700">Stock operations</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Available stock</h1><p class="mt-1 text-sm text-slate-600">Movement-backed balances. Quantities are never edited directly from this list.</p></div>
+    {% if INVENTORY_CAN_MANAGE_STOCK %}<a class="jims-btn jims-btn-primary" href="{% url 'inventory:stock_adjust' %}">Adjust stock</a>{% endif %}
+  </header>
+
+  <form method="get" class="jims-panel grid gap-3 p-4 sm:grid-cols-[1fr_13rem_auto_auto] sm:items-end">
+    <div><label class="block text-sm font-medium text-slate-700" for="stock-search">Search stock</label><input id="stock-search" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" name="q" value="{{ query }}" placeholder="Product name or SKU"></div>
+    <div><label class="block text-sm font-medium text-slate-700" for="stock-state">Stock state</label><select id="stock-state" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" name="state"><option value="">All stock</option><option value="low" {% if state == "low" %}selected{% endif %}>Low stock</option><option value="out" {% if state == "out" %}selected{% endif %}>Out of stock</option><option value="serialized" {% if state == "serialized" %}selected{% endif %}>Serialized</option><option value="expiring" {% if state == "expiring" %}selected{% endif %}>Expiring within 30 days</option></select></div>
+    <button class="jims-btn jims-btn-secondary">Apply</button>
+    {% if query or state %}<a class="jims-btn jims-btn-quiet" href="{% url 'inventory:stock_list' %}">Clear</a>{% endif %}
+  </form>
+
+  <section class="jims-list-results jims-panel overflow-hidden">
+    {% if balances %}
+      <div class="jims-table-wrap jims-desktop-table">
+        <table class="jims-table">
+          <thead><tr><th>Product</th><th>Category</th><th class="text-right">Available</th><th>Stock status</th><th class="text-right">Reorder level</th><th>Last movement</th>{% if INVENTORY_CAN_VIEW_COSTS %}<th class="text-right">Average cost</th><th class="text-right">Value</th>{% endif %}<th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+            {% for balance in balances %}
+              <tr>
+                <td><a class="font-semibold text-slate-950 hover:text-brand-700" href="{% url 'product-detail' balance.product.pk %}">{{ balance.product.name }}</a><div class="mt-1 text-xs text-slate-500">{{ balance.product.sku }}{% if balance.product.is_serialized %} · Serialized{% endif %}</div></td>
+                <td>{{ balance.product.catalog_category|default:balance.product.get_category_display }}</td>
+                <td class="text-right text-base font-bold text-slate-950">{{ balance.quantity|intcomma }} <span class="text-xs font-normal text-slate-500">{{ balance.product.measure_unit }}</span></td>
+                <td>{% if balance.quantity <= 0 %}{% include "components/status_badge.html" with value="out" label="Out of stock" %}{% elif balance.quantity <= balance.product.reorder_threshold %}{% include "components/status_badge.html" with value="low" label="Low stock" %}{% else %}{% include "components/status_badge.html" with value="available" label="Available" %}{% endif %}</td>
+                <td class="text-right">{{ balance.product.reorder_threshold }}</td>
+                <td class="whitespace-nowrap text-slate-600">{{ balance.last_movement_at|date:"d M Y, H:i"|default:"No movement" }}</td>
+                {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ balance.average_cost|intcomma }}</td><td class="text-right font-semibold">{{ balance.total_value|intcomma }}</td>{% endif %}
+                <td class="text-right"><div class="jims-menu"><button type="button" class="jims-btn jims-btn-quiet px-2" data-menu-button aria-controls="stock-actions-{{ balance.pk }}" aria-expanded="false"><span class="sr-only">Actions for {{ balance.product.name }}</span>•••</button><div id="stock-actions-{{ balance.pk }}" class="jims-menu-panel" data-menu-panel hidden><a href="{% url 'inventory:movement_list' %}?product={{ balance.product.pk }}">Movement history</a><a href="{% url 'product-detail' balance.product.pk %}">Product details</a>{% if INVENTORY_CAN_MANAGE_STOCK %}<a href="{% url 'inventory:stock_adjust' %}?product={{ balance.product.pk }}">Adjust stock</a>{% endif %}</div></div></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="jims-mobile-list">
+        {% for balance in balances %}
+          <article class="rounded-xl border border-slate-200 bg-white p-4">
+            <div class="flex items-start justify-between gap-3"><div><a href="{% url 'product-detail' balance.product.pk %}" class="font-semibold text-slate-950">{{ balance.product.name }}</a><div class="mt-1 text-xs text-slate-500">{{ balance.product.sku }}{% if balance.product.is_serialized %} · Serialized{% endif %}</div></div>{% if balance.quantity <= 0 %}{% include "components/status_badge.html" with value="out" label="Out" %}{% elif balance.quantity <= balance.product.reorder_threshold %}{% include "components/status_badge.html" with value="low" label="Low" %}{% else %}{% include "components/status_badge.html" with value="available" label="Available" %}{% endif %}</div>
+            <div class="mt-4 flex items-end justify-between border-t border-slate-100 pt-3"><div><div class="text-xs text-slate-500">Available</div><div class="mt-1 text-xl font-bold">{{ balance.quantity|intcomma }} <span class="text-xs font-normal">{{ balance.product.measure_unit }}</span></div></div><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:movement_list' %}?product={{ balance.product.pk }}">History</a></div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      {% url 'inventory:purchase_create' as receive_url %}
+      {% if INVENTORY_CAN_MANAGE_PURCHASES %}{% include "components/empty_state.html" with title="No stock balances found" message="Clear the filters or receive stock to create movement-backed balances." action_url=receive_url action_label="Receive stock" %}{% else %}{% include "components/empty_state.html" with title="No stock balances found" message="No stock records match these filters." %}{% endif %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

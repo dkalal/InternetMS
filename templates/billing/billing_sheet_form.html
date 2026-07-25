@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{% if sheet %}Edit billing sheet{% else %}New billing sheet{% endif %}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold tracking-tight text-slate-900">
+      {% if sheet %}Edit billing sheet{% else %}New billing sheet{% endif %}
+    </h1>
+    <p class="mt-1 text-sm text-slate-600">
+      {% if sheet %}Update the title, customer, or notes for this billing sheet.{% else %}Create a new billing sheet to collect billable items before issuing an invoice.{% endif %}
+    </p>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}
+
+      {% for field in form %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+            {{ field.label }}{% if field.field.required %} <span class="text-rose-500">*</span>{% endif %}
+          </label>
+          <div class="mt-1">{{ field }}</div>
+          {% if field.help_text %}<p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>{% endif %}
+          {% for error in field.errors %}<p class="mt-1 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+      {% endfor %}
+
+      <div class="flex items-center justify-end gap-3 pt-2">
+        {% if sheet %}
+          <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+        {% else %}
+          <a href="{% url 'billing:billing_sheet_list' %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+        {% endif %}
+        <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+          {% if sheet %}Save changes{% else %}Create billing sheet{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

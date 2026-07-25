@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="mx-auto max-w-3xl space-y-5">
+  <header>
+    <h1 class="text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1>
+    {% if subtitle %}<p class="mt-1 text-sm text-slate-600">{{ subtitle }}</p>{% endif %}
+  </header>
+
+  <form method="post" class="jims-panel space-y-5 p-5 sm:p-6" data-unsaved-form data-submit-lock>
+    {% csrf_token %}
+    {% include 'components/form.html' with form=form %}
+    <div class="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-5">
+      {% if supplier %}
+        <a href="{% url 'inventory:supplier_detail' supplier.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      {% elif cancel_url %}
+        <a href="{% url cancel_url %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      {% else %}
+        <a href="{% url 'inventory:dashboard' %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      {% endif %}
+      <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">{{ submit_label|default:"Save" }}</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

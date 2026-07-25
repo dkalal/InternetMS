@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="mx-auto max-w-2xl space-y-5">
+  <header>
+    <p class="text-sm font-semibold text-brand-700">Cart #{{ cart.pk }}</p>
+    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1>
+    <p class="mt-1 text-sm text-slate-600">Availability is checked now for guidance and revalidated at full payment.</p>
+  </header>
+  <form method="post" class="jims-panel space-y-5 p-5 sm:p-6" data-submit-lock>
+    {% csrf_token %}
+    {% include "components/form.html" with form=form %}
+    <div class="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-900">Draft carts and quotations do not reserve or deduct stock. Serialized products require one currently available serial per unit.</div>
+    <div class="flex justify-end gap-2 border-t border-slate-200 pt-5">
+      <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save item</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

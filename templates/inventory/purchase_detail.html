@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}Purchase {{ purchase.reference_number }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:text-brand-700" href="{% url 'inventory:purchase_list' %}">Purchases</a><span class="px-1">/</span><span>{{ purchase.reference_number }}</span></nav>
+      <div class="mt-1 flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl font-bold tracking-tight text-slate-950">{{ purchase.reference_number }}</h1>
+        {% include "components/status_badge.html" with value=purchase.status label=purchase.get_status_display %}
+      </div>
+      <p class="mt-1 text-sm text-slate-600">{{ purchase.supplier.company_name }} · {{ purchase.purchase_date|date:"d M Y" }} · Created by {{ purchase.created_by.get_full_name|default:purchase.created_by.username }}</p>
+    </div>
+    {% if purchase.status == 'draft' and INVENTORY_CAN_MANAGE_PURCHASES %}
+      <div class="jims-action-group" role="group" aria-label="Draft purchase actions">
+        <a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Edit draft</a>
+        <form method="post" action="{% url 'inventory:purchase_cancel' purchase.pk %}" data-confirm="Cancel this draft purchase? This safely closes the draft and does not change stock." data-confirm-title="Cancel purchase draft?" data-confirm-action="Cancel draft" data-confirm-tone="danger">
+          {% csrf_token %}<button type="submit" class="jims-btn jims-btn-danger">Cancel draft</button>
+        </form>
+        <span class="hidden h-7 w-px bg-slate-200 sm:block" aria-hidden="true"></span>
+      <form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-confirm="Confirming this purchase creates permanent stock-in movements for every line. It cannot be edited afterward." data-confirm-title="Confirm stock receipt?" data-confirm-action="Confirm receipt" data-submit-lock>
+        {% csrf_token %}
+        <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Confirming…">Confirm stock receipt</button>
+      </form>
+      </div>
+    {% endif %}
+  </header>
+
+  {% if purchase.status == "draft" %}
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Draft — stock is unchanged.</strong> Check the supplier, quantities{% if INVENTORY_CAN_VIEW_COSTS %}, costs{% endif %}, batches, expiry dates, and serial numbers before confirming.</div>
+  {% elif purchase.status == "confirmed" %}
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><strong>Stock received.</strong> Confirmed by {{ purchase.confirmed_by.get_full_name|default:purchase.confirmed_by.username|default:"system" }} on {{ purchase.confirmed_at|date:"d M Y, H:i" }}. The resulting movements are immutable.</div>
+  {% else %}
+    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800"><strong>Cancelled draft.</strong> This purchase was closed before receipt; no stock movements were created.</div>
+  {% endif %}
+
+  <section class="jims-panel overflow-hidden">
+    <div class="jims-panel-header flex items-center justify-between"><div><h2 class="font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">{{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}</p></div>{% if INVENTORY_CAN_VIEW_COSTS %}<div class="text-right"><div class="text-xs text-slate-500">Total cost</div><div class="font-bold text-slate-950">{{ line_items_total|intcomma }} TZS</div></div>{% endif %}</div>
+    <div class="jims-table-wrap">
+      <table class="jims-table">
+        <thead><tr><th>Product</th><th class="text-right">Quantity</th>{% if INVENTORY_CAN_VIEW_COSTS %}<th class="text-right">Unit cost</th><th class="text-right">Line total</th>{% endif %}<th>Batch</th><th>Expiry</th><th>Serial numbers</th></tr></thead>
+        <tbody>
+          {% for line in purchase_lines %}
+            <tr>
+              <td><div class="font-semibold text-slate-950">{{ line.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ line.product.sku }}{% if line.product.is_serialized %} · Serialized{% endif %}</div></td>
+              <td class="text-right">{{ line.quantity }}</td>
+              {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ line.unit_cost|intcomma }}</td><td class="text-right font-semibold">{{ line.line_total|intcomma }}</td>{% endif %}
+              <td>{{ line.batch_reference|default:"—" }}</td>
+              <td>{{ line.expiry_date|date:"d M Y"|default:"—" }}</td>
+              <td class="max-w-xs whitespace-pre-line text-xs">{{ line.serial_numbers|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

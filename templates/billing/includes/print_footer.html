@@ -8,7 +8,7 @@
       Thank You For Your Business!
     {% endif %}
   </p>
-  <p class="thanks-sub">Welcome Again!</p>
+  <p class="thanks-sub">Digital Reliable Services</p>
 
   <div class="footer-strip">
     <table>
@@ -55,9 +55,10 @@
             {% endif %}
           </td>
           <td>
-            {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
+            {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}
+              {{ ACTIVE_BRANDING.address_line2 }}
+            {% elif ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}
               {{ ACTIVE_BRANDING.address_line1 }}
-              {% if ACTIVE_BRANDING.address_line2 %}, {{ ACTIVE_BRANDING.address_line2 }}{% endif %}
             {% elif COMPANY_ADDRESS %}
               {{ COMPANY_ADDRESS }}
             {% else %}

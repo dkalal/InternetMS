@@ -1,0 +1,37 @@
+{% if custom_fields or can_manage_custom_fields %}
+<section id="additional-information" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+            <h2 class="text-sm font-semibold text-slate-900">Additional information</h2>
+            <p class="mt-1 text-sm text-slate-600">Tenant-specific metadata stored separately from core business data.</p>
+        </div>
+        {% if can_manage_custom_fields %}
+            <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/30"
+                data-custom-field-open
+            >
+                Add custom field
+            </button>
+        {% endif %}
+    </div>
+
+    {% if custom_fields %}
+        <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {% for item in custom_fields %}
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <dt class="text-xs font-medium uppercase tracking-wide text-slate-500">{{ item.definition.label }}</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ item.display_value|default:"-" }}</dd>
+                    {% if item.definition.help_text %}
+                        <p class="mt-2 text-xs text-slate-500">{{ item.definition.help_text }}</p>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </dl>
+    {% else %}
+        <div class="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+            No additional information has been added yet.
+        </div>
+    {% endif %}
+</section>
+{% endif %}

@@ -3,7 +3,10 @@ from django.views.generic import ListView, DetailView, CreateView, UpdateView, D
 from django.urls import reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Count, Q, Sum
+from custom_fields.mixins import CustomFieldPageContextMixin
+from custom_fields.services import CustomFieldService
 from .models import Package
 from .forms import PackageForm
 from billing.models import CustomerSubscription, SubscriptionPeriod
@@ -88,9 +91,10 @@ class PackageListView(LoginRequiredMixin, ListView):
         context.update(page_context(self.request, context["page_obj"], page_size=self.get_paginate_by(self.object_list)))
         return context
 
-class PackageDetailView(LoginRequiredMixin, DetailView):
+class PackageDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailView):
     model = Package
     template_name = 'services/package_detail.html'
+    custom_field_target_model = "package"
 
     def get_queryset(self):
         organization = require_organization(self.request)
@@ -104,7 +108,7 @@ class PackageDetailView(LoginRequiredMixin, DetailView):
         subscriptions = CustomerSubscription.objects.filter(
             organization=organization,
             package=package,
-        ).select_related("customer")
+        ).select_related("customer", "site")
         context["subscriptions"] = subscriptions
         context["active_subscriber_count"] = subscriptions.filter(status=CustomerSubscription.Status.ACTIVE).count()
         periods = SubscriptionPeriod.objects.filter(organization=organization, subscription__package=package)
@@ -112,40 +116,72 @@ class PackageDetailView(LoginRequiredMixin, DetailView):
             status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
         ).count()
         context["collected_amount"] = periods.filter(status=SubscriptionPeriod.Status.PAID).aggregate(total=Sum("final_amount"))["total"] or 0
+        context.update(self.get_custom_field_modal_context(target_model="package"))
+        context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
         return context
 
-class PackageCreateView(LoginRequiredMixin, CreateView):
+class PackageCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateView):
     model = Package
     form_class = PackageForm
     template_name = 'services/package_form.html'
     success_url = reverse_lazy('package-list')
+    custom_field_target_model = "package"
+    custom_field_inline_use = True
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["organization"] = require_organization(self.request)
+        return kwargs
     
     def form_valid(self, form):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.BILLING_SETTINGS_CHANGE)
         form.instance.organization = organization
         form.instance.tenant = organization
+        with transaction.atomic():
+            response = super().form_valid(form)
+            form.save_custom_fields(self.object, user=self.request.user)
         messages.success(self.request, f'Package {form.instance.name} created successfully.')
-        return super().form_valid(form)
+        return response
 
-class PackageUpdateView(LoginRequiredMixin, UpdateView):
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(self.get_custom_field_modal_context(target_model="package"))
+        return context
+
+class PackageUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateView):
     model = Package
     form_class = PackageForm
     template_name = 'services/package_form.html'
     success_url = reverse_lazy('package-list')
+    custom_field_target_model = "package"
+    custom_field_inline_use = True
 
     def get_queryset(self):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.BILLING_SETTINGS_CHANGE)
         return super().get_queryset().filter(organization=organization)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["organization"] = require_organization(self.request)
+        return kwargs
     
     def form_valid(self, form):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.BILLING_SETTINGS_CHANGE)
         form.instance.organization = organization
         form.instance.tenant = organization
+        with transaction.atomic():
+            response = super().form_valid(form)
+            form.save_custom_fields(self.object, user=self.request.user)
         messages.success(self.request, f'Package {form.instance.name} updated successfully.')
-        return super().form_valid(form)
+        return response
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(self.get_custom_field_modal_context(target_model="package"))
+        return context
 
 class PackageDeleteView(LoginRequiredMixin, DeleteView):
     model = Package

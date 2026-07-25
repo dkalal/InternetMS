@@ -28,10 +28,11 @@
     <div class="bottom-col totals-col">
       <div class="totals-card no-break quotation-totals-card">
         <table class="totals-table">
-          <tr>
+        <tr>
             <td class="totals-label">Subtotal</td>
             <td class="totals-value">{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td>
-          </tr>
+        </tr>
+        {% if document.discount_amount %}<tr><td class="totals-label">Discount</td><td class="totals-value">-{{ document.currency|upper }} {{ document.discount_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
           <tr>
             <td class="totals-label">VAT ({{ document.tax_rate }}%)</td>
             <td class="totals-value">{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td>
@@ -40,7 +41,22 @@
             <td>Total</td>
             <td class="totals-value">{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td>
           </tr>
+          {% if document.document_type == "invoice" and invoice_carry_forward %}
+            {% if invoice_carry_forward.brought_forward %}
+              <tr>
+                <td class="totals-label">Balance brought forward</td>
+                <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.brought_forward|floatformat:2|intcomma }}</td>
+              </tr>
+            {% endif %}
+            <tr class="grand-total">
+              <td>Account balance due</td>
+              <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.account_balance|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endif %}
         </table>
+        {% if document.document_type == "invoice" and invoice_carry_forward.brought_forward %}
+          <p class="notes-copy" style="margin: 8px 10px 0;">Brought-forward balance is from earlier invoices and is not charged again on this invoice.</p>
+        {% endif %}
       </div>
     </div>
   </div>

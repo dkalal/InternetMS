@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}{{ supplier.company_name }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:text-brand-700" href="{% url 'inventory:supplier_list' %}">Suppliers</a><span class="px-1">/</span><span>{{ supplier.company_name }}</span></nav>
+      <div class="mt-1 flex flex-wrap items-center gap-3"><h1 class="text-2xl font-bold tracking-tight text-slate-950">{{ supplier.company_name }}</h1>{% if supplier.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</div>
+      <p class="mt-1 text-sm text-slate-600">{{ supplier.contact_person|default:"No contact person" }}{% if supplier.phone %} · {{ supplier.phone }}{% endif %}{% if supplier.email %} · {{ supplier.email }}{% endif %}</p>
+    </div>
+    <div class="flex gap-2"><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:supplier_edit' supplier.pk %}">Edit supplier</a>{% if INVENTORY_CAN_VIEW_COSTS %}<a class="jims-btn jims-btn-primary" href="{% url 'inventory:supplier_payment_create' supplier.pk %}">Record payment</a>{% endif %}</div>
+  </header>
+
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchase records</div><div class="mt-2 text-2xl font-bold">{{ supplier.purchases.count }}</div></div>
+    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment records</div><div class="mt-2 text-2xl font-bold">{{ supplier.payment_records.count }}</div></div>
+    {% if INVENTORY_CAN_VIEW_COSTS %}<div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Recorded balance</div><div class="mt-2 text-xl font-bold">{{ supplier.recorded_balance|intcomma }} TZS</div><div class="mt-2 text-xs text-slate-500">Operational record only</div></div>{% endif %}
+  </div>
+
+  <div class="grid gap-5 lg:grid-cols-3">
+    <section class="jims-panel p-5">
+      <h2 class="font-semibold text-slate-950">Supplier details</h2>
+      <dl class="mt-4 space-y-4 text-sm">
+        <div><dt class="text-xs text-slate-500">Address</dt><dd class="mt-1 text-slate-900">{{ supplier.physical_address|default:"—" }}</dd></div>
+        <div><dt class="text-xs text-slate-500">TIN / VRN</dt><dd class="mt-1 text-slate-900">{{ supplier.tin_vrn|default:"—" }}</dd></div>
+        <div><dt class="text-xs text-slate-500">Internal notes</dt><dd class="mt-1 whitespace-pre-line text-slate-900">{{ supplier.notes|default:"—" }}</dd></div>
+      </dl>
+    </section>
+
+    {% if INVENTORY_CAN_VIEW_COSTS %}
+      <section class="jims-panel overflow-hidden lg:col-span-2">
+        <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Payment history <span class="font-normal text-slate-500">(record only)</span></h2></div>
+        {% if supplier.payment_records.all %}
+          <div class="jims-table-wrap"><table class="jims-table"><thead><tr><th>Date</th><th class="text-right">Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{% for payment in supplier.payment_records.all %}<tr><td>{{ payment.payment_date|date:"d M Y" }}</td><td class="text-right font-semibold">{{ payment.amount|intcomma }}</td><td>{{ payment.method|default:"—" }}</td><td>{{ payment.reference|default:"—" }}</td><td>{{ payment.notes|default:"—" }}</td></tr>{% endfor %}</tbody></table></div>
+        {% else %}
+          {% include "components/empty_state.html" with title="No supplier payments" message="Operational payment records will appear here." %}
+        {% endif %}
+      </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

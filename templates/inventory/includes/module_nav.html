@@ -1,0 +1,20 @@
+<nav class="mb-6 overflow-x-auto border-b border-slate-200" aria-label="Inventory sections">
+  <div class="flex min-w-max gap-1 pb-2">
+    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>Overview</a>
+    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'product-list' %}" {% if "product-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Catalog</a>
+    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:stock_list' %}" {% if request.resolver_match.url_name == "stock_list" %}aria-current="page"{% endif %}>Stock</a>
+    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:movement_list' %}" {% if request.resolver_match.url_name == "movement_list" %}aria-current="page"{% endif %}>Movements</a>
+    {% if INVENTORY_CAN_VIEW_PURCHASES %}
+      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:purchase_list' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Purchases</a>
+    {% endif %}
+    {% if INVENTORY_CAN_MANAGE_SUPPLIERS %}
+      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:supplier_list' %}" {% if "supplier" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Suppliers</a>
+    {% endif %}
+    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:cart_list' %}" {% if "cart" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Selling</a>
+    {% if INVENTORY_CAN_VIEW_COSTS %}
+      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:reports' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Reports</a>
+    {% else %}
+      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:report' 'sales' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Reports</a>
+    {% endif %}
+  </div>
+</nav>

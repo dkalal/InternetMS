@@ -1,0 +1,467 @@
+{% if custom_field_modal_form %}
+<dialog
+    id="custom-field-definition-modal"
+    class="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl backdrop:bg-slate-900/50"
+    {% if custom_field_modal_open %}open{% endif %}
+    aria-labelledby="custom-field-definition-modal-title"
+    data-custom-field-modal
+>
+    <form
+        method="post"
+        action="{% url 'custom-field-inline-create' %}"
+        class="max-h-[90vh] overflow-y-auto"
+        data-custom-field-form
+    >
+        {% csrf_token %}
+        {% if custom_field_target_model %}
+            {{ custom_field_modal_form.target_model }}
+        {% endif %}
+        <input type="hidden" name="next" value="{{ custom_field_modal_next|default:request.get_full_path }}">
+        {% if custom_field_organization_id %}
+            <input type="hidden" name="organization" value="{{ custom_field_organization_id }}">
+        {% endif %}
+
+        <div class="border-b border-slate-200 px-6 py-5">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Quick action</p>
+                    <h3 id="custom-field-definition-modal-title" class="mt-1 text-lg font-semibold text-slate-900">Add custom field</h3>
+                    <p class="mt-1 text-sm text-slate-600">Create a reusable metadata field without leaving this page.</p>
+                </div>
+                <button type="button" class="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" data-custom-field-close aria-label="Close dialog">
+                    &times;
+                </button>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2">
+                <button type="button" class="rounded-full bg-brand-600 px-3 py-1.5 text-sm font-medium text-white" data-custom-field-tab-button="quick">
+                    Quick
+                </button>
+                <button type="button" class="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50" data-custom-field-tab-button="advanced">
+                    Advanced
+                </button>
+            </div>
+        </div>
+
+        <div class="grid gap-0 px-6 py-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] xl:gap-6">
+            <div class="space-y-5">
+                <div class="hidden rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" data-custom-field-error-summary></div>
+
+                {% if custom_field_modal_form.non_field_errors %}
+                    <div class="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                        {% for error in custom_field_modal_form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+                    </div>
+                {% endif %}
+
+                <div data-custom-field-tab-panel="quick" class="space-y-4">
+                    {% include "components/form_field.html" with field=custom_field_modal_form.label %}
+                    {% include "components/form_field.html" with field=custom_field_modal_form.field_type %}
+                </div>
+
+                <div data-custom-field-tab-panel="advanced" class="hidden space-y-4">
+                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                        <div class="mb-4 text-sm font-semibold text-slate-900">Definition settings</div>
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.key %}
+                            </div>
+                            {% include "components/form_field.html" with field=custom_field_modal_form.display_order %}
+                            {% include "components/form_field.html" with field=custom_field_modal_form.required %}
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.help_text %}
+                            </div>
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.placeholder %}
+                            </div>
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.default_value %}
+                            </div>
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.choices %}
+                            </div>
+                            <div class="md:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.show_on_create %}
+                                {% include "components/form_field.html" with field=custom_field_modal_form.show_on_edit %}
+                                {% include "components/form_field.html" with field=custom_field_modal_form.show_on_detail %}
+                            </div>
+                            <div class="md:col-span-2">
+                                {% include "components/form_field.html" with field=custom_field_modal_form.is_active %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="mt-6 xl:mt-0">
+                <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h4 class="text-sm font-semibold text-slate-900">Preview in customer profile</h4>
+                            <p class="mt-1 text-xs text-slate-500">A live sample of what staff will see.</p>
+                        </div>
+                        <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600" data-custom-field-preview-badge>Text</span>
+                    </div>
+
+                    <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-medium text-slate-700" data-custom-field-preview-profile-label>Landmark</span>
+                            <span class="hidden text-rose-600" data-custom-field-preview-profile-required>*</span>
+                        </div>
+                        <div class="mt-3" data-custom-field-preview-profile-control></div>
+                        <p class="mt-3 text-xs text-slate-500" data-custom-field-preview-profile-help>Optional help text will appear here.</p>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-600">
+                        <div class="flex items-center justify-between rounded-lg bg-white px-3 py-2">
+                            <span>Key</span>
+                            <span class="font-medium text-slate-900" data-custom-field-preview-key>landmark</span>
+                        </div>
+                        <div class="flex items-center justify-between rounded-lg bg-white px-3 py-2">
+                            <span>Section</span>
+                            <span class="font-medium text-slate-900">Additional Information</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <div class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-slate-600">Fields can be deactivated later if requirements change.</p>
+            <div class="flex flex-wrap items-center justify-end gap-3">
+                <button type="button" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100" data-custom-field-close>
+                    Cancel
+                </button>
+                {% if custom_field_inline_use %}
+                    <button type="button" class="rounded-md border border-brand-200 bg-brand-50 px-4 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/30" data-custom-field-save-now>
+                        Save & use now
+                    </button>
+                {% endif %}
+                <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                    Save custom field
+                </button>
+            </div>
+        </div>
+    </form>
+</dialog>
+
+<script>
+  (function () {
+    var dialog = document.getElementById('custom-field-definition-modal');
+    if (!dialog) return;
+
+    var form = dialog.querySelector('[data-custom-field-form]');
+    var openers = Array.prototype.slice.call(document.querySelectorAll('[data-custom-field-open]'));
+    var closers = Array.prototype.slice.call(dialog.querySelectorAll('[data-custom-field-close]'));
+    var tabButtons = Array.prototype.slice.call(dialog.querySelectorAll('[data-custom-field-tab-button]'));
+    var panels = Array.prototype.slice.call(dialog.querySelectorAll('[data-custom-field-tab-panel]'));
+    var saveNowButton = dialog.querySelector('[data-custom-field-save-now]');
+    var errorSummary = dialog.querySelector('[data-custom-field-error-summary]');
+    var fieldList = document.querySelector('[data-custom-fields-list]');
+    var emptyState = document.querySelector('[data-custom-fields-empty]');
+    var labelInput = dialog.querySelector('#id_label');
+    var keyInput = dialog.querySelector('#id_key');
+    var fieldTypeInput = dialog.querySelector('#id_field_type');
+    var requiredInput = dialog.querySelector('#id_required');
+    var helpTextInput = dialog.querySelector('#id_help_text');
+    var placeholderInput = dialog.querySelector('#id_placeholder');
+    var defaultValueInput = dialog.querySelector('#id_default_value');
+    var choicesInput = dialog.querySelector('#id_choices');
+    var previewBadge = dialog.querySelector('[data-custom-field-preview-badge]');
+    var previewType = dialog.querySelector('[data-custom-field-preview-type]');
+    var previewProfileLabel = dialog.querySelector('[data-custom-field-preview-profile-label]');
+    var previewProfileRequired = dialog.querySelector('[data-custom-field-preview-profile-required]');
+    var previewProfileHelp = dialog.querySelector('[data-custom-field-preview-profile-help]');
+    var previewProfileControl = dialog.querySelector('[data-custom-field-preview-profile-control]');
+    var previewKey = dialog.querySelector('[data-custom-field-preview-key]');
+    var keyTouched = false;
+    var slugifyPattern = /[^a-z0-9]+/g;
+
+    var fieldMeta = {
+      text: {label: 'Text', icon: '📝'},
+      textarea: {label: 'Multiline text', icon: '📝'},
+      number: {label: 'Number', icon: '🔢'},
+      date: {label: 'Date', icon: '🗓️'},
+      boolean: {label: 'Yes / No', icon: '☑️'},
+      choice: {label: 'Choice', icon: '🏷️'}
+    };
+
+    function getMeta(value) {
+      return fieldMeta[value] || fieldMeta.text;
+    }
+
+    function openDialog() {
+      if (typeof dialog.showModal === 'function' && !dialog.open) {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute('open', 'open');
+      }
+      var firstInput = dialog.querySelector('input:not([type="hidden"]), select, textarea, button');
+      if (firstInput) {
+        firstInput.focus();
+      }
+    }
+
+    function closeDialog() {
+      if (typeof dialog.close === 'function') {
+        dialog.close();
+      } else {
+        dialog.removeAttribute('open');
+      }
+    }
+
+    function setTab(name) {
+      tabButtons.forEach(function (button) {
+        var selected = button.getAttribute('data-custom-field-tab-button') === name;
+        button.className = selected
+          ? 'rounded-full bg-brand-600 px-3 py-1.5 text-sm font-medium text-white'
+          : 'rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50';
+      });
+      panels.forEach(function (panel) {
+        panel.classList.toggle('hidden', panel.getAttribute('data-custom-field-tab-panel') !== name);
+      });
+    }
+
+    function showErrors(errors, nonFieldErrors) {
+      if (!errorSummary) return;
+      var parts = [];
+      if (nonFieldErrors && nonFieldErrors.length) {
+        parts = parts.concat(nonFieldErrors);
+      }
+      if (errors) {
+        Object.keys(errors).forEach(function (name) {
+          (errors[name] || []).forEach(function (entry) {
+            parts.push(entry.message ? name + ': ' + entry.message : name);
+          });
+        });
+      }
+      if (!parts.length) {
+        errorSummary.classList.add('hidden');
+        errorSummary.textContent = '';
+        return;
+      }
+      errorSummary.textContent = '';
+      parts.forEach(function (text) {
+        var row = document.createElement('div');
+        row.textContent = text;
+        errorSummary.appendChild(row);
+      });
+      errorSummary.classList.remove('hidden');
+    }
+
+    function clearErrors() {
+      showErrors({}, []);
+    }
+
+    function slugify(value) {
+      return (value || '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(slugifyPattern, '_')
+        .replace(/^_+|_+$/g, '');
+    }
+
+    function escapeHtml(value) {
+      return (value || '')
+        .toString()
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function syncKeyFromLabel() {
+      if (!labelInput || !keyInput || keyTouched) return;
+      keyInput.value = slugify(labelInput.value);
+      syncPreview();
+    }
+
+    function previewControlMarkup(type) {
+      var placeholder = placeholderInput && placeholderInput.value ? placeholderInput.value : '';
+      var required = requiredInput && requiredInput.checked;
+      var helpText = helpTextInput && helpTextInput.value ? helpTextInput.value : '';
+      var label = labelInput && labelInput.value ? labelInput.value : 'Field label';
+      var badge = getMeta(type);
+      var fieldHtml = '';
+
+      if (type === 'textarea') {
+        fieldHtml = '<textarea disabled rows="3" class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm" placeholder="' + escapeHtml(placeholder) + '"></textarea>';
+      } else if (type === 'number') {
+        fieldHtml = '<input disabled type="number" class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm" placeholder="' + escapeHtml(placeholder) + '">';
+      } else if (type === 'date') {
+        fieldHtml = '<input disabled type="date" class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm">';
+      } else if (type === 'boolean') {
+        fieldHtml = '<label class="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600"><input disabled type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600"> Yes / No</label>';
+      } else if (type === 'choice') {
+        var options = choicesInput && choicesInput.value ? choicesInput.value.split(/\r?\n/).filter(Boolean) : ['Option 1', 'Option 2'];
+        fieldHtml = '<select disabled class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm">';
+        options.forEach(function (option) {
+          fieldHtml += '<option>' + escapeHtml(option) + '</option>';
+        });
+        fieldHtml += '</select>';
+      } else {
+        fieldHtml = '<input disabled type="text" class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm" placeholder="' + escapeHtml(placeholder) + '">';
+      }
+
+      return {
+        badge: badge.icon + ' ' + badge.label,
+        label: label,
+        required: required,
+        helpText: helpText || 'Optional help text will appear here.',
+        control: fieldHtml
+      };
+    }
+
+    function syncPreview() {
+      if (!fieldTypeInput) return;
+      var type = fieldTypeInput.value || 'text';
+      var meta = previewControlMarkup(type);
+
+      if (previewBadge) previewBadge.textContent = meta.badge;
+      if (previewType) previewType.textContent = meta.badge;
+      if (previewProfileLabel) previewProfileLabel.textContent = labelInput && labelInput.value ? labelInput.value : 'Field label';
+      if (previewProfileRequired) previewProfileRequired.classList.toggle('hidden', !(requiredInput && requiredInput.checked));
+      if (previewProfileHelp) previewProfileHelp.textContent = meta.helpText;
+      if (previewProfileControl) previewProfileControl.innerHTML = meta.control;
+      if (previewKey) previewKey.textContent = keyInput && keyInput.value ? keyInput.value : 'landmark';
+    }
+
+    function serializeForm() {
+      var formData = new FormData(form);
+      var body = new URLSearchParams();
+      formData.forEach(function (value, key) {
+        body.append(key, value);
+      });
+      return body;
+    }
+
+    function appendField(html, fieldName) {
+      if (!fieldList || !html) return;
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = html.trim();
+      var element = wrapper.firstElementChild;
+      if (!element) return;
+
+      var existing = fieldName ? fieldList.querySelector('[data-field-name="' + fieldName + '"]') : null;
+      if (existing) {
+        existing.replaceWith(element);
+      } else {
+        fieldList.appendChild(element);
+      }
+
+      if (emptyState) {
+        emptyState.classList.add('hidden');
+      }
+
+      var focusTarget = element.querySelector('input, select, textarea');
+      if (focusTarget) {
+        focusTarget.focus();
+      }
+    }
+
+    function saveAndUseNow() {
+      if (!saveNowButton) return;
+      clearErrors();
+      saveNowButton.disabled = true;
+      saveNowButton.textContent = 'Saving...';
+
+      fetch(form.action, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRFToken': document.querySelector('input[name="csrfmiddlewaretoken"]').value,
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: serializeForm()
+      })
+        .then(function (response) {
+          return response.json().then(function (data) {
+            return { ok: response.ok, data: data };
+          });
+        })
+        .then(function (payload) {
+          if (!payload.ok || !payload.data.ok) {
+            showErrors(payload.data.errors || {}, payload.data.non_field_errors || []);
+            return;
+          }
+
+          if (payload.data.definition && payload.data.definition.field_html) {
+            appendField(payload.data.definition.field_html, 'cf_' + payload.data.definition.key);
+          }
+
+          closeDialog();
+        })
+        .catch(function () {
+          showErrors({}, ['Could not save the custom field. Please try again.']);
+        })
+        .finally(function () {
+          if (saveNowButton) {
+            saveNowButton.disabled = false;
+            saveNowButton.textContent = 'Save & use now';
+          }
+        });
+    }
+
+    openers.forEach(function (button) {
+      button.addEventListener('click', function () {
+        clearErrors();
+        openDialog();
+      });
+    });
+
+    closers.forEach(function (button) {
+      button.addEventListener('click', function () {
+        closeDialog();
+      });
+    });
+
+    tabButtons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        setTab(button.getAttribute('data-custom-field-tab-button'));
+      });
+    });
+
+    if (labelInput) {
+      labelInput.addEventListener('input', syncKeyFromLabel);
+    }
+    if (keyInput) {
+      keyInput.addEventListener('input', function () {
+        keyTouched = true;
+        syncPreview();
+      });
+    }
+    if (fieldTypeInput) {
+      fieldTypeInput.addEventListener('change', syncPreview);
+    }
+    if (requiredInput) {
+      requiredInput.addEventListener('change', syncPreview);
+    }
+    if (helpTextInput) {
+      helpTextInput.addEventListener('input', syncPreview);
+    }
+    if (placeholderInput) {
+      placeholderInput.addEventListener('input', syncPreview);
+    }
+    if (choicesInput) {
+      choicesInput.addEventListener('input', syncPreview);
+    }
+    if (saveNowButton) {
+      saveNowButton.addEventListener('click', saveAndUseNow);
+    }
+
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) {
+        closeDialog();
+      }
+    });
+
+    syncPreview();
+    setTab('quick');
+
+    {% if custom_field_modal_open %}
+    openDialog();
+    {% endif %}
+  })();
+</script>
+{% endif %}

@@ -108,6 +108,9 @@ class DocumentNumberService:
             return DocumentSequence.objects.select_for_update().get(**lookup)
         except DocumentSequence.DoesNotExist:
             try:
-                return DocumentSequence.objects.create(last_number=0, **lookup)
+                # Isolate a concurrent insert conflict in a savepoint so the
+                # surrounding transaction remains usable before we lock/read it.
+                with transaction.atomic():
+                    return DocumentSequence.objects.create(last_number=0, **lookup)
             except IntegrityError:
                 return DocumentSequence.objects.select_for_update().get(**lookup)

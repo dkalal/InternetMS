@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="mx-auto max-w-4xl space-y-5">
+  <header>
+    <p class="text-sm font-semibold text-brand-700">Suppliers</p>
+    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1>
+    <p class="mt-1 text-sm text-slate-600">Keep purchasing contacts accurate without adding unnecessary accounting detail.</p>
+  </header>
+
+  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
+
+    <section class="jims-panel">
+      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Company details</h2><p class="mt-1 text-sm text-slate-600">The organization shown on purchase records.</p></div>
+      <div class="grid gap-4 p-5 sm:grid-cols-2">
+        <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.company_name %}</div>
+        {% include "components/form_field.html" with field=form.tin_vrn %}
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
+        <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.physical_address %}</div>
+      </div>
+    </section>
+
+    <section class="jims-panel">
+      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Contact information</h2><p class="mt-1 text-sm text-slate-600">Who should staff contact about orders and deliveries?</p></div>
+      <div class="grid gap-4 p-5 sm:grid-cols-3">
+        {% include "components/form_field.html" with field=form.contact_person %}
+        {% include "components/form_field.html" with field=form.phone %}
+        {% include "components/form_field.html" with field=form.email %}
+      </div>
+    </section>
+
+    <section class="jims-panel">
+      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Internal notes <span class="font-normal text-slate-500">(optional)</span></h2></div>
+      <div class="p-5">{% include "components/form_field.html" with field=form.notes %}</div>
+    </section>
+
+    <div class="flex justify-end gap-2">
+      {% if supplier %}<a href="{% url 'inventory:supplier_detail' supplier.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>{% else %}<a href="{% url 'inventory:supplier_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>{% endif %}
+      <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save supplier</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

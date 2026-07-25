@@ -1,0 +1,119 @@
+<script>
+  (function () {
+    var form = document.querySelector("{{ form_selector|escapejs }}");
+    if (!form) return;
+
+    var storageKey = "{{ storage_key|escapejs }}";
+
+    function readStorage() {
+      try {
+        var raw = sessionStorage.getItem(storageKey);
+        return raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function writeStorage() {
+      var payload = { route: window.location.pathname, values: {} };
+      var elements = Array.prototype.slice.call(form.elements);
+      var grouped = {};
+
+      elements.forEach(function (element) {
+        if (!element.name || element.disabled || element.type === 'submit' || element.type === 'button' || element.type === 'reset' || element.type === 'file') {
+          return;
+        }
+        if (!grouped[element.name]) {
+          grouped[element.name] = [];
+        }
+        grouped[element.name].push(element);
+      });
+
+      Object.keys(grouped).forEach(function (name) {
+        var group = grouped[name];
+        var first = group[0];
+
+        if (first.type === 'checkbox') {
+          if (group.length > 1) {
+            payload.values[name] = {
+              type: 'checkbox-group',
+              value: group.filter(function (element) { return element.checked; }).map(function (element) { return element.value; })
+            };
+          } else {
+            payload.values[name] = { type: 'checkbox', value: first.checked };
+          }
+          return;
+        }
+
+        if (first.type === 'radio') {
+          var selected = group.filter(function (element) { return element.checked; })[0];
+          payload.values[name] = { type: 'radio', value: selected ? selected.value : '' };
+          return;
+        }
+
+        if (first.tagName === 'SELECT' && first.multiple) {
+          payload.values[name] = {
+            type: 'select-multiple',
+            value: Array.prototype.slice.call(first.selectedOptions).map(function (option) { return option.value; })
+          };
+          return;
+        }
+
+        payload.values[name] = { type: 'value', value: first.value };
+      });
+
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(payload));
+      } catch (err) {}
+    }
+
+    function restoreStorage() {
+      var payload = readStorage();
+      if (!payload || payload.route !== window.location.pathname) return;
+
+      Object.keys(payload.values).forEach(function (name) {
+        var entry = payload.values[name];
+        var elements = Array.prototype.slice.call(form.querySelectorAll('[name="' + name + '"]'));
+        if (!elements.length) return;
+
+        if (entry.type === 'checkbox') {
+          elements[0].checked = !!entry.value;
+          return;
+        }
+
+        if (entry.type === 'checkbox-group') {
+          elements.forEach(function (element) {
+            element.checked = entry.value.indexOf(element.value) !== -1;
+          });
+          return;
+        }
+
+        if (entry.type === 'radio') {
+          elements.forEach(function (element) {
+            element.checked = element.value === entry.value;
+          });
+          return;
+        }
+
+        if (entry.type === 'select-multiple') {
+          Array.prototype.slice.call(elements[0].options).forEach(function (option) {
+            option.selected = entry.value.indexOf(option.value) !== -1;
+          });
+          return;
+        }
+
+        elements[0].value = entry.value;
+      });
+    }
+
+    restoreStorage();
+
+    form.addEventListener('input', writeStorage, true);
+    form.addEventListener('change', writeStorage, true);
+    form.addEventListener('submit', function () {
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch (err) {}
+    });
+  })();
+</script>

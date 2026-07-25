@@ -1,12 +1,15 @@
 from django import forms
 
 from internetservices.tailwind import apply_tailwind
+from custom_fields.forms import CustomFieldFormMixin
 from services.models import Package
 
-from .models import Customer, InternetCustomer
+from .models import Customer, CustomerSite, InternetCustomer
 
 
-class CustomerForm(forms.ModelForm):
+class CustomerForm(CustomFieldFormMixin, forms.ModelForm):
+    custom_field_target_model = "customer"
+
     status_change_reason = forms.CharField(
         required=False,
         label='Status change reason',
@@ -18,7 +21,7 @@ class CustomerForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label='Service packages',
-        help_text='Choose the active packages this customer can use.',
+        help_text='Choose the default packages for the primary site. Add sites from the customer page for separate offices.',
     )
 
     class Meta:
@@ -52,16 +55,23 @@ class CustomerForm(forms.ModelForm):
         }
 
     def __init__(self, *args, organization=None, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, organization=organization, **kwargs)
         self.original_status = self.instance.status if self.instance and self.instance.pk else None
         if organization is not None:
             self.fields['packages'].queryset = Package.objects.filter(is_active=True, organization=organization)
+            self.fields['packages'].label_from_instance = self._package_choice_label
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Customer or business name')
         self.fields['location'].widget.attrs.setdefault('placeholder', 'Area, ward, street, or landmark')
         self.fields['vlan_id'].widget.attrs.setdefault('placeholder', 'VLAN 120')
         self.fields['tin_number'].widget.attrs.setdefault('placeholder', 'TIN')
         self.fields['vrn_number'].widget.attrs.setdefault('placeholder', 'VRN')
         apply_tailwind(self)
+
+    @staticmethod
+    def _package_choice_label(package):
+        """Expose the commercial and technical package details at selection time."""
+        speed = (package.speed or "Speed not specified").strip()
+        return f"{package.name} | {speed} | TZS {package.monthly_fee:,.0f}/month"
 
     def clean_status_change_reason(self):
         reason = (self.cleaned_data.get('status_change_reason') or '').strip()
@@ -84,6 +94,47 @@ class InternetCustomerForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.required = False
+        apply_tailwind(self)
+
+
+class CustomerSiteForm(forms.ModelForm):
+    packages = forms.ModelMultipleChoiceField(
+        queryset=Package.objects.filter(is_active=True),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Service packages',
+        help_text='Choose the packages active at this site.',
+    )
+
+    class Meta:
+        model = CustomerSite
+        fields = [
+            'name',
+            'location',
+            'address',
+            'ip_address',
+            'vlan_id',
+            'is_primary',
+            'is_active',
+            'notes',
+            'packages',
+        ]
+        widgets = {
+            'notes': forms.Textarea(attrs={'rows': 3}),
+        }
+        help_texts = {
+            'is_primary': 'Mark one site as the default billing and service location.',
+            'is_active': 'Inactive sites stay on record but are excluded from new billing work.',
+        }
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if organization is not None:
+            self.fields['packages'].queryset = Package.objects.filter(is_active=True, organization=organization)
+            self.fields['packages'].label_from_instance = CustomerForm._package_choice_label
+        self.fields['name'].widget.attrs.setdefault('placeholder', 'Main office, branch, or POP name')
+        self.fields['location'].widget.attrs.setdefault('placeholder', 'Area, ward, street, or landmark')
+        self.fields['vlan_id'].widget.attrs.setdefault('placeholder', 'VLAN 120')
         apply_tailwind(self)
 
 

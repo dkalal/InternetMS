@@ -1,0 +1,21 @@
+{% if value == "paid" or value == "confirmed" or value == "active" or value == "available" %}
+  <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-200">
+    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-emerald-600"></span>{{ label }}
+  </span>
+{% elif value == "draft" or value == "unpaid" or value == "issued" or value == "partially_paid" %}
+  <span class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 ring-1 ring-inset ring-amber-200">
+    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-amber-600"></span>{{ label }}
+  </span>
+{% elif value == "out" or value == "out_of_stock" or value == "void" or value == "cancelled" or value == "abandoned" or value == "removed" %}
+  <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800 ring-1 ring-inset ring-rose-200">
+    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-rose-600"></span>{{ label }}
+  </span>
+{% elif value == "low" or value == "expiring" %}
+  <span class="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-900 ring-1 ring-inset ring-orange-200">
+    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-orange-600"></span>{{ label }}
+  </span>
+{% else %}
+  <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200">
+    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-slate-500"></span>{{ label }}
+  </span>
+{% endif %}

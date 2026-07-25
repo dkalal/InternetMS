@@ -301,6 +301,15 @@
       letter-spacing: 0.03em;
     }
 
+    .document-title.invoice-title {
+      font-size: 18px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      max-width: 160px;
+      margin-left: auto;
+    }
+
     .meta-grid,
     .summary-grid {
       display: table;
@@ -373,8 +382,10 @@
       color: var(--navy);
     }
 
+    .status-badge.accepted,
     .status-badge.approved,
-    .status-badge.paid {
+    .status-badge.paid,
+    .status-badge.converted {
       border-color: #c3ecd1;
       background: #edfbf2;
       color: var(--green-deep);
@@ -387,10 +398,18 @@
     }
 
     .status-badge.rejected,
+    .status-badge.expired,
     .status-badge.overdue {
       border-color: #efc3c3;
       background: #fff0f0;
       color: #a92a2a;
+    }
+
+    .status-badge.void,
+    .status-badge.superseded {
+      border-color: #ddd6fe;
+      background: #f5f3ff;
+      color: #5b3ab6;
     }
 
     .split-grid {
@@ -811,6 +830,13 @@
     .item-subtitle {
       color: var(--muted);
       font-size: 11px;
+    }
+
+    .item-text,
+    .item-subtitle--description {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .quotation-items-table th,

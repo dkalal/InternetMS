@@ -1,5 +1,7 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from datetime import timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 from django.views.generic import TemplateView, ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views.generic.edit import FormView
 from django.urls import reverse_lazy, reverse
@@ -7,14 +9,19 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
-from django.db.models import Max, OuterRef, Q, Subquery, Sum
+from django.db.models import Exists, Max, OuterRef, Q, Subquery, Sum
 from django.utils import timezone
 
-from billing.models import BillingDocument, CustomerSubscription, SubscriptionPeriod
+from audit.models import AuditLog
+from custom_fields.mixins import CustomFieldPageContextMixin
+from billing.models import BillingDocument, BillingLineItem, CustomerSubscription, SubscriptionPeriod
+from custom_fields.services import CustomFieldService
+from billing.services import add_months, last_day_of_month
 
-from .models import Customer, InternetCustomer
+from .models import Customer, CustomerSite, InternetCustomer
 from .forms import (
     CustomerForm,
+    CustomerSiteForm,
     InternetCustomerForm,
     HardDeleteCustomerForm,
     AnonymizeCustomerForm,
@@ -23,6 +30,147 @@ from .services import CustomerService, CustomerServiceError
 from users.permissions import PermissionCode, require_permission
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context
+
+
+def _latest_subscription_period(subscription):
+    periods = list(subscription.periods.all())
+    if not periods:
+        return None
+    return max(periods, key=lambda period: (period.period_start, period.id))
+
+
+def _subscription_billing_snapshot(subscription):
+    latest_period = _latest_subscription_period(subscription)
+    latest_amount = None
+    if latest_period is not None:
+        if latest_period.invoice_id and latest_period.invoice is not None:
+            latest_amount = latest_period.invoice.total
+        else:
+            latest_amount = latest_period.final_amount
+    return latest_period, latest_amount
+
+
+def _subscription_paid_through_date(subscription):
+    paid_through = subscription.paid_through_date
+    monthly_fee = (subscription.monthly_fee_at_signup or Decimal("0.00")).quantize(Decimal("0.01"))
+    if monthly_fee <= Decimal("0.00"):
+        return paid_through
+
+    for period in subscription.periods.all():
+        if period.status != SubscriptionPeriod.Status.PAID:
+            continue
+
+        effective_months = max(int(period.months or 1), 1)
+        invoice = period.invoice
+        if invoice is not None:
+            invoice_items = list(invoice.items.all())
+            package_items = [
+                item
+                for item in invoice_items
+                if item.package_id == subscription.package_id
+                and item.billing_behavior == BillingLineItem.BillingBehavior.RECURRING_MONTHLY
+            ]
+            recurring_item = package_items[0] if package_items else next(
+                (
+                    item
+                    for item in invoice_items
+                    if item.billing_behavior == BillingLineItem.BillingBehavior.RECURRING_MONTHLY
+                ),
+                None,
+            )
+            if recurring_item is not None:
+                quantity_months = max(int(recurring_item.quantity or 1), 1)
+                if quantity_months > 1:
+                    effective_months = quantity_months
+                else:
+                    line_total = (recurring_item.quantity * recurring_item.unit_price - recurring_item.discount_amount).quantize(Decimal("0.01"))
+                    if line_total > Decimal("0.00"):
+                        inferred_months = int((line_total / monthly_fee).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                        if inferred_months > 1:
+                            expected_total = (monthly_fee * Decimal(inferred_months)).quantize(Decimal("0.01"))
+                            if expected_total == line_total:
+                                effective_months = inferred_months
+
+        effective_end = last_day_of_month(add_months(period.period_start, effective_months + period.free_months - 1))
+        if paid_through is None or effective_end > paid_through:
+            paid_through = effective_end
+
+    return paid_through
+
+
+def _customer_latest_billing_snapshot(subscriptions):
+    latest_period = None
+    latest_amount = None
+    for subscription in subscriptions:
+        period, amount = _subscription_billing_snapshot(subscription)
+        if period is None:
+            continue
+        if latest_period is None or (period.period_start, period.id) > (latest_period.period_start, latest_period.id):
+            latest_period = period
+            latest_amount = amount
+    return latest_period, latest_amount
+
+
+def _customer_paid_through_date(subscriptions):
+    paid_through = None
+    for subscription in subscriptions:
+        subscription_paid_through = _subscription_paid_through_date(subscription)
+        if subscription_paid_through is None:
+            continue
+        if paid_through is None or subscription_paid_through > paid_through:
+            paid_through = subscription_paid_through
+    return paid_through
+
+
+def _period_label(period):
+    if period is None:
+        return ""
+    start_label = period.period_start.strftime("%b %Y")
+    if getattr(period, "months", 1) <= 1:
+        return start_label
+    end_label = period.period_end.strftime("%b %Y")
+    if end_label == start_label:
+        return start_label
+    return f"{start_label} - {end_label}"
+
+
+def _internet_profile_snapshot(customer, subscriptions, internet_profile):
+    if internet_profile is None and not subscriptions:
+        return None
+
+    primary_subscription = subscriptions[0] if subscriptions else None
+    source_subscription = primary_subscription
+    source_period = _subscription_billing_snapshot(source_subscription)[0] if source_subscription else None
+    paid_through = _subscription_paid_through_date(source_subscription) if source_subscription else None
+    fallback_package_label = source_subscription.package.name if source_subscription is not None else ""
+    fallback_start_date = source_subscription.start_date if source_subscription is not None else None
+    fallback_end_date = paid_through or (source_period.period_end if source_period else None)
+
+    if internet_profile is not None:
+        package_label = internet_profile.get_package_type_display() or fallback_package_label
+        start_date = internet_profile.start_date or fallback_start_date
+        end_date = internet_profile.end_date or fallback_end_date
+    elif source_subscription is not None:
+        package_label = fallback_package_label
+        start_date = fallback_start_date
+        end_date = fallback_end_date
+    else:
+        package_label = ""
+        start_date = None
+        end_date = None
+
+    if start_date is None and source_period is not None:
+        start_date = source_period.period_start
+    if end_date is None:
+        end_date = paid_through
+
+    return SimpleNamespace(
+        package_label=package_label,
+        start_date=start_date,
+        end_date=end_date,
+        days_remaining=(end_date - timezone.localdate()).days if end_date else None,
+        customer=customer,
+    )
 
 
 # --- Function-based view example ---
@@ -75,6 +223,43 @@ class CustomerListView(LoginRequiredMixin, ListView):
     def get_paginate_by(self, queryset):
         return clean_page_size(self.request.GET.get("page_size"), default=self.paginate_by)
 
+    def _today_activity_logs(self, organization, user):
+        today = timezone.localdate()
+        return AuditLog.objects.filter(
+            organization=organization,
+            performed_at__date=today,
+        ).filter(Q(actor=user) | Q(performed_by=user))
+
+    def _worked_today_customer_ids(self, organization, user):
+        activity_logs = self._today_activity_logs(organization, user)
+        customer_ids = set()
+
+        for object_id in activity_logs.filter(object_type="Customer").values_list("object_id", flat=True):
+            try:
+                customer_ids.add(int(object_id))
+            except (TypeError, ValueError):
+                continue
+
+        for customer_id in activity_logs.filter(
+            object_type="CustomerSite",
+            metadata__customer_id__isnull=False,
+        ).values_list("metadata__customer_id", flat=True):
+            try:
+                customer_ids.add(int(customer_id))
+            except (TypeError, ValueError):
+                continue
+
+        billed_customer_ids = BillingDocument.objects.filter(
+            organization=organization,
+            id__in=[
+                int(object_id)
+                for object_id in activity_logs.filter(object_type="BillingDocument").values_list("object_id", flat=True)
+                if str(object_id).isdigit()
+            ],
+        ).values_list("customer_id", flat=True)
+        customer_ids.update(billed_customer_ids)
+        return list(customer_ids)
+
     def _unpaid_customer_ids(self, organization):
         return SubscriptionPeriod.objects.filter(
             organization=organization,
@@ -82,6 +267,16 @@ class CustomerListView(LoginRequiredMixin, ListView):
         ).values("subscription__customer_id")
 
     def _due_soon_customer_ids(self, organization):
+        """Return customers with a paid, active service expiring later this month.
+
+        This is a customer-level queue, so it uses the latest paid-through
+        date across every active office/service. A customer who has already
+        paid a later month for any active office must not be placed in Due
+        soon just because another office ends earlier. A missing paid-through
+        date means no payment has been recorded, and a date before today means
+        the service is already expired. Customers with an open subscription
+        invoice are kept in the unpaid worklist so queues never overlap.
+        """
         today = timezone.localdate()
         month_end = today.replace(day=28)
         while True:
@@ -89,20 +284,34 @@ class CustomerListView(LoginRequiredMixin, ListView):
             if next_day.month != month_end.month:
                 break
             month_end = next_day
-        return CustomerSubscription.objects.filter(
+        open_subscription_invoices = SubscriptionPeriod.objects.filter(
             organization=organization,
-            status=CustomerSubscription.Status.ACTIVE,
-        ).filter(
-            Q(paid_through_date__isnull=True) | Q(paid_through_date__lte=month_end)
-        ).values("customer_id")
+            subscription__customer_id=OuterRef("customer_id"),
+            status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+        )
+        return (
+            CustomerSubscription.objects.filter(
+                organization=organization,
+                status=CustomerSubscription.Status.ACTIVE,
+            )
+            .values("customer_id")
+            .annotate(latest_paid_through=Max("paid_through_date"))
+            .filter(
+                latest_paid_through__gte=today,
+                latest_paid_through__lte=month_end,
+            )
+            .exclude(Exists(open_subscription_invoices))
+            .values("customer_id")
+        )
 
     def get_queryset(self):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.TENANT_READ)
         queryset = (
             Customer.objects.for_organization(organization)
+            .exclude(status=Customer.Status.SUSPENDED)
             .optimized_list()
-            .prefetch_related("subscriptions__package", "subscriptions__periods")
+            .prefetch_related("subscriptions__package", "subscriptions__periods", "subscriptions__periods__invoice__items")
         )
         unpaid_periods = SubscriptionPeriod.objects.filter(
             organization=organization,
@@ -124,8 +333,12 @@ class CustomerListView(LoginRequiredMixin, ListView):
             ),
             latest_unpaid_invoice_id=Subquery(unpaid_periods.values("invoice_id")[:1]),
             latest_paid_through=Max(
-                "subscriptions__paid_through_date",
-                filter=Q(subscriptions__organization=organization, subscriptions__status=CustomerSubscription.Status.ACTIVE),
+                "subscriptions__periods__period_end",
+                filter=Q(
+                    subscriptions__organization=organization,
+                    subscriptions__status=CustomerSubscription.Status.ACTIVE,
+                    subscriptions__periods__status=SubscriptionPeriod.Status.PAID,
+                ),
             ),
         )
         
@@ -153,12 +366,16 @@ class CustomerListView(LoginRequiredMixin, ListView):
             queryset = queryset.inactive()
         elif worklist == 'active':
             queryset = queryset.active()
-        elif worklist == 'today':
-            queryset = queryset.filter(
-                Q(id__in=self._unpaid_customer_ids(organization)) |
-                Q(id__in=self._due_soon_customer_ids(organization)) |
-                ((Q(email__isnull=True) | Q(email="")) & (Q(phone__isnull=True) | Q(phone="")))
+        elif worklist == 'suspended':
+            # Re-include suspended customers specifically for this worklist
+            queryset = (
+                Customer.objects.for_organization(organization)
+                .suspended()
+                .optimized_list()
+                .prefetch_related("subscriptions__package", "subscriptions__periods", "subscriptions__periods__invoice__items")
             )
+        elif worklist == 'today':
+            queryset = queryset.filter(id__in=self._worked_today_customer_ids(organization, self.request.user))
         
         # Search functionality
         search_query = self.request.GET.get('search')
@@ -215,19 +432,26 @@ class CustomerListView(LoginRequiredMixin, ListView):
 
         today = timezone.localdate()
         for customer in customers:
-            subscriptions = list(customer.subscriptions.all())
-            customer.primary_subscription = subscriptions[0] if subscriptions else None
+            subscriptions = list(
+                customer.subscriptions.select_related("site", "package")
+                .prefetch_related("periods__invoice")
+                .order_by("-site__is_primary", "site__name", "package__name", "id")
+            )
+            # Keep the primary-site subscription for the quick renew action.
+            primary_subscriptions = [s for s in subscriptions if s.site and s.site.is_primary] or subscriptions
+            customer.primary_subscription = primary_subscriptions[0] if primary_subscriptions else None
             customer.unpaid_amount = getattr(customer, "unpaid_amount", None) or unpaid_amounts.get(customer.id)
             customer.latest_unpaid_invoice_id = getattr(customer, "latest_unpaid_invoice_id", None) or latest_invoice_by_customer.get(customer.id)
             customer.whatsapp_url = self._whatsapp_link(customer.phone)
+            customer.latest_paid_through = _customer_paid_through_date(subscriptions)
 
             if customer.unpaid_amount:
                 customer.billing_state = "unpaid"
                 customer.billing_label = "Unpaid"
                 customer.billing_note = f"Balance: {customer.unpaid_amount:,.0f} TZS"
                 customer.primary_action = "Register receipt" if customer.latest_unpaid_invoice_id else "Renew"
-            elif customer.primary_subscription and customer.primary_subscription.paid_through_date:
-                paid_through = customer.primary_subscription.paid_through_date
+            elif customer.latest_paid_through:
+                paid_through = customer.latest_paid_through
                 if paid_through < today:
                     customer.billing_state = "unpaid"
                     customer.billing_label = "Expired"
@@ -259,6 +483,17 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 customer.billing_note = "No active package billing"
                 customer.primary_action = "View"
 
+            latest_period = None
+            latest_amount = None
+            if subscriptions:
+                latest_period, latest_amount = _customer_latest_billing_snapshot(subscriptions)
+            if latest_period is not None and latest_amount is not None:
+                latest_note = f"Latest invoice: {latest_amount:,.0f} TZS for {_period_label(latest_period)}"
+                if customer.billing_note:
+                    customer.billing_note = f"{customer.billing_note} | {latest_note}"
+                else:
+                    customer.billing_note = latest_note
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         organization = require_organization(self.request)
@@ -272,22 +507,28 @@ class CustomerListView(LoginRequiredMixin, ListView):
             (Q(email__isnull=True) | Q(email="")) &
             (Q(phone__isnull=True) | Q(phone=""))
         )
-        context['total_customers'] = base.count()
+        context['total_customers'] = base.exclude(status=Customer.Status.SUSPENDED).count()
         context['active_customers'] = base.active().count()
         context['inactive_customers'] = base.inactive().count()
         context['suspended_customers'] = base.suspended().count()
         context['overdue_customers'] = base.filter(id__in=unpaid_customer_ids).distinct().count()
         context['due_soon_customers'] = base.filter(id__in=due_soon_customer_ids).distinct().count()
         context['no_contact_customers'] = no_contact.count()
-        context['today_customers'] = base.filter(
-            Q(id__in=unpaid_customer_ids) |
-            Q(id__in=due_soon_customer_ids) |
-            ((Q(email__isnull=True) | Q(email="")) & (Q(phone__isnull=True) | Q(phone="")))
-        ).distinct().count()
+        context['today_customers'] = len(self._worked_today_customer_ids(organization, self.request.user))
         context['estimated_receivable'] = (
             SubscriptionPeriod.objects.filter(
                 organization=organization,
                 status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+            ).aggregate(total=Sum("final_amount"))["total"]
+            or 0
+        )
+        today = timezone.localdate()
+        context['monthly_receivable'] = (
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                period_start__year=today.year,
+                period_start__month=today.month,
             ).aggregate(total=Sum("final_amount"))["total"]
             or 0
         )
@@ -301,10 +542,11 @@ class CustomerListView(LoginRequiredMixin, ListView):
         return context
 
 # --- DetailView example ---
-class CustomerDetailView(LoginRequiredMixin, DetailView):
+class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailView):
     model = Customer
     template_name = 'customers/customer_detail.html'
     context_object_name = 'customer'
+    custom_field_target_model = "customer"
 
     def get_queryset(self):
         organization = require_organization(self.request)
@@ -312,7 +554,7 @@ class CustomerDetailView(LoginRequiredMixin, DetailView):
         return (
             Customer.objects.for_organization(organization)
             .select_related('internet_profile')
-            .prefetch_related('packages')
+            .prefetch_related('packages', 'sites__packages')
         )
 
     def get_context_data(self, **kwargs):
@@ -324,32 +566,60 @@ class CustomerDetailView(LoginRequiredMixin, DetailView):
             .order_by('-issue_date', '-created_at')[:10]
         )
         context['subscriptions'] = (
-            CustomerSubscription.objects.filter(organization=organization, customer=customer)
-            .select_related("package", "promotion")
-            .prefetch_related("periods__invoice", "periods__receipt")
+            CustomerSubscription.objects.filter(
+                organization=organization,
+                customer=customer,
+                status=CustomerSubscription.Status.ACTIVE,
+            )
+            .select_related("package", "promotion", "site")
+            .prefetch_related("periods__invoice", "periods__invoice__items", "periods__receipt")
+            .order_by("-site__is_primary", "site__name", "package__name", "-created_at")
         )
+        subscriptions = list(context["subscriptions"])
+        for subscription in subscriptions:
+            latest_period, latest_amount = _subscription_billing_snapshot(subscription)
+            subscription.latest_period = latest_period
+            subscription.latest_billing_amount = latest_amount
+            subscription.latest_period_label = _period_label(latest_period)
+            subscription.latest_paid_through = _subscription_paid_through_date(subscription)
+        context["subscriptions"] = subscriptions
         context['subscription_periods'] = (
-            SubscriptionPeriod.objects.filter(organization=organization, subscription__customer=customer)
-            .select_related("subscription", "subscription__package", "invoice", "receipt", "promotion")
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                subscription__customer=customer,
+                subscription__status=CustomerSubscription.Status.ACTIVE,
+            )
+            .select_related("subscription", "subscription__package", "subscription__site", "invoice", "receipt", "promotion")
             .order_by("-period_start")[:8]
         )
         context['packages'] = customer.packages.all()
+        context['sites'] = (
+            customer.sites.filter(is_active=True)
+            .prefetch_related("packages", "subscriptions__package")
+            .order_by("-is_primary", "name", "id")
+        )
+        context["custom_fields"] = CustomFieldService.get_custom_field_values(customer)
+        context.update(self.get_custom_field_modal_context(target_model="customer"))
         try:
-            context['internet_profile'] = customer.internet_profile
+            internet_profile = customer.internet_profile
         except InternetCustomer.DoesNotExist:
-            context['internet_profile'] = None
+            internet_profile = None
+        context['internet_profile'] = _internet_profile_snapshot(customer, subscriptions, internet_profile)
         return context
 
 # --- CreateView example ---
-class CustomerCreateView(LoginRequiredMixin, CreateView):
+class CustomerCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateView):
     model = Customer
     form_class = CustomerForm
     template_name = 'customers/customer_form.html'
+    custom_field_target_model = "customer"
+    custom_field_inline_use = True
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         if 'internet_form' in kwargs:
             context['internet_form'] = kwargs['internet_form']
+            context.update(self.get_custom_field_modal_context(target_model="customer"))
             return context
 
         customer_type = None
@@ -358,6 +628,7 @@ class CustomerCreateView(LoginRequiredMixin, CreateView):
             context['internet_form'] = InternetCustomerForm(self.request.POST, customer_type=customer_type)
         else:
             context['internet_form'] = InternetCustomerForm(customer_type=customer_type)
+        context.update(self.get_custom_field_modal_context(target_model="customer"))
         return context
 
     def get_form_kwargs(self):
@@ -389,6 +660,7 @@ class CustomerCreateView(LoginRequiredMixin, CreateView):
                 existing_internet_profile=None,
                 internet_profile_instance=internet_customer_instance,
                 status_change_reason=form.cleaned_data.get("status_change_reason", ""),
+                custom_field_data=form.cleaned_data,
             )
         except CustomerServiceError as exc:
             messages.error(self.request, str(exc))
@@ -399,10 +671,12 @@ class CustomerCreateView(LoginRequiredMixin, CreateView):
         return redirect(customer.get_absolute_url())
 
 # --- UpdateView example ---
-class CustomerUpdateView(LoginRequiredMixin, UpdateView):
+class CustomerUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateView):
     model = Customer
     form_class = CustomerForm
     template_name = 'customers/customer_form.html'
+    custom_field_target_model = "customer"
+    custom_field_inline_use = True
 
     def get_queryset(self):
         organization = require_organization(self.request)
@@ -414,6 +688,10 @@ class CustomerUpdateView(LoginRequiredMixin, UpdateView):
         if customer.customer_type != 'internet':
             if 'packages' in form.fields:
                 form.fields['packages'].disabled = True
+        if customer.status == Customer.Status.SUSPENDED:
+            if 'packages' in form.fields:
+                form.fields['packages'].disabled = True
+                form.fields['packages'].help_text = 'Packages cannot be assigned to a suspended customer. Reactivate the customer first.'
         return form
 
     def get_form_kwargs(self):
@@ -444,6 +722,7 @@ class CustomerUpdateView(LoginRequiredMixin, UpdateView):
         else:
             context['internet_form'] = InternetCustomerForm(instance=internet_instance, customer_type=customer_type)
 
+        context.update(self.get_custom_field_modal_context(target_model="customer"))
         return context
 
     def form_valid(self, form):
@@ -476,6 +755,7 @@ class CustomerUpdateView(LoginRequiredMixin, UpdateView):
                 existing_internet_profile=internet_instance,
                 internet_profile_instance=internet_customer_instance,
                 status_change_reason=form.cleaned_data.get("status_change_reason", ""),
+                custom_field_data=form.cleaned_data,
             )
         except CustomerServiceError as exc:
             messages.error(self.request, str(exc))
@@ -484,6 +764,91 @@ class CustomerUpdateView(LoginRequiredMixin, UpdateView):
         self.object = customer
         messages.success(self.request, f'Customer {customer.name} updated successfully.')
         return redirect(customer.get_absolute_url())
+
+
+class CustomerSiteCreateView(LoginRequiredMixin, CreateView):
+    model = CustomerSite
+    form_class = CustomerSiteForm
+    template_name = 'customers/customer_site_form.html'
+
+    def get_customer(self):
+        organization = require_organization(self.request)
+        require_permission(self.request, PermissionCode.CUSTOMER_CREATE)
+        return get_object_or_404(Customer.objects.for_organization(organization), pk=self.kwargs["customer_id"])
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['organization'] = require_organization(self.request)
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['customer'] = self.get_customer()
+        context['page_title'] = f"Add site for {context['customer'].name}"
+        return context
+
+    def form_valid(self, form):
+        organization = require_organization(self.request)
+        customer = self.get_customer()
+        site = form.save(commit=False)
+        site.customer = customer
+
+        try:
+            site = CustomerService.upsert_site(
+                organization=organization,
+                actor=self.request.user,
+                site_instance=site,
+                packages=form.cleaned_data.get("packages"),
+                status_change_reason="",
+            )
+        except CustomerServiceError as exc:
+            messages.error(self.request, str(exc))
+            return self.form_invalid(form)
+
+        self.object = site
+        messages.success(self.request, f"Site {site.name} added successfully.")
+        return redirect(customer.get_absolute_url())
+
+
+class CustomerSiteUpdateView(LoginRequiredMixin, UpdateView):
+    model = CustomerSite
+    form_class = CustomerSiteForm
+    template_name = 'customers/customer_site_form.html'
+
+    def get_queryset(self):
+        organization = require_organization(self.request)
+        require_permission(self.request, PermissionCode.CUSTOMER_CREATE)
+        return CustomerSite.objects.filter(organization=organization).select_related("customer")
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['organization'] = require_organization(self.request)
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['customer'] = self.get_object().customer
+        context['page_title'] = f"Edit site {self.object.name}"
+        return context
+
+    def form_valid(self, form):
+        organization = require_organization(self.request)
+        site = form.save(commit=False)
+        try:
+            site = CustomerService.upsert_site(
+                organization=organization,
+                actor=self.request.user,
+                site_instance=site,
+                packages=form.cleaned_data.get("packages"),
+                status_change_reason="",
+            )
+        except CustomerServiceError as exc:
+            messages.error(self.request, str(exc))
+            return self.form_invalid(form)
+
+        self.object = site
+        messages.success(self.request, f"Site {site.name} updated successfully.")
+        return redirect(site.customer.get_absolute_url())
 
 # --- DeleteView example ---
 class CustomerDeleteView(LoginRequiredMixin, DeleteView):

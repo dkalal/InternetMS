@@ -1,9 +1,48 @@
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.urls import reverse
 from django.contrib.humanize.templatetags.humanize import intcomma
 from users.tenant_models import TenantScopedManager
 
 # Create your models here.
+
+class ProductCategory(models.Model):
+    organization = models.ForeignKey(
+        'users.Organization', on_delete=models.PROTECT, related_name='product_categories', db_index=True
+    )
+    tenant = models.ForeignKey(
+        'users.Organization', on_delete=models.PROTECT, related_name='tenant_product_categories', db_index=True
+    )
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'name'], name='uniq_product_category_tenant_name'),
+        ]
+        indexes = [models.Index(fields=['tenant', 'is_active', 'name'])]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.organization_id is not None:
+            self.tenant_id = self.organization_id
+        if self.organization_id is None and self.tenant_id is not None:
+            self.organization_id = self.tenant_id
+        if self.organization_id != self.tenant_id:
+            self.organization_id = self.tenant_id
+        self.name = self.name.strip()
+        super().save(*args, **kwargs)
+
 
 class Product(models.Model):
     CATEGORY_CHOICES = (
@@ -16,6 +55,10 @@ class Product(models.Model):
     class PricingMode(models.TextChoices):
         RETAIL = "retail", "Retail"
         WHOLESALE = "wholesale", "Wholesale"
+
+    class ItemType(models.TextChoices):
+        PHYSICAL = "physical", "Physical product"
+        SERVICE = "service", "Service"
 
     def _format_price(self, price):
         """Helper method to format prices with commas"""
@@ -54,8 +97,24 @@ class Product(models.Model):
         db_index=True,
     )
     name = models.CharField(max_length=200)
+    sku = models.CharField(max_length=64, blank=True, default='', db_index=True)
     description = models.TextField(null=True, blank=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
+    catalog_category = models.ForeignKey(
+        ProductCategory,
+        on_delete=models.PROTECT,
+        related_name='products',
+        null=True,
+        blank=True,
+    )
+    item_type = models.CharField(max_length=20, choices=ItemType.choices, default=ItemType.PHYSICAL, db_index=True)
+    brand = models.CharField(max_length=120, blank=True, default='')
+    model_number = models.CharField(max_length=120, blank=True, default='')
+    track_stock = models.BooleanField(default=True, db_index=True)
+    is_serialized = models.BooleanField(default=False, db_index=True)
+    track_expiry = models.BooleanField(default=False)
+    tax_eligible = models.BooleanField(default=True)
+    reorder_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     measure_unit = models.CharField(max_length=50, default='Kg')
     buying_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -72,6 +131,13 @@ class Product(models.Model):
     objects = TenantScopedManager()
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'sku'],
+                condition=~Q(sku=''),
+                name='uniq_product_sku_per_tenant',
+            ),
+        ]
         indexes = [
             models.Index(fields=["organization", "category", "is_active"], name="products_org_cat_active_idx"),
             models.Index(fields=["tenant", "category", "is_active"], name="products_ten_cat_active_idx"),
@@ -79,6 +145,8 @@ class Product(models.Model):
             models.Index(fields=["organization", "quantity"], name="products_org_quantity_idx"),
             models.Index(fields=["organization", "retail_price"], name="products_org_retail_idx"),
             models.Index(fields=["organization", "wholesale_price"], name="products_org_wholesale_idx"),
+            models.Index(fields=["tenant", "item_type", "is_active"], name="products_ten_type_active_idx"),
+            models.Index(fields=["tenant", "sku"], name="products_ten_sku_idx"),
         ]
     
     def __str__(self):
@@ -194,5 +262,41 @@ class Product(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        self.sku = (self.sku or '').strip().upper()
+        if self.item_type == self.ItemType.SERVICE:
+            self.track_stock = False
+            self.is_serialized = False
+            self.track_expiry = False
+        if self.is_serialized:
+            self.track_stock = True
+        self.full_clean(exclude=['quantity', 'stock'])
         super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        if self.catalog_category_id and self.tenant_id:
+            category_tenant_id = getattr(self.catalog_category, 'tenant_id', None)
+            if category_tenant_id != self.tenant_id:
+                raise ValidationError({'catalog_category': 'Category must belong to the active tenant.'})
+        if self.buying_price is not None and self.buying_price < 0:
+            raise ValidationError({'buying_price': 'Buying price cannot be negative.'})
+        if self.selling_price is not None and self.selling_price < 0:
+            raise ValidationError({'selling_price': 'Selling price cannot be negative.'})
+        if self.reorder_threshold is not None and self.reorder_threshold < 0:
+            raise ValidationError({'reorder_threshold': 'Reorder threshold cannot be negative.'})
+
+    @property
+    def available_stock(self):
+        if not self.track_stock or self.item_type == self.ItemType.SERVICE:
+            return Decimal('0.00')
+        try:
+            return self.inventory_balance.quantity
+        except Exception:
+            return Decimal(str(self.stock or 0))
+
+    @property
+    def profit_margin_percent(self):
+        if not self.selling_price:
+            return Decimal('0.00')
+        return ((self.selling_price - self.buying_price) / self.selling_price * Decimal('100')).quantize(Decimal('0.01'))
 

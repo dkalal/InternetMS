@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}Inventory overview{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+
+<div class="space-y-6">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="text-sm font-semibold text-brand-700">Operations overview</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Inventory</h1>
+      <p class="mt-1 max-w-2xl text-sm text-slate-600">Monitor stock risk, receive goods, and start a sale from one workspace.</p>
+    </div>
+    <a href="{% url 'inventory:cart_create' %}" class="jims-btn jims-btn-primary">Start sale</a>
+  </header>
+
+  <section aria-labelledby="inventory-summary">
+    <h2 id="inventory-summary" class="sr-only">Inventory summary</h2>
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      <a href="{% url 'product-list' %}" class="jims-kpi">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Catalog items</div>
+        <div class="mt-2 text-2xl font-bold text-slate-950">{{ product_count|intcomma }}</div>
+        <div class="mt-2 text-xs text-brand-700">Open catalog</div>
+      </a>
+      <a href="{% url 'inventory:stock_list' %}" class="jims-kpi">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Stock units</div>
+        <div class="mt-2 text-2xl font-bold text-slate-950">{{ total_stock_units|intcomma }}</div>
+        <div class="mt-2 text-xs text-brand-700">Movement-backed</div>
+      </a>
+      <a href="{% url 'inventory:stock_list' %}?state=low" class="jims-kpi">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Low stock</div>
+        <div class="mt-2 text-2xl font-bold text-amber-800">{{ low_stock_count|intcomma }}</div>
+        <div class="mt-2 text-xs text-slate-500">At reorder threshold</div>
+      </a>
+      <a href="{% url 'inventory:stock_list' %}?state=out" class="jims-kpi">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Out of stock</div>
+        <div class="mt-2 text-2xl font-bold text-rose-800">{{ out_of_stock_count|intcomma }}</div>
+        <div class="mt-2 text-xs text-slate-500">Needs attention</div>
+      </a>
+      <a href="{% url 'inventory:report' 'dead-stock' %}" class="jims-kpi">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Dead stock</div>
+        <div class="mt-2 text-2xl font-bold text-slate-950">{{ dead_stock_count|intcomma }}</div>
+        <div class="mt-2 text-xs text-brand-700">Review inactive stock</div>
+      </a>
+      {% if INVENTORY_CAN_VIEW_COSTS %}
+        <a href="{% url 'inventory:report' 'stock-valuation' %}" class="jims-kpi">
+          <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Stock value</div>
+          <div class="mt-2 truncate text-xl font-bold text-slate-950">{{ total_stock_value|intcomma }}</div>
+          <div class="mt-2 text-xs text-slate-500">Recorded cost · TZS</div>
+        </a>
+      {% else %}
+        <a href="{% url 'inventory:cart_list' %}?status=draft" class="jims-kpi">
+          <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Draft carts</div>
+          <div class="mt-2 text-2xl font-bold text-slate-950">{{ draft_cart_count|intcomma }}</div>
+          <div class="mt-2 text-xs text-brand-700">Continue selling</div>
+        </a>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="jims-panel p-4 sm:p-5" aria-labelledby="quick-actions">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div>
+        <h2 id="quick-actions" class="text-sm font-semibold text-slate-950">Quick actions</h2>
+        <p class="mt-1 text-sm text-slate-600">Common inventory tasks available for your role.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a class="jims-btn jims-btn-secondary" href="{% url 'product-create' %}">Add catalog item</a>{% endif %}
+        {% if INVENTORY_CAN_MANAGE_PURCHASES %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:purchase_create' %}">Receive stock</a>{% endif %}
+        {% if INVENTORY_CAN_MANAGE_STOCK %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:stock_adjust' %}">Adjust stock</a>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <div class="grid gap-6 xl:grid-cols-3">
+    <section class="jims-panel overflow-hidden xl:col-span-2" aria-labelledby="recent-movements">
+      <div class="jims-panel-header flex items-center justify-between">
+        <div>
+          <h2 id="recent-movements" class="text-sm font-semibold text-slate-950">Recent stock movements</h2>
+          <p class="mt-1 text-xs text-slate-500">Latest immutable stock changes.</p>
+        </div>
+        <a class="text-sm font-semibold text-brand-700 hover:text-brand-800" href="{% url 'inventory:movement_list' %}">View all</a>
+      </div>
+      {% if recent_movements %}
+        <div class="jims-table-wrap">
+          <table class="jims-table">
+            <thead><tr><th>Time</th><th>Product</th><th>Movement</th><th class="text-right">Change</th><th class="text-right">Balance</th></tr></thead>
+            <tbody>
+              {% for movement in recent_movements %}
+                <tr>
+                  <td class="whitespace-nowrap text-slate-600">{{ movement.created_at|date:'d M, H:i' }}</td>
+                  <td><div class="font-semibold text-slate-900">{{ movement.product.name }}</div><div class="text-xs text-slate-500">{{ movement.product.sku }}</div></td>
+                  <td>{{ movement.get_movement_type_display }}</td>
+                  <td class="text-right font-semibold {% if movement.quantity < 0 %}text-rose-700{% else %}text-emerald-700{% endif %}">{% if movement.quantity > 0 %}+{% endif %}{{ movement.quantity }}</td>
+                  <td class="text-right">{{ movement.balance_after }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        {% include "components/empty_state.html" with title="No stock movements yet" message="Receive stock or record an opening balance to begin movement history." %}
+      {% endif %}
+    </section>
+
+    <section class="jims-panel overflow-hidden" aria-labelledby="recent-purchases">
+      <div class="jims-panel-header flex items-center justify-between">
+        <div>
+          <h2 id="recent-purchases" class="text-sm font-semibold text-slate-950">Recent purchases</h2>
+          <p class="mt-1 text-xs text-slate-500">{{ draft_purchase_count }} draft{{ draft_purchase_count|pluralize }} waiting.</p>
+        </div>
+        {% if INVENTORY_CAN_VIEW_PURCHASES %}<a class="text-sm font-semibold text-brand-700" href="{% url 'inventory:purchase_list' %}">View all</a>{% endif %}
+      </div>
+      {% if INVENTORY_CAN_VIEW_PURCHASES and recent_purchases %}
+        <div class="divide-y divide-slate-200">
+          {% for purchase in recent_purchases %}
+            <a href="{% url 'inventory:purchase_detail' purchase.pk %}" class="flex items-center justify-between gap-3 px-5 py-4 hover:bg-slate-50">
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold text-slate-900">{{ purchase.reference_number }}</div>
+                <div class="mt-1 truncate text-xs text-slate-500">{{ purchase.supplier.company_name }} · {{ purchase.item_count }} line{{ purchase.item_count|pluralize }}</div>
+              </div>
+              {% include "components/status_badge.html" with value=purchase.status label=purchase.get_status_display %}
+            </a>
+          {% endfor %}
+        </div>
+      {% elif INVENTORY_CAN_VIEW_PURCHASES %}
+        {% include "components/empty_state.html" with title="No purchases yet" message="Confirmed purchases will appear here." %}
+      {% else %}
+        <p class="px-5 py-8 text-sm text-slate-600">Purchase activity is hidden for your role.</p>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

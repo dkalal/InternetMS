@@ -1,18 +1,61 @@
 {% extends "base.html" %}
+{% load humanize %}
 
-{% block title %}Create Receipt{% endblock %}
+{% block title %}Register Payment{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
+<div class="mx-auto max-w-xl space-y-6">
   <div>
-    <h1 class="text-xl font-semibold tracking-tight text-slate-900">Create receipt</h1>
-    <p class="mt-1 text-sm text-slate-600">Invoice {{ invoice.number }} &middot; {{ invoice.customer.name }}</p>
+    <h1 class="text-xl font-semibold tracking-tight text-slate-900">Register payment</h1>
+    <p class="mt-1 text-sm text-slate-600">
+      Invoice {{ invoice.number }} &middot; {{ invoice.customer.name }} &middot;
+      Total: <span class="font-semibold text-slate-900">{{ invoice.total|intcomma }} {{ invoice.currency }}</span>
+    </p>
   </div>
 
-  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+  <div class="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+    {% if has_inventory_items %}
+      This invoice contains catalog products or services and requires full payment. Stock-tracked products are deducted only after the complete payment is confirmed.
+    {% else %}
+      Record the actual amount you received. If you only received part of the invoice, enter that payment amount here and the invoice will remain partially paid until the balance is covered.
+    {% endif %}
+    {% if outstanding_balance is not None %}
+      <div class="mt-2 font-medium">Outstanding balance: {{ outstanding_balance|intcomma }} {{ invoice.currency }}</div>
+    {% endif %}
+    {% if credited_total %}
+      <div class="mt-1 text-xs text-sky-900">Already credited: {{ credited_total|intcomma }} {{ invoice.currency }}</div>
+    {% endif %}
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
     <form method="post" class="space-y-4">
       {% csrf_token %}
-      {% include "components/form.html" with form=form %}
+
+      {% if form.non_field_errors %}
+        <div class="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}
+
+      {% for field in form %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+            {{ field.label }}{% if field.field.required %} <span class="text-rose-500">*</span>{% endif %}
+          </label>
+          <div class="mt-1">{{ field }}</div>
+          {% if field.help_text %}<p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>{% endif %}
+          {% for error in field.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
+        </div>
+      {% endfor %}
+
+      <div class="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+        {% if has_inventory_items %}
+          Partial payments are not accepted for this inventory invoice. The transaction is revalidated before stock changes.
+        {% else %}
+          If the amount paid is less than the invoice total, the invoice will be marked <strong>Partially paid</strong> and you can register another payment later for the balance.
+        {% endif %}
+      </div>
+
       <button type="submit" class="inline-flex w-full items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
         Create receipt
       </button>
@@ -20,4 +63,3 @@
   </div>
 </div>
 {% endblock %}
-

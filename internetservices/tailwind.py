@@ -4,23 +4,23 @@ from django import forms
 
 
 INPUT_CLASSES = (
-    "block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm "
+    "block min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm "
     "text-slate-900 shadow-sm placeholder:text-slate-400 "
     "focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30 "
     "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
 )
 
 SELECT_CLASSES = (
-    "block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm "
+    "block min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm "
     "focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30"
 )
 
 TEXTAREA_CLASSES = (
-    "block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm "
+    "block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm "
     "placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30"
 )
 
-CHECKBOX_CLASSES = "h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30"
+CHECKBOX_CLASSES = "h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30"
 
 
 def _merge_class(existing: str | None, added: str) -> str:

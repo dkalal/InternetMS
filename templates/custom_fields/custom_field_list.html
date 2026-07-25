@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Custom Fields{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+
+{% block content %}
+<div class="jims-list-page space-y-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <div class="text-sm text-slate-500">Settings / Custom Fields</div>
+            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Custom fields</h1>
+            <p class="mt-1 text-sm text-slate-600">Define extra metadata fields for customers and products without migrations.</p>
+        </div>
+        <a href="{% url 'custom-field-create' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">New custom field</a>
+    </div>
+
+    <section class="jims-list-results rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="jims-scroll-region rounded-lg border border-slate-200" tabindex="0" role="region" aria-label="Custom fields">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Label</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Target</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Type</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Order</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
+                        <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200">
+                    {% for field in custom_fields %}
+                        <tr>
+                            <td class="px-3 py-2">
+                                <div class="font-medium text-slate-900">{{ field.label }}</div>
+                                <div class="text-xs text-slate-500">{{ field.key }}</div>
+                            </td>
+                            <td class="px-3 py-2 text-slate-700">{{ field.get_target_model_display }}</td>
+                            <td class="px-3 py-2 text-slate-700">{{ field.get_field_type_display }}</td>
+                            <td class="px-3 py-2 text-slate-700">{{ field.display_order }}</td>
+                            <td class="px-3 py-2">
+                                {% if field.is_active %}
+                                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+                                {% else %}
+                                    <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-3 py-2 text-right">
+                                <div class="inline-flex flex-wrap justify-end gap-2">
+                                    <a href="{% url 'custom-field-edit' field.id %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+                                    {% if field.is_active %}
+                                        <form method="post" action="{% url 'custom-field-deactivate' field.id %}">
+                                            {% csrf_token %}
+                                            {% if user.is_superuser %}
+                                                <input type="hidden" name="organization" value="{{ organization.id }}">
+                                            {% endif %}
+                                            <button type="submit" class="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100">Deactivate</button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="6" class="px-3 py-6 text-center text-sm text-slate-500">No custom fields defined yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

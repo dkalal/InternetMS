@@ -19,6 +19,22 @@ class PermissionCode:
     BILLING_SETTINGS_CHANGE = "billing.settings.change"
     TENANT_MANAGE = "tenant.manage"
     PLATFORM_ANALYTICS = "platform.analytics"
+    CUSTOM_FIELD_MANAGE = "custom_field.manage"
+    PRODUCT_VIEW = "inventory.product.view"
+    PRODUCT_MANAGE = "inventory.product.manage"
+    CATEGORY_MANAGE = "inventory.category.manage"
+    SUPPLIER_MANAGE = "inventory.supplier.manage"
+    PURCHASE_VIEW = "inventory.purchase.view"
+    PURCHASE_CONFIRM = "inventory.purchase.confirm"
+    STOCK_VIEW = "inventory.stock.view"
+    STOCK_ADJUST = "inventory.stock.adjust"
+    STOCK_MOVEMENT_VIEW = "inventory.stock_movement.view"
+    CART_MANAGE = "inventory.cart.manage"
+    COST_REPORT_VIEW = "inventory.cost_report.view"
+    SALES_REPORT_VIEW = "inventory.sales_report.view"
+    INVENTORY_IMPORT = "inventory.import"
+    INVENTORY_EXPORT = "inventory.export"
+    INVENTORY_API = "inventory.api"
 
 
 @dataclass(frozen=True)
@@ -30,7 +46,26 @@ class RolePermissionMap:
 ROLE_PERMISSIONS: tuple[RolePermissionMap, ...] = (
     RolePermissionMap(
         role=UserAccessProfile.Role.SUPER_ADMIN,
-        permissions={PermissionCode.TENANT_MANAGE, PermissionCode.PLATFORM_ANALYTICS},
+        permissions={
+            PermissionCode.TENANT_MANAGE,
+            PermissionCode.PLATFORM_ANALYTICS,
+            PermissionCode.CUSTOM_FIELD_MANAGE,
+            PermissionCode.PRODUCT_VIEW,
+            PermissionCode.PRODUCT_MANAGE,
+            PermissionCode.CATEGORY_MANAGE,
+            PermissionCode.SUPPLIER_MANAGE,
+            PermissionCode.PURCHASE_VIEW,
+            PermissionCode.PURCHASE_CONFIRM,
+            PermissionCode.STOCK_VIEW,
+            PermissionCode.STOCK_ADJUST,
+            PermissionCode.STOCK_MOVEMENT_VIEW,
+            PermissionCode.CART_MANAGE,
+            PermissionCode.COST_REPORT_VIEW,
+            PermissionCode.SALES_REPORT_VIEW,
+            PermissionCode.INVENTORY_IMPORT,
+            PermissionCode.INVENTORY_EXPORT,
+            PermissionCode.INVENTORY_API,
+        },
     ),
     RolePermissionMap(
         role=UserAccessProfile.Role.TENANT_ADMIN,
@@ -43,6 +78,22 @@ ROLE_PERMISSIONS: tuple[RolePermissionMap, ...] = (
             PermissionCode.WHATSAPP_SEND,
             PermissionCode.USER_MANAGE,
             PermissionCode.BILLING_SETTINGS_CHANGE,
+            PermissionCode.CUSTOM_FIELD_MANAGE,
+            PermissionCode.PRODUCT_VIEW,
+            PermissionCode.PRODUCT_MANAGE,
+            PermissionCode.CATEGORY_MANAGE,
+            PermissionCode.SUPPLIER_MANAGE,
+            PermissionCode.PURCHASE_VIEW,
+            PermissionCode.PURCHASE_CONFIRM,
+            PermissionCode.STOCK_VIEW,
+            PermissionCode.STOCK_ADJUST,
+            PermissionCode.STOCK_MOVEMENT_VIEW,
+            PermissionCode.CART_MANAGE,
+            PermissionCode.COST_REPORT_VIEW,
+            PermissionCode.SALES_REPORT_VIEW,
+            PermissionCode.INVENTORY_IMPORT,
+            PermissionCode.INVENTORY_EXPORT,
+            PermissionCode.INVENTORY_API,
         },
     ),
     RolePermissionMap(
@@ -53,6 +104,12 @@ ROLE_PERMISSIONS: tuple[RolePermissionMap, ...] = (
             PermissionCode.BILLING_CREATE,
             PermissionCode.PAYMENT_REGISTER,
             PermissionCode.WHATSAPP_SEND,
+            PermissionCode.PRODUCT_VIEW,
+            PermissionCode.STOCK_VIEW,
+            PermissionCode.CART_MANAGE,
+            PermissionCode.SALES_REPORT_VIEW,
+            PermissionCode.INVENTORY_EXPORT,
+            PermissionCode.INVENTORY_API,
         },
     ),
 )
@@ -63,6 +120,20 @@ def _permissions_for_role(role: str | None) -> set[str]:
         if entry.role == role:
             return entry.permissions
     return set()
+
+
+def user_has_permission(user, permission: str) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    profile = getattr(user, 'access_profile', None)
+    role = getattr(profile, 'role', None)
+    if role != UserAccessProfile.Role.SUPER_ADMIN and getattr(profile, 'tenant_id', None):
+        from .models import Membership
+
+        membership = Membership.objects.filter(user=user, organization_id=profile.tenant_id, is_active=True).first()
+        if membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+            role = UserAccessProfile.Role.TENANT_ADMIN
+    return permission in _permissions_for_role(role)
 
 
 def require_tenant_context(request):

@@ -31,6 +31,7 @@ class BillingDocumentAdmin(admin.ModelAdmin):
         "customer",
         "issue_date",
         "status",
+        "balance_brought_forward",
         "total",
     )
     list_filter = ("organization", "document_type", "status")
@@ -53,9 +54,9 @@ class PromotionAdmin(admin.ModelAdmin):
 
 @admin.register(CustomerSubscription)
 class CustomerSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("organization", "customer", "package", "status", "monthly_fee_at_signup", "paid_through_date")
-    list_filter = ("organization", "status", "package")
-    search_fields = ("customer__name", "package__name")
+    list_display = ("organization", "customer", "site", "package", "status", "monthly_fee_at_signup", "paid_through_date")
+    list_filter = ("organization", "status", "site", "package")
+    search_fields = ("customer__name", "site__name", "package__name")
 
 
 @admin.register(SubscriptionPeriod)

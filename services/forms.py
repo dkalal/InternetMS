@@ -1,11 +1,14 @@
 from django import forms
 
+from custom_fields.forms import CustomFieldFormMixin
 from internetservices.tailwind import apply_tailwind
 
 from .models import Package
 
 
-class PackageForm(forms.ModelForm):
+class PackageForm(CustomFieldFormMixin, forms.ModelForm):
+    custom_field_target_model = "package"
+
     class Meta:
         model = Package
         fields = ['name', 'package_type', 'speed', 'monthly_fee', 'setup_fee', 'description', 'is_active']
@@ -20,7 +23,8 @@ class PackageForm(forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        self.organization = kwargs.pop('organization', None)
+        super().__init__(*args, organization=self.organization, **kwargs)
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Home 10 Mbps, Business 50 Mbps...')
         self.fields['speed'].widget.attrs.setdefault('placeholder', '10 Mbps')
         apply_tailwind(self)

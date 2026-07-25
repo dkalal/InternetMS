@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}{% if item %}Edit item{% else %}Add item{% endif %} — {{ sheet.reference_number }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold tracking-tight text-slate-900">
+      {% if item %}Edit billing item{% else %}Add billing item{% endif %}
+    </h1>
+    <p class="mt-1 text-sm text-slate-600">
+      Sheet: <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="text-brand-600 underline">{{ sheet.reference_number }} — {{ sheet.title }}</a>
+      &middot; {{ sheet.customer.name }}
+    </p>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}
+
+      {% for field in form %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+            {{ field.label }}{% if field.field.required %} <span class="text-rose-500">*</span>{% endif %}
+          </label>
+          <div class="mt-1">{{ field }}</div>
+          {% if field.help_text %}<p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>{% endif %}
+          {% for error in field.errors %}<p class="mt-1 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+      {% endfor %}
+
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+        <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+          {% if item %}Save changes{% else %}Add item{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Cancel Subscription{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-3xl space-y-6">
+  <div>
+    <div class="text-sm text-slate-500">
+      <a class="hover:underline" href="{{ customer.get_absolute_url }}">{{ customer.name }}</a>
+      <span class="px-1">/</span>
+      <span class="text-slate-700">Cancel subscription</span>
+    </div>
+    <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Cancel subscription</h1>
+    <p class="mt-1 text-sm text-slate-600">
+      Use this when a package was assigned by mistake or the subscription should not exist.
+      The subscription record is kept for audit purposes.
+    </p>
+  </div>
+
+  <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <h2 class="text-sm font-semibold text-slate-900">Subscription details</h2>
+    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div>
+        <dt class="text-xs text-slate-500">Customer</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.name }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-slate-500">Package</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.package.name }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-slate-500">Site</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.site.name|default:"Main Office" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-slate-500">Monthly fee</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-slate-500">Started</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.start_date|date:"M d, Y" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-slate-500">Paid through</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.paid_through_date|date:"M d, Y"|default:"—" }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <form method="post" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+        {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+
+    <div>
+      <label for="{{ form.reason.id_for_label }}" class="block text-sm font-medium text-slate-700">{{ form.reason.label }}</label>
+      <div class="mt-1">{{ form.reason }}</div>
+      {% if form.reason.help_text %}<p class="mt-1 text-xs text-slate-500">{{ form.reason.help_text }}</p>{% endif %}
+      {% if form.reason.errors %}
+        <div class="mt-2 text-sm text-rose-700">{{ form.reason.errors|join:", " }}</div>
+      {% endif %}
+    </div>
+
+    <div class="mt-5 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      If this subscription has open invoices, void them first using <strong>Resolve issue</strong> on each billing period before cancelling.
+    </div>
+
+    <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+      <a href="{{ customer.get_absolute_url }}" class="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+        Go back
+      </a>
+      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-800">
+        Cancel subscription
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

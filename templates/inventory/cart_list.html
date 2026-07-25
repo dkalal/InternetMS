@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Sales carts{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="jims-list-page space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-sm font-semibold text-brand-700">Selling</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Sales carts</h1><p class="mt-1 text-sm text-slate-600">Draft carts and quotations never reserve or deduct stock.</p></div>
+    <a class="jims-btn jims-btn-primary" href="{% url 'inventory:cart_create' %}">Start sale</a>
+  </header>
+
+  <form method="get" class="jims-panel grid gap-3 p-4 sm:grid-cols-[1fr_12rem_auto_auto] sm:items-end">
+    <div><label class="block text-sm font-medium text-slate-700" for="cart-search">Search</label><input id="cart-search" name="q" value="{{ query }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Cart number or customer"></div>
+    <div><label class="block text-sm font-medium text-slate-700" for="cart-status">Status</label><select id="cart-status" name="status" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All statuses</option>{% for value,label in statuses %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button class="jims-btn jims-btn-secondary">Apply</button>
+    {% if query or status %}<a class="jims-btn jims-btn-quiet" href="{% url 'inventory:cart_list' %}">Clear</a>{% endif %}
+  </form>
+
+  {% if carts %}
+    <div class="jims-list-scroll grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {% for cart in carts %}
+        <a class="jims-panel group p-5 transition hover:border-brand-300 hover:shadow-md" href="{% url 'inventory:cart_detail' cart.pk %}">
+          <div class="flex items-start justify-between gap-3"><div><div class="font-semibold text-slate-950 group-hover:text-brand-700">Cart #{{ cart.pk }}</div><div class="mt-1 text-sm text-slate-600">{{ cart.customer.name|default:cart.walk_in_name|default:"Walk-in Customer" }}</div></div>{% include "components/status_badge.html" with value=cart.status label=cart.get_status_display %}</div>
+          <div class="mt-5 flex items-end justify-between border-t border-slate-100 pt-4"><div><div class="text-xs text-slate-500">Items</div><div class="mt-1 font-semibold">{{ cart.item_count }}</div></div><div class="text-right"><div class="text-xs text-slate-500">Last updated</div><div class="mt-1 text-sm font-medium">{{ cart.updated_at|date:"d M, H:i" }}</div></div></div>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    {% url 'inventory:cart_create' as cart_create_url %}
+    <div class="jims-panel">{% include "components/empty_state.html" with title="No carts found" message="Clear the filters or start a new customer or walk-in sale." action_url=cart_create_url action_label="Start sale" %}</div>
+  {% endif %}
+</div>
+{% endblock %}

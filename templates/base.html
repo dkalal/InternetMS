@@ -1,72 +1,86 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Internet Services Management{% endblock %}</title>
+    <meta name="theme-color" content="#104558">
+    <title>{% block title %}JBMS{% endblock %} · JS Business Management System</title>
 
-    <!-- Tailwind CDN for prototyping only. Replace with a compiled static CSS build for production. -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              brand: {
-                50: '#eef2ff',
-                600: '#4f46e5',
-                700: '#4338ca'
-              }
-            }
-          }
-        }
-      }
-    </script>
-
+    <script src="{% static 'inventory/js/tailwind-config.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'inventory/css/jims-ui.css' %}">
+    <script defer src="{% static 'inventory/js/jims-ui.js' %}"></script>
+    <script defer src="{% static 'inventory/js/inventory-ui.js' %}"></script>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-slate-900 focus:shadow">
+<body class="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased {% block body_class %}{% endblock %}">
+    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[80] focus:rounded-md focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-slate-900 focus:shadow-lg">
         Skip to content
     </a>
-    <header class="border-b border-slate-200 bg-white">
-        <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-            <div class="flex items-center gap-4">
-                <a href="{% url 'customer-list' %}" class="text-sm font-semibold text-slate-900">
-                    JS Internet Services
+
+    <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div class="flex min-h-16 items-center justify-between gap-4">
+                <a href="{% url 'customer-list' %}" class="flex min-w-0 items-center gap-3">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold tracking-tight text-white">JS</span>
+                    <span class="min-w-0">
+                        <span class="block truncate text-sm font-bold tracking-tight text-slate-950">JBMS</span>
+                        {% if user.is_authenticated and ACTIVE_ORGANIZATION %}
+                            <span class="block max-w-44 truncate text-xs text-slate-500">{{ ACTIVE_ORGANIZATION.name }}</span>
+                        {% else %}
+                            <span class="block text-xs text-slate-500">Internet Management</span>
+                        {% endif %}
+                    </span>
                 </a>
-                {% if user.is_authenticated and ACTIVE_ORGANIZATION %}
-                  <span class="hidden text-xs text-slate-500 sm:inline">Org: {{ ACTIVE_ORGANIZATION.name }}</span>
+
+                {% if user.is_authenticated %}
+                    <button type="button" class="jims-btn jims-btn-secondary lg:hidden" data-nav-toggle aria-controls="primary-navigation" aria-expanded="false">
+                        <span class="sr-only">Toggle navigation</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/>
+                        </svg>
+                        Menu
+                    </button>
+
+                    <nav id="primary-navigation" class="absolute inset-x-0 top-16 hidden border-b border-slate-200 bg-white p-4 shadow-lg lg:static lg:flex lg:items-center lg:gap-1 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none" data-nav-panel aria-label="Primary navigation">
+                        <div class="grid gap-1 sm:grid-cols-2 lg:flex">
+                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'customer-list' %}" {% if request.resolver_match.url_name == "customer-list" %}aria-current="page"{% endif %}>Customers</a>
+                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'package-list' %}" {% if request.resolver_match.url_name == "package-list" %}aria-current="page"{% endif %}>Services</a>
+                            {% if INVENTORY_CAN_VIEW_STOCK %}
+                                <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.app_name == "inventory" or "product-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Inventory</a>
+                            {% endif %}
+                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'billing:document_list' doc_type='invoice' %}" {% if request.resolver_match.app_name == "billing" %}aria-current="page"{% endif %}>Billing</a>
+                        </div>
+
+                        <div class="mt-3 border-t border-slate-200 pt-3 lg:ml-2 lg:mt-0 lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0">
+                            <div class="jims-menu">
+                                <button type="button" class="jims-btn jims-btn-quiet w-full lg:w-auto" data-menu-button aria-controls="account-menu" aria-expanded="false">
+                                    <span class="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700" aria-hidden="true">{{ user.username|slice:":1"|upper }}</span>
+                                    <span class="max-w-32 truncate">{{ user.get_short_name|default:user.username }}</span>
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 text-slate-400" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.72a.75.75 0 0 1 1.06 0L10 11.44l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.78a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
+                                </button>
+                                <div id="account-menu" class="jims-menu-panel" data-menu-panel hidden>
+                                    <a href="{% url 'billing:document_list' doc_type='quotation' %}">Quotations</a>
+                                    <a href="{% url 'billing:document_list' doc_type='receipt' %}">Receipts</a>
+                                    {% if user.is_superuser or request.user_role == "TENANT_ADMIN" %}
+                                        <a href="{% url 'branding_settings' %}">Organization settings</a>
+                                        <a href="{% url 'custom-field-list' %}">Custom fields</a>
+                                        <a href="{% url 'inventory:settings' %}">Inventory settings</a>
+                                    {% endif %}
+                                    {% if user.is_superuser %}<a href="{% url 'admin:index' %}">Django admin</a>{% endif %}
+                                    <form method="post" action="{% url 'logout' %}">
+                                        {% csrf_token %}
+                                        <button type="submit">Log out</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+                {% else %}
+                    <a class="jims-btn jims-btn-primary" href="{% url 'login' %}">Log in</a>
                 {% endif %}
             </div>
-
-            <nav class="flex items-center gap-3 text-sm">
-                {% if user.is_authenticated %}
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'customer-list' %}">Customers</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'package-list' %}">Packages</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'product-list' %}">Products</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'billing:document_list' doc_type='quotation' %}">Quotations</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'billing:document_list' doc_type='invoice' %}">Invoices</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'billing:document_list' doc_type='receipt' %}">Receipts</a>
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'billing:promotion_list' %}">Promotions</a>
-                    {% if user.is_superuser or request.user_role == "TENANT_ADMIN" %}
-                      <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'branding_settings' %}">Branding</a>
-                    {% elif ACTIVE_MEMBERSHIP %}
-                      {% if ACTIVE_MEMBERSHIP.role == "owner" or ACTIVE_MEMBERSHIP.role == "admin" %}
-                        <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'branding_settings' %}">Branding</a>
-                      {% endif %}
-                    {% endif %}
-                    <a class="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="{% url 'admin:index' %}">Admin</a>
-                    <form method="post" action="{% url 'logout' %}">
-                        {% csrf_token %}
-                        <button type="submit" class="rounded-md bg-slate-900 px-3 py-2 text-white hover:bg-slate-800">
-                            Logout
-                        </button>
-                    </form>
-                {% else %}
-                    <a class="rounded-md bg-slate-900 px-3 py-2 text-white hover:bg-slate-800" href="{% url 'login' %}">Login</a>
-                {% endif %}
-            </nav>
         </div>
     </header>
 
@@ -75,13 +89,13 @@
             <div class="mb-6 space-y-2" role="status" aria-live="polite">
                 {% for message in messages %}
                     {% if 'error' in message.tags %}
-                      <div class="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ message }}</div>
+                        <div class="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
                     {% elif 'success' in message.tags %}
-                      <div class="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{{ message }}</div>
+                        <div class="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"><span class="font-bold" aria-hidden="true">✓</span><span>{{ message }}</span></div>
                     {% elif 'warning' in message.tags %}
-                      <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{{ message }}</div>
+                        <div class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
                     {% else %}
-                      <div class="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800">{{ message }}</div>
+                        <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800">{{ message }}</div>
                     {% endif %}
                 {% endfor %}
             </div>
@@ -91,10 +105,22 @@
     </main>
 
     <footer class="border-t border-slate-200 bg-white">
-        <div class="mx-auto max-w-7xl px-4 py-6 text-sm text-slate-500 sm:px-6 lg:px-8">
-            <div>&copy; 2026 JS Internet Services. All rights reserved.</div>
+        <div class="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+            <span>&copy; 2026 JS Business Management System</span>
+            <span>Secure operations for business management</span>
         </div>
     </footer>
+
+    <div class="jims-dialog-backdrop" data-confirm-layer role="dialog" aria-modal="true" aria-labelledby="jims-confirm-title" hidden>
+        <div class="jims-dialog">
+            <h2 id="jims-confirm-title" class="text-lg font-semibold text-slate-950" data-confirm-title>Confirm action</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-600" data-confirm-message></p>
+            <div class="mt-6 flex justify-end gap-3">
+                <button type="button" class="jims-btn jims-btn-secondary" data-confirm-cancel>Cancel</button>
+                <button type="button" class="jims-btn jims-btn-primary" data-confirm-accept>Confirm</button>
+            </div>
+        </div>
+    </div>
 
     {% block extra_js %}{% endblock %}
 </body>

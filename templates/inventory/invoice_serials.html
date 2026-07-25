@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Serials for {{ invoice.number }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="mx-auto max-w-5xl space-y-5">
+  <header><p class="text-sm font-semibold text-brand-700">Invoice {{ invoice.number }}</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Select serial numbers</h1><p class="mt-1 text-sm text-slate-600">Selections do not reserve stock. Availability is checked again when the invoice is fully paid.</p></header>
+
+  <form method="post" class="space-y-4" data-unsaved-form data-submit-lock>
+    {% csrf_token %}
+    {% for entry in line_options %}
+      <section class="jims-panel overflow-hidden">
+        <div class="jims-panel-header flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 class="font-semibold text-slate-950">{{ entry.line.product.name }}</h2><p class="mt-1 text-sm text-slate-600">{{ entry.line.product.sku }} · Quantity {{ entry.line.quantity }}</p></div><span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800">Choose exactly {{ entry.line.quantity }}</span></div>
+        {% if entry.units %}
+          <fieldset class="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3"><legend class="sr-only">Available serials for {{ entry.line.product.name }}</legend>{% for unit in entry.units %}<label class="flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border border-slate-200 p-3 text-sm hover:border-brand-300 hover:bg-brand-50"><input class="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-600" type="checkbox" name="line_{{ entry.line.pk }}" value="{{ unit.pk }}" {% if unit.pk in entry.selected_ids %}checked{% endif %}><span><span class="font-mono font-semibold text-slate-900">{{ unit.serial_number }}</span>{% if unit.expiry_date %}<span class="mt-1 block text-xs text-slate-500">Expires {{ unit.expiry_date|date:"d M Y" }}</span>{% endif %}</span></label>{% endfor %}</fieldset>
+        {% else %}
+          <div class="p-5"><div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">No available serials for this product. Receive or correct stock before payment.</div></div>
+        {% endif %}
+      </section>
+    {% empty %}
+      <div class="jims-panel">{% include "components/empty_state.html" with title="No serialized lines" message="This invoice does not require serial-number selection." %}</div>
+    {% endfor %}
+    <div class="flex justify-end gap-2"><a class="jims-btn jims-btn-secondary" href="{% url 'billing:document_detail' 'invoice' invoice.pk %}">Cancel</a><button class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save serial selections</button></div>
+  </form>
+</div>
+{% endblock %}

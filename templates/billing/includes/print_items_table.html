@@ -25,14 +25,14 @@
                     {% elif item.product %}
                       {{ item.product.name }}
                     {% elif item.description %}
-                      {{ item.description }}
+                      <span class="item-text">{{ item.description }}</span>
                     {% else %}
                       Item {{ forloop.counter }}
                     {% endif %}
                   </span>
                   {% if item.description %}
                     {% if item.package or item.product %}
-                      <span class="item-subtitle">{{ item.description }}</span>
+                      <span class="item-subtitle item-subtitle--description">{{ item.description }}</span>
                     {% endif %}
                   {% endif %}
                   {% if item.discount_amount %}

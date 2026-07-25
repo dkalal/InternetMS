@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}Suppliers{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="jims-list-page space-y-5">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-sm font-semibold text-brand-700">Purchasing</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Suppliers</h1><p class="mt-1 text-sm text-slate-600">Manage purchasing contacts and recent delivery activity.</p></div>
+    <a class="jims-btn jims-btn-primary" href="{% url 'inventory:supplier_create' %}">Add supplier</a>
+  </header>
+
+  <form method="get" class="jims-panel flex flex-col gap-3 p-4 sm:flex-row">
+    <label for="supplier-search" class="sr-only">Search suppliers</label>
+    <input id="supplier-search" class="min-h-10 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" name="q" value="{{ query }}" placeholder="Search company, contact, phone, email, TIN or VRN">
+    <button class="jims-btn jims-btn-secondary">Search</button>
+    {% if query %}<a href="{% url 'inventory:supplier_list' %}" class="jims-btn jims-btn-quiet">Clear</a>{% endif %}
+  </form>
+
+  <section class="jims-list-results jims-panel overflow-hidden">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3 text-sm text-slate-600"><span>{{ suppliers|length }} supplier{{ suppliers|length|pluralize }}</span>{% if INVENTORY_CAN_EXPORT %}<a class="font-semibold text-brand-700" href="{% url 'inventory:export_records' 'suppliers' %}">Export Excel</a>{% endif %}</div>
+    {% if suppliers %}
+      <div class="jims-table-wrap jims-desktop-table">
+        <table class="jims-table">
+          <thead><tr><th>Company</th><th>Contact</th><th>Phone</th><th>Purchase activity</th>{% if INVENTORY_CAN_VIEW_COSTS %}<th class="text-right">Recorded balance</th>{% endif %}<th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+            {% for supplier in suppliers %}
+              <tr>
+                <td><a class="font-semibold text-brand-700" href="{% url 'inventory:supplier_detail' supplier.pk %}">{{ supplier.company_name }}</a>{% if supplier.tin_vrn %}<div class="mt-1 text-xs text-slate-500">TIN/VRN {{ supplier.tin_vrn }}</div>{% endif %}</td>
+                <td>{{ supplier.contact_person|default:"—" }}{% if supplier.email %}<div class="mt-1 text-xs text-slate-500">{{ supplier.email }}</div>{% endif %}</td>
+                <td>{{ supplier.phone|default:"—" }}</td>
+                <td><span class="font-semibold">{{ supplier.confirmed_purchase_count }}</span> confirmed{% if supplier.last_purchase_date %}<div class="mt-1 text-xs text-slate-500">Last {{ supplier.last_purchase_date|date:"d M Y" }}</div>{% endif %}</td>
+                {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right font-semibold">{{ supplier.recorded_balance|intcomma }} TZS</td>{% endif %}
+                <td>{% if supplier.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</td>
+                <td class="text-right">
+                  <div class="jims-menu"><button type="button" class="jims-btn jims-btn-quiet px-2" data-menu-button aria-controls="supplier-actions-{{ supplier.pk }}" aria-expanded="false"><span class="sr-only">Actions for {{ supplier.company_name }}</span>•••</button><div id="supplier-actions-{{ supplier.pk }}" class="jims-menu-panel" data-menu-panel hidden><a href="{% url 'inventory:supplier_detail' supplier.pk %}">View supplier</a><a href="{% url 'inventory:supplier_edit' supplier.pk %}">Edit supplier</a>{% if INVENTORY_CAN_VIEW_COSTS %}<a href="{% url 'inventory:supplier_payment_create' supplier.pk %}">Record payment</a>{% endif %}</div></div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="jims-mobile-list">
+        {% for supplier in suppliers %}
+          <a href="{% url 'inventory:supplier_detail' supplier.pk %}" class="rounded-xl border border-slate-200 p-4">
+            <div class="flex items-start justify-between gap-3"><div><div class="font-semibold text-slate-950">{{ supplier.company_name }}</div><div class="mt-1 text-xs text-slate-500">{{ supplier.contact_person|default:"No contact person" }} · {{ supplier.phone|default:"No phone" }}</div></div>{% if supplier.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</div>
+            <div class="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600">{{ supplier.confirmed_purchase_count }} confirmed purchase{{ supplier.confirmed_purchase_count|pluralize }}</div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      {% url 'inventory:supplier_create' as supplier_create_url %}
+      {% include "components/empty_state.html" with title="No suppliers found" message="Clear the search or add the first supplier for purchasing." action_url=supplier_create_url action_label="Add supplier" %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

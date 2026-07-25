@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import date
+import importlib
 from decimal import Decimal
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import connection, connections
@@ -12,13 +14,22 @@ from django.utils import timezone
 from threading import Barrier, Thread
 
 from audit.models import AuditLog
-from billing.models import BillingDocument, BillingLineItem, CustomerSubscription, Promotion, SubscriptionPeriod
+from billing.forms import BillingLineItemFormSet
+from billing.models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion, SubscriptionPeriod
 from billing.numbering import DocumentNumberService
-from billing.services import BillingService, BillingServiceError, ISSUED_INVOICE_EDIT_ERROR, LineItemInput, SubscriptionBillingService
+from billing.services import (
+    BillingService,
+    BillingServiceError,
+    BillingSheetService,
+    ISSUED_INVOICE_EDIT_ERROR,
+    LineItemInput,
+    QuotationLifecycleService,
+    SubscriptionBillingService,
+)
 from customers.models import Customer
 from products.models import Product
 from services.models import Package
-from users.models import Organization, UserAccessProfile
+from users.models import Organization, UserAccessProfile, Membership
 
 
 User = get_user_model()
@@ -184,6 +195,7 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=period.invoice_id,
+            amount_paid=period.invoice.total,
             payment_date=date(2026, 4, 2),
             payment_method="cash",
         )
@@ -193,6 +205,63 @@ class BillingServiceTests(TestCase):
         self.assertEqual(period.status, SubscriptionPeriod.Status.PAID)
         self.assertEqual(period.receipt_id, receipt.id)
         self.assertEqual(subscription.paid_through_date, period.period_end)
+
+    def test_subscription_invoice_description_uses_speed_and_month_range_without_office_name(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 4, 1),
+        )
+
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 4, 1),
+            months=2,
+        )
+
+        description = period.invoice.items.get().description
+        self.assertEqual(description, "Billing for the 10 Mbps (10 Mbps) - April 2026 - May 2026")
+        self.assertNotIn("Office", description)
+
+    def test_new_invoice_captures_prior_open_balance_without_rebilling_it(self):
+        prior_invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=date(2026, 4, 1),
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[LineItemInput(description="April service", quantity=Decimal("1.00"), unit_price=Decimal("100000.00"))],
+        )
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=prior_invoice.id,
+            amount_paid=Decimal("40000.00"),
+            payment_method="cash",
+        )
+
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=date(2026, 5, 1),
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[LineItemInput(description="May service", quantity=Decimal("1.00"), unit_price=Decimal("50000.00"))],
+        )
+
+        self.assertEqual(invoice.balance_brought_forward, Decimal("60000.00"))
+        self.assertEqual(invoice.total, Decimal("50000.00"))
+        self.assertEqual(
+            BillingService.customer_open_invoice_balance(organization=self.org1, customer=self.customer_org1),
+            Decimal("110000.00"),
+        )
 
     def test_subscription_renewal_adds_vat_for_vrn_customer(self):
         self.customer_org1.vrn_number = "VRN-123"
@@ -256,11 +325,12 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             performed_by=self.user,
             invoice_id=original_invoice.id,
+            reason="Wrong tax treatment on the original invoice.",
         )
         period.refresh_from_db()
         original_invoice.refresh_from_db()
 
-        self.assertEqual(original_invoice.status, BillingDocument.Status.CANCELLED)
+        self.assertEqual(original_invoice.status, BillingDocument.Status.SUPERSEDED)
         self.assertEqual(reissued.status, BillingDocument.Status.DRAFT)
         self.assertEqual(reissued.tax_rate, Decimal("0.00"))
         self.assertEqual(reissued.tax_amount, Decimal("0.00"))
@@ -292,7 +362,7 @@ class BillingServiceTests(TestCase):
 
         self.assertEqual(resolved.status, SubscriptionPeriod.Status.CANCELLED)
         self.assertEqual(resolved.invoice_id, invoice_id)
-        self.assertEqual(invoice.status, BillingDocument.Status.CANCELLED)
+        self.assertEqual(invoice.status, BillingDocument.Status.VOID)
         log = AuditLog.objects.get(action_type="subscription.invoice_voided", document_id=str(invoice_id))
         self.assertEqual(log.metadata["reason"], "Invoice was created for the wrong month.")
         self.assertEqual(log.metadata["subscription_period_id"], period.id)
@@ -315,6 +385,7 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=period.invoice_id,
+            amount_paid=period.invoice.total,
             payment_date=date(2026, 4, 2),
             payment_method="cash",
             payment_reference="paid-period",
@@ -415,6 +486,77 @@ class BillingServiceTests(TestCase):
         self.assertEqual(updated.items.count(), 1)
         self.assertEqual(updated.items.first().description, "Draft-only edit")
 
+    def test_invoice_draft_edit_can_publish_invoice(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.DRAFT)
+
+        updated = BillingService.update_draft_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            tax_rate=Decimal("18.00"),
+            status=BillingDocument.Status.ISSUED,
+            items=[LineItemInput(description="Published invoice", quantity=Decimal("1.00"), unit_price=Decimal("50.00"))],
+        )
+
+        self.assertEqual(updated.status, BillingDocument.Status.ISSUED)
+        self.assertIsNotNone(updated.issued_at)
+        self.assertEqual(updated.items.first().description, "Published invoice")
+
+    def test_reissued_subscription_invoice_update_syncs_paid_through_to_multiple_months(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 7, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 7, 1),
+            months=1,
+        )
+        original_invoice = period.invoice
+
+        reissued = BillingService.reissue_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=original_invoice.id,
+            reason="Invoice should have covered two months, not one.",
+        )
+        updated = BillingService.update_draft_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=reissued.id,
+            tax_rate=Decimal("0.00"),
+            status=BillingDocument.Status.ISSUED,
+            items=[
+                LineItemInput(
+                    package_id=self.package_org1.id,
+                    description="July-August subscription",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("100000.00"),
+                    billing_behavior=BillingLineItem.BillingBehavior.RECURRING_MONTHLY,
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                )
+            ],
+        )
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=updated.id,
+            amount_paid=updated.total,
+            payment_method="cash",
+        )
+
+        period.refresh_from_db()
+        subscription.refresh_from_db()
+
+        self.assertEqual(period.months, 2)
+        self.assertEqual(period.period_end, date(2026, 8, 31))
+        self.assertEqual(subscription.paid_through_date, date(2026, 8, 31))
+        self.assertEqual(receipt.invoice_id, updated.id)
+
     def test_invoice_editing_blocked_after_issuing(self):
         invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
 
@@ -501,6 +643,8 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             performed_by=self.user,
             invoice_id=invoice.id,
+            amount=invoice.total,
+            reason="Full reversal approved after issue.",
         )
 
         self.assertEqual(credit_note.document_type, BillingDocument.DocumentType.CREDIT_NOTE)
@@ -570,7 +714,7 @@ class BillingServiceTests(TestCase):
             notes="Revision 2",
             items=self._quotation_items(price=Decimal("155.00")),
         )
-        invoice = BillingService.create_invoice_from_quotation(
+        draft_invoice = BillingService.create_invoice_from_quotation(
             organization=self.org1,
             created_by=self.user,
             quotation_id=quotation_v2.id,
@@ -578,20 +722,34 @@ class BillingServiceTests(TestCase):
         BillingService.update_draft_invoice(
             organization=self.org1,
             performed_by=self.user,
-            invoice_id=invoice.id,
+            invoice_id=draft_invoice.id,
             tax_rate=Decimal("15.00"),
             items=[LineItemInput(description="Edited", quantity=Decimal("1.00"), unit_price=Decimal("75.00"))],
         )
-        BillingService.cancel_invoice(organization=self.org1, performed_by=self.user, invoice_id=invoice.id)
+
+        void_invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.void_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=void_invoice.id,
+            reason="Invoice should not exist for this customer.",
+        )
+
+        issued_invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
         reissued_invoice = BillingService.reissue_invoice(
             organization=self.org1,
             performed_by=self.user,
-            invoice_id=invoice.id,
+            invoice_id=issued_invoice.id,
+            reason="Wrong package was used on the original invoice.",
         )
+        BillingDocument.objects.filter(pk=reissued_invoice.pk).update(status=BillingDocument.Status.ISSUED)
+        reissued_invoice.refresh_from_db()
         credit_note = BillingService.create_credit_note(
             organization=self.org1,
             performed_by=self.user,
             invoice_id=reissued_invoice.id,
+            amount=Decimal("50.00"),
+            reason="Post-issue discount approved.",
         )
 
         actions = set(
@@ -604,7 +762,8 @@ class BillingServiceTests(TestCase):
                 "quotation_converted_to_invoice",
                 "invoice_created",
                 "invoice_edited",
-                "invoice_cancelled",
+                "invoice_voided",
+                "invoice_superseded",
                 "invoice_reissued",
                 "credit_note_created",
             }.issubset(actions)
@@ -613,7 +772,7 @@ class BillingServiceTests(TestCase):
         log = AuditLog.objects.get(action_type="invoice_reissued", document_id=str(reissued_invoice.id))
         self.assertEqual(log.performed_by_id, self.user.id)
         self.assertEqual(log.tenant_id, self.org1.id)
-        self.assertEqual(log.old_value["id"], invoice.id)
+        self.assertEqual(log.old_value["id"], issued_invoice.id)
         self.assertEqual(log.new_value["id"], reissued_invoice.id)
         self.assertEqual(credit_note.corrected_invoice_id, reissued_invoice.id)
 
@@ -645,7 +804,48 @@ class BillingServiceTests(TestCase):
             created_by=self.user,
             quotation_id=quotation_v2.id,
         )
+        quotation_v2.refresh_from_db()
         self.assertEqual(invoice.document_type, BillingDocument.DocumentType.INVOICE)
+        self.assertEqual(invoice.source_quotation_id, quotation_v2.id)
+        self.assertEqual(quotation_v2.status, BillingDocument.Status.CONVERTED)
+        self.assertEqual(quotation_v2.converted_invoice_id, invoice.id)
+
+    def test_quotation_can_transition_from_draft_to_sent_to_accepted(self):
+        quotation = self._create_quotation()
+
+        sent = QuotationLifecycleService.send(
+            organization=self.org1,
+            performed_by=self.user,
+            quotation_id=quotation.id,
+            reason="Shared with the customer by WhatsApp.",
+        )
+        accepted = QuotationLifecycleService.accept(
+            organization=self.org1,
+            performed_by=self.user,
+            quotation_id=quotation.id,
+            reason="Customer approved the quotation.",
+        )
+
+        self.assertEqual(sent.status, BillingDocument.Status.SENT)
+        self.assertIsNotNone(sent.sent_at)
+        self.assertEqual(accepted.status, BillingDocument.Status.ACCEPTED)
+        self.assertIsNotNone(accepted.accepted_at)
+
+    def test_rejected_quotation_cannot_be_converted(self):
+        quotation = self._create_quotation()
+        QuotationLifecycleService.reject(
+            organization=self.org1,
+            performed_by=self.user,
+            quotation_id=quotation.id,
+            reason="Customer declined the offer.",
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "cannot be converted"):
+            BillingService.create_invoice_from_quotation(
+                organization=self.org1,
+                created_by=self.user,
+                quotation_id=quotation.id,
+            )
 
     def test_receipt_creation_is_idempotent_for_same_invoice(self):
         invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
@@ -653,6 +853,7 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=invoice.id,
+            amount_paid=invoice.total,
             payment_method="cash",
             payment_reference="ref-1",
         )
@@ -661,6 +862,7 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=invoice.id,
+            amount_paid=invoice.total,
             payment_method="cash",
             payment_reference="ref-1",
         )
@@ -682,6 +884,7 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=first_invoice.id,
+            amount_paid=first_invoice.total,
             payment_method="cash",
             payment_reference="ref-1",
         )
@@ -691,6 +894,7 @@ class BillingServiceTests(TestCase):
                 organization=self.org1,
                 created_by=self.user,
                 invoice_id=second_invoice.id,
+                amount_paid=second_invoice.total,
                 payment_method="cash",
                 payment_reference="ref-1",
             )
@@ -702,11 +906,306 @@ class BillingServiceTests(TestCase):
             organization=self.org1,
             created_by=self.user,
             invoice_id=invoice.id,
+            amount_paid=invoice.total,
             payment_method="cash",
             payment_reference="ref-unique",
         )
 
         self.assertRegex(receipt.number, r"^REC-ORG-\d{8}-0001$")
+
+    def test_receipt_creation_uses_the_amount_paid_for_partial_payments(self):
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=timezone.now().date(),
+            status=BillingDocument.Status.ISSUED,
+            items=[
+                LineItemInput(
+                    description="Fiber installation",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("150000.00"),
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                )
+            ],
+        )
+
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("100000.00"),
+            payment_method="cash",
+            payment_reference="partial-100k",
+        )
+
+        invoice.refresh_from_db()
+        self.assertEqual(receipt.total, Decimal("100000.00"))
+        self.assertEqual(receipt.subtotal, Decimal("100000.00"))
+        self.assertEqual(receipt.items.get().line_total, Decimal("100000.00"))
+        self.assertEqual(invoice.status, BillingDocument.Status.PARTIALLY_PAID)
+        self.assertEqual(receipt.invoice_id, invoice.id)
+
+    def test_partially_paid_invoice_becomes_paid_when_balance_is_fully_settled(self):
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=timezone.now().date(),
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    description="Fiber installation",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("100000.00"),
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                )
+            ],
+        )
+
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("40000.00"),
+            payment_method="cash",
+            payment_reference="partial-40000",
+        )
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("60000.00"),
+            payment_method="cash",
+            payment_reference="final-60000",
+        )
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, BillingDocument.Status.PAID)
+
+    def test_billing_sheet_invoice_generation_uses_the_selected_due_date(self):
+        sheet = BillingSheetService.create_sheet(
+            organization=self.org1,
+            created_by=self.user,
+            customer_id=self.customer_org1.id,
+            title="One-time installation",
+        )
+        BillingItem.objects.create(
+            billing_sheet=sheet,
+            description="Cable installation",
+            quantity=Decimal("1.00"),
+            unit_price=Decimal("50000.00"),
+        )
+
+        invoice = BillingSheetService.generate_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            sheet_id=sheet.id,
+            due_date=date(2026, 4, 30),
+        )
+
+        sheet.refresh_from_db()
+        self.assertEqual(invoice.due_date, date(2026, 4, 30))
+        self.assertEqual(sheet.invoice_id, invoice.id)
+        self.assertEqual(sheet.status, BillingSheet.Status.INVOICED)
+
+    def test_document_detail_shows_creator_for_quotation_invoice_and_receipt(self):
+        Membership.objects.create(
+            organization=self.org1,
+            user=self.user,
+            role=Membership.Role.ADMIN,
+            is_active=True,
+        )
+        self.client.login(username="u1", password="pass")
+        session = self.client.session
+        session["active_org_id"] = self.org1.id
+        session.save()
+
+        quotation = self._create_quotation()
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=invoice.total,
+            payment_method="cash",
+            payment_reference="creator-check",
+        )
+
+        for doc in (quotation, invoice, receipt):
+            response = self.client.get(reverse("billing:document_detail", kwargs={"doc_type": doc.document_type, "pk": doc.id}))
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Created by u1")
+
+    def test_line_item_formset_accepts_hidden_delete_value(self):
+        quotation = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.QUOTATION,
+            customer_id=self.customer_org1.id,
+            issue_date=timezone.now().date(),
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    description="Remove this item",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("10000.00"),
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                ),
+                LineItemInput(
+                    description="Keep this item",
+                    quantity=Decimal("2.00"),
+                    unit_price=Decimal("15000.00"),
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                ),
+            ],
+        )
+        first_item, second_item = list(quotation.items.order_by("id"))
+
+        data = {
+            "items-TOTAL_FORMS": "2",
+            "items-INITIAL_FORMS": "2",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            "items-0-id": str(first_item.id),
+            "items-0-document": str(quotation.id),
+            "items-0-product": "",
+            "items-0-package": "",
+            "items-0-description": first_item.description,
+            "items-0-quantity": str(first_item.quantity),
+            "items-0-unit_price": str(first_item.unit_price),
+            "items-0-billing_behavior": first_item.billing_behavior,
+            "items-0-pricing_mode": first_item.pricing_mode,
+            "items-0-discount_amount": str(first_item.discount_amount),
+            "items-0-discount_reason": "",
+            "items-0-promotion": "",
+            "items-0-DELETE": "on",
+            "items-1-id": str(second_item.id),
+            "items-1-document": str(quotation.id),
+            "items-1-product": "",
+            "items-1-package": "",
+            "items-1-description": second_item.description,
+            "items-1-quantity": str(second_item.quantity),
+            "items-1-unit_price": str(second_item.unit_price),
+            "items-1-billing_behavior": second_item.billing_behavior,
+            "items-1-pricing_mode": second_item.pricing_mode,
+            "items-1-discount_amount": str(second_item.discount_amount),
+            "items-1-discount_reason": "",
+            "items-1-promotion": "",
+            "items-1-DELETE": "",
+        }
+        formset = BillingLineItemFormSet(
+            data,
+            prefix="items",
+            form_kwargs={"organization": self.org1},
+            instance=quotation,
+        )
+
+        self.assertTrue(formset.is_valid(), formset.errors)
+        active_items = [form.cleaned_data for form in formset if not form.cleaned_data.get("DELETE")]
+        self.assertEqual(len(active_items), 1)
+        self.assertEqual(active_items[0]["description"], "Keep this item")
+
+    def test_partial_payment_summary_is_shown_on_invoice_and_receipt_details(self):
+        Membership.objects.create(
+            organization=self.org1,
+            user=self.user,
+            role=Membership.Role.ADMIN,
+            is_active=True,
+        )
+        self.client.login(username="u1", password="pass")
+        session = self.client.session
+        session["active_org_id"] = self.org1.id
+        session.save()
+
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=timezone.now().date(),
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    description="Fiber installation",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("100000.00"),
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                )
+            ],
+        )
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("50000.00"),
+            payment_method="cash",
+            payment_reference="partial-ui-1",
+        )
+
+        invoice_response = self.client.get(reverse("billing:document_detail", kwargs={"doc_type": "invoice", "pk": invoice.id}))
+        receipt_response = self.client.get(reverse("billing:document_detail", kwargs={"doc_type": "receipt", "pk": receipt.id}))
+
+        self.assertEqual(invoice_response.status_code, 200)
+        self.assertContains(invoice_response, "Payment summary")
+        self.assertContains(invoice_response, "Paid 50000.00")
+        self.assertContains(invoice_response, "Due 50000.00")
+        self.assertContains(invoice_response, "Create receipt")
+
+        self.assertEqual(receipt_response.status_code, 200)
+        self.assertContains(receipt_response, "Applied payment")
+        self.assertContains(receipt_response, "Invoice")
+        self.assertContains(receipt_response, "50000.00")
+
+    def test_superseded_invoice_detail_shows_reason_and_replacement_link(self):
+        Membership.objects.create(
+            organization=self.org1,
+            user=self.user,
+            role=Membership.Role.ADMIN,
+            is_active=True,
+        )
+        self.client.login(username="u1", password="pass")
+        session = self.client.session
+        session["active_org_id"] = self.org1.id
+        session.save()
+
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_org1.id,
+            issue_date=timezone.now().date(),
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    package_id=self.package_org1.id,
+                    description="Monthly service",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("50000.00"),
+                    billing_behavior=BillingLineItem.BillingBehavior.RECURRING_MONTHLY,
+                    pricing_mode=BillingLineItem.PricingMode.MANUAL,
+                )
+            ],
+        )
+
+        reissued = BillingService.reissue_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            reason="Wrong package amount used on the original invoice.",
+        )
+
+        response = self.client.get(reverse("billing:document_detail", kwargs={"doc_type": "invoice", "pk": invoice.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Superseded invoice")
+        self.assertContains(response, "Wrong package amount used on the original invoice.")
+        self.assertContains(response, reissued.number)
 
     def test_document_creation_requires_at_least_one_line_item(self):
         with self.assertRaisesMessage(BillingServiceError, "At least one line item is required."):
@@ -789,6 +1288,172 @@ class BillingServiceTests(TestCase):
     def test_tenant_code_prefers_short_slug_when_available(self):
         org = Organization.objects.create(name="JS Internet Services", slug="js")
         self.assertEqual(DocumentNumberService.get_tenant_code(org), "JS")
+
+    def test_unpaid_invoice_can_be_voided_with_reason(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+
+        voided = BillingService.void_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            reason="Invoice was raised in error for the wrong service.",
+        )
+
+        self.assertEqual(voided.status, BillingDocument.Status.VOID)
+        self.assertEqual(
+            AuditLog.objects.get(action_type="invoice_voided", document_id=str(invoice.id)).metadata["reason"],
+            "Invoice was raised in error for the wrong service.",
+        )
+
+    def test_partially_paid_invoice_cannot_be_voided(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("100.00"),
+            payment_method="cash",
+            payment_reference="void-block-partial",
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "Only unpaid issued invoices"):
+            BillingService.void_invoice(
+                organization=self.org1,
+                performed_by=self.user,
+                invoice_id=invoice.id,
+                reason="Tried to void after payment started.",
+            )
+
+    def test_credit_note_cannot_exceed_remaining_credit_capacity(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.create_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            amount=Decimal("50.00"),
+            reason="Discount approved.",
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "remaining credit capacity"):
+            BillingService.create_credit_note(
+                organization=self.org1,
+                performed_by=self.user,
+                invoice_id=invoice.id,
+                amount=invoice.total,
+                reason="Second full credit should be blocked.",
+            )
+
+    def test_receipt_cannot_exceed_remaining_balance_after_credit_note(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.create_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            amount=Decimal("50.00"),
+            reason="Discount approved.",
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "remaining balance"):
+            BillingService.create_receipt_from_invoice(
+                organization=self.org1,
+                created_by=self.user,
+                invoice_id=invoice.id,
+                amount_paid=invoice.total,
+                payment_method="cash",
+                payment_reference="credit-overpay",
+            )
+
+    def test_receipt_can_settle_invoice_after_credit_note_reduces_balance(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.create_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            amount=Decimal("50.00"),
+            reason="Discount approved.",
+        )
+
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=invoice.total - Decimal("50.00"),
+            payment_method="cash",
+            payment_reference="credit-settle",
+        )
+        invoice.refresh_from_db()
+
+        self.assertEqual(receipt.total, invoice.total - Decimal("50.00"))
+        self.assertEqual(invoice.status, BillingDocument.Status.PAID)
+
+    def test_invoice_status_migration_maps_legacy_rows_safely(self):
+        migration = importlib.import_module("billing.migrations.0014_invoice_lifecycle_statuses")
+        base_kwargs = {
+            "organization": self.org1,
+            "tenant": self.org1,
+            "document_type": BillingDocument.DocumentType.INVOICE,
+            "customer": self.customer_org1,
+            "issue_date": date(2026, 4, 1),
+            "due_date": date(2026, 4, 10),
+            "subtotal": Decimal("100.00"),
+            "tax_rate": Decimal("0.00"),
+            "tax_amount": Decimal("0.00"),
+            "total": Decimal("100.00"),
+        }
+        legacy_reissued_parent = BillingDocument.objects.create(number="INV-MIG-001", status=BillingDocument.Status.CANCELLED, **base_kwargs)
+        BillingDocument.objects.create(number="INV-MIG-002", status=BillingDocument.Status.REISSUED, original_invoice=legacy_reissued_parent, **base_kwargs)
+        legacy_cancelled = BillingDocument.objects.create(number="INV-MIG-003", status=BillingDocument.Status.CANCELLED, **base_kwargs)
+        legacy_cancelled_with_receipt = BillingDocument.objects.create(number="INV-MIG-004", status=BillingDocument.Status.CANCELLED, **base_kwargs)
+        BillingDocument.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            document_type=BillingDocument.DocumentType.RECEIPT,
+            number="REC-MIG-001",
+            customer=self.customer_org1,
+            invoice=legacy_cancelled_with_receipt,
+            issue_date=date(2026, 4, 2),
+            status=BillingDocument.Status.PAID,
+            subtotal=Decimal("100.00"),
+            tax_rate=Decimal("0.00"),
+            tax_amount=Decimal("0.00"),
+            total=Decimal("100.00"),
+            payment_date=date(2026, 4, 2),
+            payment_method="cash",
+        )
+
+        migration.forward_invoice_statuses(django_apps, None)
+
+        legacy_reissued_parent.refresh_from_db()
+        legacy_cancelled.refresh_from_db()
+        legacy_cancelled_with_receipt.refresh_from_db()
+
+        self.assertEqual(legacy_reissued_parent.status, BillingDocument.Status.SUPERSEDED)
+        self.assertEqual(legacy_cancelled.status, BillingDocument.Status.VOID)
+        self.assertEqual(legacy_cancelled_with_receipt.status, BillingDocument.Status.CANCELLED)
+
+    def test_quotation_status_migration_maps_legacy_rows_safely(self):
+        migration = importlib.import_module("billing.migrations.0015_separate_document_lifecycles")
+        base_kwargs = {
+            "organization": self.org1,
+            "tenant": self.org1,
+            "document_type": BillingDocument.DocumentType.QUOTATION,
+            "customer": self.customer_org1,
+            "issue_date": date(2026, 4, 1),
+            "due_date": date(2026, 4, 10),
+            "subtotal": Decimal("100.00"),
+            "tax_rate": Decimal("0.00"),
+            "tax_amount": Decimal("0.00"),
+            "total": Decimal("100.00"),
+        }
+        approved = BillingDocument.objects.create(number="QUO-MIG-001", status=BillingDocument.Status.APPROVED, **base_kwargs)
+        issued = BillingDocument.objects.create(number="QUO-MIG-002", status=BillingDocument.Status.ISSUED, **base_kwargs)
+
+        migration.forward_document_lifecycle_updates(django_apps, None)
+
+        approved.refresh_from_db()
+        issued.refresh_from_db()
+        self.assertEqual(approved.status, BillingDocument.Status.ACCEPTED)
+        self.assertEqual(issued.status, BillingDocument.Status.SENT)
 
 
 class BillingNumberConcurrencyTests(TransactionTestCase):
@@ -937,6 +1602,23 @@ class BillingListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(list(response.context["documents"]), [receipt])
         self.assertEqual(response.context["active_sort"], "payment_date")
+
+    def test_quotation_list_uses_quotation_status_choices_only(self):
+        response = self.client.get(reverse("billing:document_list", kwargs={"doc_type": "quotation"}))
+
+        self.assertEqual(response.status_code, 200)
+        status_values = [value for value, _label in response.context["status_choices"]]
+        self.assertEqual(
+            status_values,
+            [
+                BillingDocument.Status.DRAFT,
+                BillingDocument.Status.SENT,
+                BillingDocument.Status.ACCEPTED,
+                BillingDocument.Status.REJECTED,
+                BillingDocument.Status.EXPIRED,
+                BillingDocument.Status.CONVERTED,
+            ],
+        )
 
     def test_promotion_list_filters_paginates_and_scopes_by_tenant(self):
         package = Package.objects.create(

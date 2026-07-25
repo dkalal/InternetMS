@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load listing_tags %}
+
+{% block title %}Billing Sheets{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+
+{% block content %}
+<div class="jims-list-page space-y-6">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">Billing Sheets</h1>
+      <p class="mt-1 text-sm text-slate-600">Collect billable items before generating an invoice.</p>
+    </div>
+    <a href="{% url 'billing:billing_sheet_create' %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      New billing sheet
+    </a>
+  </div>
+
+  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <form method="get" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+      <input type="hidden" name="sort" value="{{ active_sort }}">
+      <input type="hidden" name="page_size" value="{{ page_size }}">
+      <div class="lg:col-span-3">
+        <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
+        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Reference, title, customer…" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      </div>
+      <div class="lg:col-span-3">
+        <label for="customer" class="block text-sm font-medium text-slate-700">Customer</label>
+        <select id="customer" name="customer" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">All customers</option>
+          {% for customer in customer_catalog %}
+            <option value="{{ customer.id }}" {% if request.GET.customer == customer.id|stringformat:"s" %}selected{% endif %}>{{ customer.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label for="status" class="block text-sm font-medium text-slate-700">Status</label>
+        <select id="status" name="status" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+          <option value="">Any status</option>
+          {% for value, label in status_choices %}
+            <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="flex gap-2 lg:col-span-2">
+        <button class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Apply</button>
+        <a href="{% url 'billing:billing_sheet_list' %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</a>
+      </div>
+    </form>
+  </section>
+
+  <div class="jims-list-results overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
+      Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>–<span class="font-semibold text-slate-900">{{ end_index }}</span>
+      of <span class="font-semibold text-slate-900">{{ result_count }}</span> sheets
+    </div>
+    <div class="js-table-wrap">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Reference" sort_key="reference" desc_sort_key="-reference" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Customer" sort_key="customer" desc_sort_key="-customer" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Title</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Status" sort_key="status" desc_sort_key="-status" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Created" sort_key="date" desc_sort_key="-date" %}</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% for sheet in sheets %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ sheet.reference_number }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ sheet.customer.name }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ sheet.title }}</td>
+              <td class="px-4 py-3 text-sm">
+                {% if sheet.status == "open" %}
+                  <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Open</span>
+                {% else %}
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Invoiced</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ sheet.created_at|date:"d M Y" }}</td>
+              <td class="px-4 py-3 text-right text-sm">
+                <div class="inline-flex flex-wrap items-center justify-end gap-2">
+                  <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
+                  {% if sheet.status == "open" %}
+                    <a href="{% url 'billing:billing_sheet_edit' pk=sheet.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+                  {% endif %}
+                  {% if sheet.invoice %}
+                    <a href="{% url 'billing:document_detail' doc_type='invoice' pk=sheet.invoice.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Invoice</a>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-500">No billing sheets yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% include "components/list_pagination.html" %}
+</div>
+{% endblock %}

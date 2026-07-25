@@ -3,9 +3,10 @@
 {% load listing_tags %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
+<div class="jims-list-page space-y-6">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
@@ -104,12 +105,12 @@
     </form>
   </section>
 
-  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="jims-list-results overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
     <div class="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
       Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>-<span class="font-semibold text-slate-900">{{ end_index }}</span>
       of <span class="font-semibold text-slate-900">{{ result_count }}</span> {{ doc_type_display|lower }}
     </div>
-    <div class="overflow-x-auto">
+    <div class="js-table-wrap">
       <table class="min-w-full divide-y divide-slate-200">
         <thead class="bg-slate-50">
           <tr>
@@ -157,14 +158,18 @@
                 <div class="inline-flex flex-wrap items-center justify-end gap-2">
                   <a href="{% url 'billing:document_detail' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
                   <a href="{% url 'billing:document_pdf' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">PDF</a>
-                  {% if doc_type == "quotation" and document.is_current_version %}
-                    <a href="{% url 'billing:document_edit' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">New version</a>
-                    <form method="post" action="{% url 'billing:create_invoice_from_quotation' document.id %}">
-                      {% csrf_token %}
-                      <button class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Invoice</button>
-                    </form>
+                  {% if doc_type == "quotation" %}
+                    {% if document.list_can_edit %}
+                      <a href="{% url 'billing:document_edit' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Revise</a>
+                    {% endif %}
+                    {% if document.list_can_convert %}
+                      <form method="post" action="{% url 'billing:create_invoice_from_quotation' document.id %}">
+                        {% csrf_token %}
+                        <button class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Invoice</button>
+                      </form>
+                    {% endif %}
                   {% elif doc_type == "invoice" %}
-                    {% if document.status != "paid" and document.status != "cancelled" and document.status != "reissued" %}
+                    {% if document.can_register_payment %}
                       <a href="{% url 'billing:create_receipt_from_invoice' document.id %}" class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Receipt</a>
                     {% endif %}
                   {% endif %}

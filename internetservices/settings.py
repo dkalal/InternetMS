@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'messaging',
     'audit',
     'integrations',
+    'custom_fields',
+    'inventory',
     'crispy_forms',
     'crispy_bootstrap5',
     'users',
@@ -73,6 +75,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'internetservices.context_processors.global_settings',
                 'users.context_processors.active_organization',
+                'inventory.context_processors.inventory_access',
             ],
         },
     },
@@ -80,9 +83,23 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'internetservices.wsgi.application'
 
-# Database — uses DATABASE_URL on Railway, falls back to SQLite locally
+# Database - uses DATABASE_URL in production, falls back to SQLite locally if
+# the PostgreSQL driver is unavailable on this machine.
 DATABASE_URL = os.environ.get('DATABASE_URL')
-if DATABASE_URL:
+
+def _postgres_driver_available() -> bool:
+    try:
+        import psycopg  # noqa: F401
+        return True
+    except Exception:
+        try:
+            import psycopg2  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+
+if DATABASE_URL and (not DEBUG or _postgres_driver_available()):
     DATABASES = {'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 else:
     DATABASES = {

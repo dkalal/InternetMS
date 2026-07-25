@@ -1,0 +1,37 @@
+{% load custom_fields_tags %}
+{% if form.custom_field_names or can_manage_custom_fields %}
+<section id="additional-information" class="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-200 px-5 py-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">Additional information</h2>
+                <p class="mt-1 text-sm text-slate-600">Optional tenant-specific metadata configured by your administrator.</p>
+            </div>
+            {% if can_manage_custom_fields %}
+                <button
+                    type="button"
+                    class="inline-flex items-center justify-center rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/30"
+                    data-custom-field-open
+                >
+                    Add custom field
+                </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="space-y-4 p-5">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2" data-custom-fields-list>
+            {% if form.custom_field_names %}
+                {% for field_name in form.custom_field_names %}
+                    <div class="custom-field-item" data-custom-field-item data-field-name="{{ field_name }}">
+                        {% include "components/form_field.html" with field=form|get_item:field_name %}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        </div>
+        <div class="{% if form.custom_field_names %}hidden{% endif %} rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600" data-custom-fields-empty>
+            No custom fields are configured for this section yet.
+        </div>
+    </div>
+</section>
+{% endif %}

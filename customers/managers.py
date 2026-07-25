@@ -29,7 +29,7 @@ class CustomerQuerySet(models.QuerySet):
     
     def with_packages(self):
         """Prefetch packages for performance"""
-        return self.prefetch_related('packages')
+        return self.prefetch_related('packages', 'sites__packages')
     
     def with_internet_profile(self):
         """Select related internet profile"""
@@ -41,7 +41,7 @@ class CustomerQuerySet(models.QuerySet):
     
     def optimized_list(self):
         """Optimized query for list views"""
-        return self.select_related('internet_profile').prefetch_related('packages')
+        return self.select_related('internet_profile').prefetch_related('packages', 'sites__packages')
     
     def search(self, query):
         """Search customers by name, email, phone, location"""
@@ -53,6 +53,8 @@ class CustomerQuerySet(models.QuerySet):
             Q(ip_address__icontains=query) |
             Q(vlan_id__icontains=query) |
             Q(packages__name__icontains=query) |
+            Q(sites__name__icontains=query) |
+            Q(sites__location__icontains=query) |
             Q(tin_number__icontains=query) |
             Q(vrn_number__icontains=query)
         )

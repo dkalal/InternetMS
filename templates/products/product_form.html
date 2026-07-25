@@ -1,188 +1,147 @@
 {% extends 'base.html' %}
-
-{% block title %}{% if form.instance.pk %}Edit Product{% else %}New Product{% endif %}{% endblock %}
-
+{% block title %}{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add catalog item{% endif %}{% endblock %}
 {% block content %}
-<div class="mx-auto w-full max-w-6xl space-y-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <div class="text-sm text-slate-500">
-                <a class="hover:underline" href="{% url 'product-list' %}">Products</a>
-                {% if form.instance.pk %}
-                    <span class="px-1">/</span>
-                    <a class="hover:underline" href="{{ form.instance.get_absolute_url }}">{{ form.instance.name }}</a>
-                    <span class="px-1">/</span>
-                    <span class="text-slate-700">Edit</span>
-                {% endif %}
-            </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
-                {% if form.instance.pk %}Edit product{% else %}New product{% endif %}
-            </h1>
-            <p class="mt-1 text-sm text-slate-600">Set up inventory, pricing, wholesale rules, and customer association.</p>
-        </div>
-        <a href="{% url 'product-list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-            Back
-        </a>
+{% include "inventory/includes/module_nav.html" %}
+
+<div class="mx-auto max-w-6xl space-y-5">
+  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb">
+        <a class="hover:text-brand-700" href="{% url 'product-list' %}">Catalog</a>
+        <span class="px-1" aria-hidden="true">/</span>
+        <span>{% if form.instance.pk %}Edit item{% else %}New item{% endif %}</span>
+      </nav>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add product or service{% endif %}</h1>
+      <p class="mt-1 text-sm text-slate-600">Create one reusable catalog record for purchasing, sales, quotations, and invoices.</p>
     </div>
+  </header>
 
-    <form method="post" class="space-y-5" data-product-form>
-        {% csrf_token %}
+  {% if has_movement_history %}
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div class="font-semibold">Inventory history protects key settings</div>
+      <p class="mt-1">Item type, stock tracking, and serialization are locked because this item already appears in inventory or sales history. Other catalog details remain editable.</p>
+    </div>
+  {% endif %}
 
-        {% if form.non_field_errors %}
-            <div class="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
-            </div>
-        {% endif %}
+  <form method="post" class="space-y-5" data-product-form data-unsaved-form data-submit-lock>
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">
+        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+      </div>
+    {% endif %}
 
-        <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            <div class="space-y-5 lg:col-span-2">
-                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Product identity</h2>
-                        <p class="mt-1 text-sm text-slate-600">Name the item and classify it for catalog search and reporting.</p>
-                    </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.name %}
-                        </div>
-                        {% include "components/form_field.html" with field=form.category %}
-                        {% include "components/form_field.html" with field=form.is_active %}
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.description %}
-                        </div>
-                    </div>
-                </section>
-
-                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Inventory</h2>
-                        <p class="mt-1 text-sm text-slate-600">Keep quantity and units consistent with how the item is sold or assigned.</p>
-                    </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        {% include "components/form_field.html" with field=form.quantity %}
-                        {% include "components/form_field.html" with field=form.measure_unit %}
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.customer %}
-                        </div>
-                    </div>
-                </section>
-            </div>
-
-            <aside class="space-y-5">
-                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Pricing summary</h2>
-                    </div>
-                    <div class="space-y-3 p-5 text-sm">
-                        <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Margin</span>
-                            <span id="product-margin" class="font-semibold text-slate-900">-</span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Margin rate</span>
-                            <span id="product-margin-rate" class="font-semibold text-slate-900">-</span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Effective retail</span>
-                            <span id="product-effective-retail" class="font-semibold text-slate-900">-</span>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Status</h2>
-                    </div>
-                    <div class="p-5 text-sm text-slate-600">
-                        Inactive products stay available in historical documents, but should not be selected for new work unless deliberately reactivated.
-                    </div>
-                </section>
-            </aside>
-        </div>
-
-        <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-            <div class="border-b border-slate-200 px-5 py-4">
-                <h2 class="text-sm font-semibold text-slate-900">Pricing</h2>
-                <p class="mt-1 text-sm text-slate-600">Separate acquisition cost, default selling price, retail price, and wholesale rules.</p>
-            </div>
-            <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 lg:grid-cols-4">
-                {% include "components/form_field.html" with field=form.buying_price %}
-                {% include "components/form_field.html" with field=form.selling_price %}
-                {% include "components/form_field.html" with field=form.retail_price %}
-                <div class="rounded-md border border-slate-200 bg-slate-50 p-4">
-                    {% include "components/form_field.html" with field=form.allow_wholesale %}
-                </div>
-                <div id="wholesale-panel" class="grid grid-cols-1 gap-4 md:col-span-2 lg:col-span-4 md:grid-cols-2">
-                    {% include "components/form_field.html" with field=form.wholesale_price %}
-                    {% include "components/form_field.html" with field=form.wholesale_min_quantity %}
-                </div>
-            </div>
+    <div class="grid gap-5 lg:grid-cols-3">
+      <div class="space-y-5 lg:col-span-2">
+        <section class="jims-panel">
+          <div class="jims-panel-header">
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">1 · Basic information</p>
+            <h2 class="mt-1 font-semibold text-slate-950">What are you selling?</h2>
+            <p class="mt-1 text-sm text-slate-600">Use a clear customer-facing name and short operational description.</p>
+          </div>
+          <div class="grid gap-4 p-5 sm:grid-cols-2">
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.description %}</div>
+            <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
+          </div>
         </section>
 
-        <div class="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:bg-white">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p class="text-sm text-slate-600">Price and stock changes affect future documents only.</p>
-                <div class="flex items-center justify-end gap-3">
-                    <a href="{% url 'product-list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                        Cancel
-                    </a>
-                    <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                        Save product
-                    </button>
-                </div>
+        <section class="jims-panel">
+          <div class="jims-panel-header">
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">2 · Classification and identifiers</p>
+            <h2 class="mt-1 font-semibold text-slate-950">Make the item easy to find</h2>
+          </div>
+          <div class="grid gap-4 p-5 sm:grid-cols-2">
+            {% include "components/form_field.html" with field=form.item_type %}
+            {% include "components/form_field.html" with field=form.catalog_category %}
+            {% include "components/form_field.html" with field=form.sku %}
+            {% include "components/form_field.html" with field=form.measure_unit %}
+            <div data-physical-only>{% include "components/form_field.html" with field=form.brand %}</div>
+            <div data-physical-only>{% include "components/form_field.html" with field=form.model_number %}</div>
+            <div class="hidden">{{ form.category }}</div>
+          </div>
+        </section>
+
+        {% if INVENTORY_CAN_VIEW_COSTS %}
+          <section class="jims-panel">
+            <div class="jims-panel-header">
+              <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">3 · Pricing</p>
+              <h2 class="mt-1 font-semibold text-slate-950">Set acquisition and selling prices</h2>
+              <p class="mt-1 text-sm text-slate-600">Margin is calculated for guidance and is never a separate editable value.</p>
             </div>
+            <div class="grid gap-4 p-5 sm:grid-cols-2">
+              {% include "components/form_field.html" with field=form.buying_price %}
+              {% include "components/form_field.html" with field=form.selling_price %}
+              {% include "components/form_field.html" with field=form.retail_price %}
+              <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.tax_eligible %}</div>
+              <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.allow_wholesale %}</div>
+              <div class="grid gap-4 sm:col-span-2 sm:grid-cols-2" data-wholesale-panel>
+                {% include "components/form_field.html" with field=form.wholesale_price %}
+                {% include "components/form_field.html" with field=form.wholesale_min_quantity %}
+              </div>
+            </div>
+          </section>
+        {% endif %}
+
+        <section class="jims-panel" data-physical-only>
+          <div class="jims-panel-header">
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">4 · Inventory settings</p>
+            <h2 class="mt-1 font-semibold text-slate-950">Control how physical stock is tracked</h2>
+            <p class="mt-1 text-sm text-slate-600">Initial and ongoing quantities are recorded through receiving or authorized adjustments, never here.</p>
+          </div>
+          <div class="grid gap-4 p-5 sm:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.track_stock %}</div>
+            <div data-stock-only>{% include "components/form_field.html" with field=form.reorder_threshold %}</div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4" data-stock-only>{% include "components/form_field.html" with field=form.is_serialized %}</div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4" data-stock-only>{% include "components/form_field.html" with field=form.track_expiry %}</div>
+            <div class="sm:col-span-2 hidden rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900" data-serialized-only>
+              Each received unit must have one unique serial number. Sales will require selecting exactly one available serial per unit.
+            </div>
+          </div>
+        </section>
+
+        <section class="jims-panel">
+          <div class="jims-panel-header">
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">5 · Optional details</p>
+            <h2 class="mt-1 font-semibold text-slate-950">Customer association</h2>
+          </div>
+          <div class="p-5">{% include "components/form_field.html" with field=form.customer %}</div>
+        </section>
+
+        {% include "includes/custom_fields_form.html" %}
+      </div>
+
+      <aside class="space-y-5">
+        {% if INVENTORY_CAN_VIEW_COSTS %}
+          <section class="jims-panel p-5 lg:sticky lg:top-24">
+            <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
+            <dl class="mt-4 space-y-3 text-sm">
+              <div class="flex justify-between gap-4"><dt class="text-slate-500">Effective retail</dt><dd class="font-semibold text-slate-950" data-product-effective-retail>—</dd></div>
+              <div class="flex justify-between gap-4"><dt class="text-slate-500">Gross margin</dt><dd class="font-semibold text-slate-950" data-product-margin>—</dd></div>
+              <div class="flex justify-between gap-4 border-t border-slate-200 pt-3"><dt class="text-slate-500">Margin rate</dt><dd class="font-semibold text-slate-950" data-product-margin-rate>—</dd></div>
+            </dl>
+            <p class="mt-4 text-xs leading-5 text-slate-500">Operational margin guidance only; it is not full accounting profit.</p>
+          </section>
+        {% else %}
+          <section class="jims-panel p-5">
+            <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-600">Buying cost and margin details require cost-report permission. No sensitive values are shown for your role.</p>
+          </section>
+        {% endif %}
+      </aside>
+    </div>
+
+    <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p class="text-xs text-slate-500">Catalog changes affect future documents. Stock balances remain movement-controlled.</p>
+        <div class="flex justify-end gap-2">
+          <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
+          <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">{% if form.instance.pk %}Save changes{% else %}Save product{% endif %}</button>
         </div>
-    </form>
+      </div>
+    </div>
+  </form>
+
+  {% include "includes/custom_field_definition_modal.html" %}
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-  (function () {
-    var form = document.querySelector('[data-product-form]');
-    if (!form) return;
-
-    var buying = document.getElementById('id_buying_price');
-    var selling = document.getElementById('id_selling_price');
-    var retail = document.getElementById('id_retail_price');
-    var wholesaleToggle = document.getElementById('id_allow_wholesale');
-    var wholesalePanel = document.getElementById('wholesale-panel');
-    var margin = document.getElementById('product-margin');
-    var marginRate = document.getElementById('product-margin-rate');
-    var effectiveRetail = document.getElementById('product-effective-retail');
-
-    function money(value) {
-      if (!isFinite(value)) return '-';
-      return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value) + ' TZS';
-    }
-
-    function numeric(input) {
-      var value = parseFloat(input && input.value ? input.value : '');
-      return isFinite(value) ? value : null;
-    }
-
-    function syncPricing() {
-      var buy = numeric(buying);
-      var sell = numeric(selling);
-      var retailValue = numeric(retail);
-      var effective = retailValue !== null ? retailValue : sell;
-      var profit = buy !== null && effective !== null ? effective - buy : null;
-      margin.textContent = profit !== null ? money(profit) : '-';
-      marginRate.textContent = profit !== null && effective ? ((profit / effective) * 100).toFixed(1) + '%' : '-';
-      effectiveRetail.textContent = effective !== null ? money(effective) : '-';
-    }
-
-    function syncWholesale() {
-      if (!wholesaleToggle || !wholesalePanel) return;
-      wholesalePanel.classList.toggle('hidden', !wholesaleToggle.checked);
-    }
-
-    [buying, selling, retail].forEach(function (input) {
-      if (input) input.addEventListener('input', syncPricing);
-    });
-    if (wholesaleToggle) wholesaleToggle.addEventListener('change', syncWholesale);
-    syncPricing();
-    syncWholesale();
-  })();
-</script>
 {% endblock %}

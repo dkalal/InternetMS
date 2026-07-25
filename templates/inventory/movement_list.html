@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}Stock movements{% endblock %}
+{% block body_class %}jims-list-shell{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="jims-list-page space-y-5">
+  <header><p class="text-sm font-semibold text-brand-700">Stock history</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Stock movements</h1><p class="mt-1 text-sm text-slate-600">An immutable audit trail of every stock in, sale, opening balance, and adjustment.</p></header>
+
+  <details class="jims-filter-drawer jims-panel p-4" {% if query or product_id or movement_type or date_from or date_to %}open{% endif %}>
+    <summary class="flex cursor-pointer items-center justify-between text-sm font-semibold text-slate-900"><span>Search and filters</span><span class="text-brand-700">Show / hide</span></summary>
+    <form method="get" class="mt-4 grid gap-3 border-t border-slate-200 pt-4 sm:grid-cols-2 lg:grid-cols-6 lg:items-end">
+      <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-700" for="movement-search">Search</label><input id="movement-search" name="q" value="{{ query }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Product or SKU"></div>
+      <div><label class="block text-sm font-medium text-slate-700" for="movement-product">Product</label><select id="movement-product" name="product" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All products</option>{% for product in products %}<option value="{{ product.pk }}" {% if product_id == product.pk|stringformat:"s" %}selected{% endif %}>{{ product.name }}</option>{% endfor %}</select></div>
+      <div><label class="block text-sm font-medium text-slate-700" for="movement-type">Movement</label><select id="movement-type" name="type" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All types</option>{% for value,label in movement_types %}<option value="{{ value }}" {% if movement_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div><label class="block text-sm font-medium text-slate-700" for="movement-from">From</label><input id="movement-from" type="date" name="date_from" value="{{ date_from }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
+      <div><label class="block text-sm font-medium text-slate-700" for="movement-to">To</label><input id="movement-to" type="date" name="date_to" value="{{ date_to }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
+      <div class="flex gap-2 sm:col-span-2 lg:col-span-6 lg:justify-end"><a href="{% url 'inventory:movement_list' %}" class="jims-btn jims-btn-quiet">Reset</a><button class="jims-btn jims-btn-primary">Apply filters</button></div>
+    </form>
+  </details>
+
+  <section class="jims-list-results jims-panel overflow-hidden">
+    {% if movements %}
+      <div class="jims-table-wrap">
+        <table class="jims-table">
+          <thead><tr><th>Date and time</th><th>Product</th><th>Type</th><th class="text-right">Stock in</th><th class="text-right">Stock out</th><th class="text-right">Balance</th><th>Reference</th><th>Responsible user</th></tr></thead>
+          <tbody>
+            {% for movement in movements %}
+              <tr>
+                <td class="whitespace-nowrap">{{ movement.created_at|date:"d M Y, H:i" }}</td>
+                <td><div class="font-semibold text-slate-950">{{ movement.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ movement.product.sku }}</div></td>
+                <td>{{ movement.get_movement_type_display }}</td>
+                <td class="text-right font-semibold text-emerald-700">{% if movement.quantity > 0 %}+{{ movement.quantity }}{% else %}—{% endif %}</td>
+                <td class="text-right font-semibold text-rose-700">{% if movement.quantity < 0 %}{{ movement.quantity }}{% else %}—{% endif %}</td>
+                <td class="text-right font-bold">{{ movement.balance_after }}</td>
+                <td>
+                  {% if movement.purchase_line_id %}<a class="font-semibold text-brand-700" href="{% url 'inventory:purchase_detail' movement.purchase_line.purchase.pk %}">{{ movement.purchase_line.purchase.reference_number }}</a>
+                  {% elif movement.billing_line_id %}<a class="font-semibold text-brand-700" href="{% url 'billing:document_detail' 'invoice' movement.billing_line.document.pk %}">{{ movement.billing_line.document.number }}</a>
+                  {% elif movement.adjustment_id %}<span>Adjustment #{{ movement.adjustment_id }}</span>
+                  {% else %}<span class="text-slate-500">Opening balance</span>{% endif %}
+                </td>
+                <td>{% if movement.created_by %}{{ movement.created_by.get_full_name|default:movement.created_by.username }}{% else %}System{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if page_obj.paginator.num_pages > 1 %}
+        <nav class="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm" aria-label="Movement pagination">
+          <span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+          <div class="flex gap-2">{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&q={{ query|urlencode }}&product={{ product_id }}&type={{ movement_type }}&date_from={{ date_from }}&date_to={{ date_to }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&q={{ query|urlencode }}&product={{ product_id }}&type={{ movement_type }}&date_from={{ date_from }}&date_to={{ date_to }}">Next</a>{% endif %}</div>
+        </nav>
+      {% endif %}
+    {% else %}
+      {% include "components/empty_state.html" with title="No movements found" message="Clear the filters or receive stock to begin the immutable movement history." %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -8,9 +8,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from audit.models import AuditLog
+from custom_fields.services import CustomFieldService
 from billing.models import BillingDocument
 
-from .models import Customer, CustomerDocument, InternetCustomer
+from .models import Customer, CustomerDocument, CustomerSite, InternetCustomer
 
 
 class CustomerServiceError(Exception):
@@ -18,6 +19,40 @@ class CustomerServiceError(Exception):
 
 
 class CustomerService:
+    @classmethod
+    def _primary_site_defaults(cls, customer: Customer) -> dict:
+        return {
+            "name": "Main Office",
+            "location": customer.location,
+            "address": customer.address,
+            "ip_address": customer.ip_address,
+            "vlan_id": customer.vlan_id,
+            "is_primary": True,
+        }
+
+    @classmethod
+    def ensure_primary_site(cls, *, organization, customer: Customer) -> CustomerSite:
+        site = customer.sites.filter(is_primary=True).order_by("id").first()
+        if site is not None:
+            CustomerSite.objects.filter(customer=customer).exclude(pk=site.pk).update(is_primary=False)
+            return site
+
+        site = customer.sites.order_by("id").first()
+        if site is not None:
+            CustomerSite.objects.filter(customer=customer).exclude(pk=site.pk).update(is_primary=False)
+            site.is_primary = True
+            site.organization = organization
+            site.tenant = organization
+            site.save(update_fields=["is_primary", "organization", "tenant"])
+            return site
+
+        return CustomerSite.objects.create(
+            organization=organization,
+            tenant=organization,
+            customer=customer,
+            **cls._primary_site_defaults(customer),
+        )
+
     @classmethod
     def upsert_customer(
         cls,
@@ -30,6 +65,7 @@ class CustomerService:
         existing_internet_profile: InternetCustomer | None,
         internet_profile_instance: InternetCustomer | None,
         status_change_reason: str = "",
+        custom_field_data=None,
     ) -> Customer:
         """
         Create/update customer + related subscription profile with tenant isolation.
@@ -53,14 +89,22 @@ class CustomerService:
             customer_instance.organization = organization
             customer_instance.tenant = organization
             customer_instance.save()
+            primary_site = cls.ensure_primary_site(organization=organization, customer=customer_instance)
             if packages is not None:
+                if customer_instance.status == Customer.Status.SUSPENDED and packages:
+                    raise CustomerServiceError(
+                        "Packages cannot be assigned to a suspended customer. Reactivate the customer first."
+                    )
                 customer_instance.packages.set(packages)
+                primary_site.packages.set(packages)
                 if customer_instance.customer_type == "internet":
                     from billing.services import SubscriptionBillingService
 
                     SubscriptionBillingService.sync_customer_package_subscriptions(
                         organization=organization,
                         customer=customer_instance,
+                        site=primary_site,
+                        packages=packages,
                     )
 
             if customer_type == "internet":
@@ -71,6 +115,9 @@ class CustomerService:
             else:
                 if existing_internet_profile is not None:
                     existing_internet_profile.delete()
+
+            if custom_field_data is not None:
+                CustomFieldService.save_custom_field_values(customer_instance, custom_field_data, user=actor)
 
             AuditLog.objects.create(
                 organization=organization,
@@ -108,6 +155,62 @@ class CustomerService:
                     )
 
             return customer_instance
+
+    @classmethod
+    def upsert_site(
+        cls,
+        *,
+        organization,
+        actor,
+        site_instance: CustomerSite,
+        packages,
+        status_change_reason: str = "",
+    ) -> CustomerSite:
+        with transaction.atomic():
+            customer = (
+                Customer.all_objects.select_for_update()
+                .filter(organization=organization, pk=site_instance.customer_id)
+                .first()
+            )
+            if customer is None:
+                raise CustomerServiceError("Customer not found.")
+            if customer.is_deleted:
+                raise CustomerServiceError("Archived customer cannot be updated. Restore first.")
+
+            site_instance.organization = organization
+            site_instance.tenant = organization
+            site_instance.customer = customer
+            if site_instance.is_primary:
+                CustomerSite.objects.filter(customer=customer).exclude(pk=site_instance.pk).update(is_primary=False)
+            site_instance.save()
+            if packages is not None:
+                site_instance.packages.set(packages)
+                if site_instance.is_primary:
+                    customer.packages.set(packages)
+                from billing.services import SubscriptionBillingService
+
+                SubscriptionBillingService.sync_customer_site_package_subscriptions(
+                    organization=organization,
+                    customer=customer,
+                    site=site_instance,
+                    packages=packages,
+                )
+
+            AuditLog.objects.create(
+                organization=organization,
+                tenant=organization,
+                actor=actor,
+                action="customer.site_upserted",
+                object_type="CustomerSite",
+                object_id=str(site_instance.id),
+                metadata={
+                    "customer_id": customer.id,
+                    "site_name": site_instance.name,
+                    "is_primary": site_instance.is_primary,
+                    "status_change_reason": status_change_reason,
+                },
+            )
+            return site_instance
 
     @classmethod
     def soft_delete_customer(cls, *, organization, actor, customer_id: int, reason: str = "") -> None:

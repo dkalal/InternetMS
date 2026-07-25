@@ -4,6 +4,7 @@
 {% block title %}{{ product.name }}{% endblock %}
 
 {% block content %}
+{% include "inventory/includes/module_nav.html" %}
 <div class="space-y-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -13,19 +14,20 @@
                 <span class="text-slate-700">{{ product.name }}</span>
             </div>
             <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">{{ product.name }}</h1>
-            <p class="mt-1 text-sm text-slate-600">Inventory, pricing, and associations.</p>
+            <p class="mt-1 text-sm text-slate-600">{{ product.sku }} · {{ product.get_item_type_display }}</p>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
             <a href="{% url 'product-list' %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 Back
             </a>
-            <a href="{% url 'product-update' product.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+            {% if product.item_type == "physical" %}<a href="{% url 'inventory:movement_list' %}?product={{ product.pk }}" class="jims-btn jims-btn-secondary">Movement history</a>{% endif %}
+            {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-update' product.id %}" class="jims-btn jims-btn-primary">
                 Edit
             </a>
-            <a href="{% url 'product-delete' product.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
+            <a href="{% url 'product-delete' product.id %}" class="jims-btn jims-btn-danger">
                 Delete
-            </a>
+            </a>{% endif %}
         </div>
     </div>
 
@@ -39,7 +41,7 @@
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Category</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.get_category_display }}</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.catalog_category|default:product.get_category_display }}</dd>
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Status</dt>
@@ -52,13 +54,15 @@
                     </dd>
                 </div>
                 <div>
-                    <dt class="text-xs text-slate-500">Quantity</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.quantity }} {{ product.measure_unit }}</dd>
+                    <dt class="text-xs text-slate-500">{% if product.item_type == "service" %}Stock tracking{% else %}Available stock{% endif %}</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{% if product.item_type == "service" %}Not applicable · billable service{% else %}{{ product.available_stock }} {{ product.measure_unit }}{% endif %}</dd>
                 </div>
+                {% if INVENTORY_CAN_VIEW_COSTS %}
                 <div>
                     <dt class="text-xs text-slate-500">Buying price</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.buying_price|intcomma }} TZS</dd>
                 </div>
+                {% endif %}
                 <div>
                     <dt class="text-xs text-slate-500">Retail price</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</dd>
@@ -104,5 +108,9 @@
             </dl>
         </section>
     </div>
+
+    {% include "includes/custom_fields_detail.html" %}
+
+    {% include "includes/custom_field_definition_modal.html" %}
 </div>
 {% endblock %}

@@ -8,9 +8,11 @@
     <div>
       <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ document.get_document_type_display }} {{ document.number }}</h1>
       <p class="mt-1 text-sm text-slate-600">
-        {{ document.customer.name }} &middot; {{ document.issue_date|date:"d M Y" }} &middot; {{ document.get_status_display }}
+        {{ document.customer.name }} &middot; {{ document.issue_date|date:"d M Y" }}
         {% if document.document_type == "quotation" %}&middot; v{{ document.version_number }}{% endif %}
+        {% if document.created_by %}&middot; Created by {{ document.created_by.get_full_name|default:document.created_by.username }}{% endif %}
       </p>
+      <div class="mt-2">{% include "components/status_badge.html" with value=document.status label=document.get_status_display %}</div>
     </div>
     <div class="flex flex-wrap items-center gap-2">
       {% if document.document_type == "invoice" %}
@@ -23,39 +25,46 @@
       {% endif %}
       <a href="{% url 'billing:document_pdf' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Download PDF</a>
       {% if document.document_type == 'quotation' %}
-        <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit quotation</a>
-        <form method="post" action="{% url 'billing:create_invoice_from_quotation' pk=document.id %}">
-          {% csrf_token %}
-          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create invoice</button>
-        </form>
+        {% if quotation_action_state.can_edit %}
+          <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit quotation</a>
+        {% endif %}
+        {% if quotation_action_state.can_send %}
+          <a href="{% url 'billing:send_quotation' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Send</a>
+        {% endif %}
+        {% if quotation_action_state.can_accept %}
+          <a href="{% url 'billing:accept_quotation' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Accept</a>
+        {% endif %}
+        {% if quotation_action_state.can_reject %}
+          <a href="{% url 'billing:reject_quotation' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reject</a>
+        {% endif %}
+        {% if quotation_action_state.can_expire %}
+          <a href="{% url 'billing:expire_quotation' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Expire</a>
+        {% endif %}
+        {% if quotation_action_state.can_convert %}
+          <form method="post" action="{% url 'billing:create_invoice_from_quotation' pk=document.id %}">
+            {% csrf_token %}
+            <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create invoice</button>
+          </form>
+        {% endif %}
       {% endif %}
       {% if document.document_type == 'invoice' and document.status == 'draft' %}
         <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit draft</a>
       {% endif %}
-      {% if document.document_type == 'invoice' and not has_receipt %}
+      {% if has_serialized_inventory_items and document.status != 'paid' %}<a href="{% url 'inventory:invoice_serials' document.pk %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Select serial numbers</a>{% endif %}
+      {% if can_register_payment %}
         <a href="{% url 'billing:create_receipt_from_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create receipt</a>
       {% endif %}
       {% if can_resolve_subscription_issue %}
         <a href="{% url 'billing:resolve_subscription_invoice_issue' period_id=linked_subscription_period.id %}" class="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100">Resolve issue</a>
       {% endif %}
-      {% if document.document_type == 'invoice' and invoice_locked and not linked_subscription_period %}
-        <form method="post" action="{% url 'billing:cancel_invoice' pk=document.id %}">
-          {% csrf_token %}
-          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        </form>
-        <form method="post" action="{% url 'billing:reissue_invoice' pk=document.id %}">
-          {% csrf_token %}
-          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reissue</button>
-        </form>
-        <form method="post" action="{% url 'billing:create_credit_note' pk=document.id %}">
-          {% csrf_token %}
-          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</button>
-        </form>
-      {% elif document.document_type == 'invoice' and invoice_locked and linked_subscription_period and has_receipt %}
-        <form method="post" action="{% url 'billing:create_credit_note' pk=document.id %}">
-          {% csrf_token %}
-          <button type="submit" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</button>
-        </form>
+      {% if can_void_invoice %}
+        <a href="{% url 'billing:void_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Void</a>
+      {% endif %}
+      {% if can_reissue_invoice %}
+        <a href="{% url 'billing:reissue_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reissue</a>
+      {% endif %}
+      {% if can_create_credit_note %}
+        <a href="{% url 'billing:create_credit_note' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Credit note</a>
       {% endif %}
     </div>
   </div>
@@ -78,6 +87,115 @@
       </div>
     </div>
   {% endif %}
+  {% if document.document_type == "invoice" and has_inventory_items and document.status != "paid" %}
+    <div class="rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900">
+      This inventory invoice requires full payment. Drafts and unpaid invoices do not deduct or reserve stock; availability is checked again when payment is confirmed.
+    </div>
+  {% endif %}
+  {% if document.document_type == "invoice" and invoice_supersession_details %}
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-amber-900">Superseded invoice</div>
+          <p class="mt-1 text-sm text-amber-900/90">
+            This invoice has been replaced{% if invoice_supersession_details.superseding_invoice_number %} by invoice {{ invoice_supersession_details.superseding_invoice_number }}{% endif %}.
+          </p>
+          <p class="mt-2 text-sm text-amber-900">
+            <span class="font-semibold">Reason:</span>
+            {% if invoice_supersession_details.reason %}{{ invoice_supersession_details.reason }}{% else %}No supersession reason was recorded.{% endif %}
+          </p>
+        </div>
+        {% if invoice_supersession_details.superseding_invoice %}
+          <a href="{% url 'billing:document_detail' doc_type='invoice' pk=invoice_supersession_details.superseding_invoice.id %}" class="inline-flex items-center justify-center rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100">
+            View replacement
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+  {% if payment_summary and document.document_type != "quotation" %}
+    <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-slate-900">{% if document.document_type == "invoice" %}Payment summary{% else %}Applied payment{% endif %}</div>
+          <p class="mt-1 text-sm text-slate-600">
+            {% if payment_summary.invoice_number %}Invoice {{ payment_summary.invoice_number }}{% endif %}
+            {% if document.document_type == "receipt" and document.payment_date %}&middot; Received {{ document.payment_date|date:"d M Y" }}{% endif %}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2 text-xs font-medium">
+          <span class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Paid {{ payment_summary.amount_paid }}</span>
+          {% if payment_summary.credited_total %}<span class="rounded-full bg-sky-50 px-3 py-1 text-sky-700">Credited {{ payment_summary.credited_total }}</span>{% endif %}
+          <span class="rounded-full bg-amber-50 px-3 py-1 text-amber-800">Due {{ payment_summary.outstanding_balance }}</span>
+          <span class="rounded-full bg-slate-100 px-3 py-1 text-slate-700">Receipts {{ payment_summary.receipt_count }}</span>
+        </div>
+      </div>
+      <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+        <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Invoice total</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.invoice_total }}</dd>
+        </div>
+        <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Amount paid</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.amount_paid }}</dd>
+        </div>
+        <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Outstanding</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.outstanding_balance }}</dd>
+        </div>
+        {% if payment_summary.credited_total %}
+          <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
+            <dt class="text-xs uppercase tracking-wide text-slate-500">Credited</dt>
+            <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.credited_total }}</dd>
+          </div>
+        {% endif %}
+      </dl>
+      {% if payment_receipts %}
+        <div class="mt-4 overflow-hidden rounded-md border border-slate-200">
+          <div class="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Receipts</div>
+          <div class="divide-y divide-slate-200">
+            {% for receipt in payment_receipts %}
+              <div class="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div class="font-medium text-slate-900">{{ receipt.number }}</div>
+                  <div class="text-xs text-slate-500">{{ receipt.created_at|date:"d M Y H:i" }}{% if receipt.created_by %} &middot; {{ receipt.created_by.get_full_name|default:receipt.created_by.username }}{% endif %}</div>
+                </div>
+                <div class="text-sm font-semibold text-slate-900">{{ receipt.total }}</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if document.document_type == "invoice" and invoice_carry_forward %}
+    <section class="rounded-lg border border-sky-200 bg-sky-50 p-4 shadow-sm">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-sky-950">Account carry-forward</div>
+          <p class="mt-1 max-w-2xl text-sm text-sky-900">
+            The brought-forward amount is a snapshot of older unpaid invoices when this invoice was created. It is shown for collection clarity and is not taxed or charged again on this invoice.
+          </p>
+        </div>
+        <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-800 ring-1 ring-sky-200">Account due {{ invoice_carry_forward.account_balance }}</span>
+      </div>
+      <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+        <div class="rounded-md border border-sky-100 bg-white p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Brought forward</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.brought_forward }}</dd>
+        </div>
+        <div class="rounded-md border border-sky-100 bg-white p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">This invoice open</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.current_balance }}</dd>
+        </div>
+        <div class="rounded-md border border-sky-100 bg-white p-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Carried forward now</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.account_balance }}</dd>
+        </div>
+      </dl>
+    </section>
+  {% endif %}
 
   <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
     <div class="lg:col-span-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -96,9 +214,33 @@
             {% for item in items %}
               <tr>
                 <td class="px-4 py-3 text-sm text-slate-900">
-                  {% if item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}{{ item.description }}{% endif %}
-                  {% if item.description %}<div class="text-xs text-slate-500">{{ item.description }}</div>{% endif %}
+                  {% if item.package %}
+                    {{ item.package.name }}
+                  {% elif item.product %}
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="font-medium">{{ item.product.name }}</span>
+                      {% if item.product.item_type == "service" %}
+                        <span class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-800 ring-1 ring-inset ring-sky-200">Service · no stock</span>
+                      {% else %}
+                        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">Product</span>
+                      {% endif %}
+                    </div>
+                    {% if item.product.sku %}<div class="mt-1 text-xs text-slate-500">{{ item.product.sku }}</div>{% endif %}
+                  {% else %}
+                    <span class="whitespace-pre-wrap break-words">{{ item.description }}</span>
+                  {% endif %}
+                  {% if item.description %}
+                    {% if item.package or item.product %}
+                      <div class="mt-1 text-xs text-slate-500 whitespace-pre-wrap break-words">{{ item.description }}</div>
+                    {% endif %}
+                  {% endif %}
                   {% if item.discount_amount %}<div class="text-xs text-emerald-700">Discount: {{ item.discount_amount }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</div>{% endif %}
+                  {% if item.serial_selections.all %}
+                    <div class="mt-2 text-xs text-slate-600">
+                      <span class="font-semibold">Serials:</span>
+                      {% for selection in item.serial_selections.all %}{{ selection.stock_unit.serial_number }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </div>
+                  {% endif %}
                 </td>
                 <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
                 <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price }}</td>
@@ -121,6 +263,7 @@
           <div class="flex items-center justify-between">
             <dt class="text-slate-600">Subtotal</dt>
             <dd class="font-medium text-slate-900">{{ document.subtotal }}</dd>
+            {% if document.discount_amount %}<dt class="text-slate-600">Document discount</dt><dd class="font-medium text-slate-900">-{{ document.discount_amount }}</dd>{% endif %}
           </div>
           <div class="flex items-center justify-between">
             <dt class="text-slate-600">VAT ({{ document.tax_rate }}%)</dt>
@@ -137,6 +280,24 @@
         <div class="text-sm font-semibold text-slate-900">Notes</div>
         <p class="mt-2 text-sm text-slate-700">{{ document.notes|default:"-" }}</p>
       </div>
+
+      {% if document.document_type == "quotation" and document.converted_invoice %}
+        <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-sm font-semibold text-slate-900">Converted invoice</div>
+          <p class="mt-2 text-sm text-slate-700">
+            <a class="font-medium text-slate-900 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=document.converted_invoice.id %}">{{ document.converted_invoice.number }}</a>
+          </p>
+        </div>
+      {% endif %}
+
+      {% if document.document_type == "invoice" and document.source_quotation %}
+        <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-sm font-semibold text-slate-900">Source quotation</div>
+          <p class="mt-2 text-sm text-slate-700">
+            <a class="font-medium text-slate-900 underline" href="{% url 'billing:document_detail' doc_type='quotation' pk=document.source_quotation.id %}">{{ document.source_quotation.number }}</a>
+          </p>
+        </div>
+      {% endif %}
 
       {% if quotation_history %}
         <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

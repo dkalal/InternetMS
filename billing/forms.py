@@ -7,7 +7,7 @@ from django.forms import BaseInlineFormSet, inlineformset_factory
 
 from internetservices.tailwind import apply_tailwind
 
-from .models import BillingDocument, BillingLineItem, CustomerSubscription, Promotion
+from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion
 
 
 class BillingDocumentForm(forms.ModelForm):
@@ -25,14 +25,9 @@ class BillingDocumentForm(forms.ModelForm):
         if organization is not None:
             self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
         if doc_type == BillingDocument.DocumentType.INVOICE:
-            allowed_statuses = {
-                BillingDocument.Status.DRAFT,
-                BillingDocument.Status.SENT,
-                BillingDocument.Status.ISSUED,
-            }
-            self.fields["status"].choices = [
-                choice for choice in self.fields["status"].choices if choice[0] in allowed_statuses
-            ]
+            self.fields["status"].choices = BillingDocument.invoice_status_choices()
+        elif doc_type == BillingDocument.DocumentType.QUOTATION:
+            self.fields["status"].choices = BillingDocument.quotation_status_choices()
         self.fields["currency"].widget.attrs.update({"placeholder": "TZS", "maxlength": 10})
         self.fields["tax_rate"].widget.attrs.update({"min": "0", "step": "0.01"})
         self.fields["notes"].widget.attrs.update(
@@ -59,8 +54,8 @@ class BillingLineItemForm(forms.ModelForm):
         widgets = {
             "description": forms.Textarea(
                 attrs={
-                    "rows": 2,
-                    "placeholder": "Item description, commercial note, or any custom detail for this line.",
+                    "rows": 3,
+                    "placeholder": "Item name or description (e.g. Network troubleshooting, Cable installation)",
                 }
             ),
         }
@@ -139,8 +134,22 @@ BillingLineItemFormSet = inlineformset_factory(
 
 
 class ReceiptCreateForm(forms.Form):
+    amount_paid = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        label="Amount paid",
+        help_text="Enter the actual amount received. If less than the invoice total, the invoice will be marked partially paid.",
+        widget=forms.NumberInput(attrs={"step": "0.01", "min": "0.01"}),
+    )
     payment_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
-    payment_method = forms.CharField(max_length=50)
+    payment_method = forms.ChoiceField(choices=[
+        ('cash', 'Cash'),
+        ('bank', 'Bank'),
+        ('mobile_money', 'Mobile money'),
+        ('card', 'Credit/Debit card'),
+        ('other', 'Other'),
+    ])
     payment_reference = forms.CharField(max_length=80, required=False, help_text="Optional transaction reference / idempotency key.")
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
 
@@ -148,6 +157,13 @@ class ReceiptCreateForm(forms.Form):
         self.organization = organization
         self.invoice = invoice
         super().__init__(*args, **kwargs)
+        self.has_inventory_items = bool(
+            invoice and invoice.items.filter(product__isnull=False).exists()
+        )
+        if self.has_inventory_items:
+            self.fields["amount_paid"].help_text = (
+                "Inventory invoices require one complete payment. Enter the full outstanding balance."
+            )
         apply_tailwind(self)
 
     def clean_payment_reference(self):
@@ -172,6 +188,14 @@ class ReceiptCreateForm(forms.Form):
 
 class DraftInvoiceEditForm(forms.Form):
     tax_rate = forms.DecimalField(max_digits=5, decimal_places=2, initial=Decimal("18.00"))
+    status = forms.ChoiceField(
+        choices=[
+            (BillingDocument.Status.DRAFT, "Draft"),
+            (BillingDocument.Status.ISSUED, "Issued"),
+        ],
+        initial=BillingDocument.Status.DRAFT,
+        help_text="Save as Draft while editing, or mark as Issued when the invoice is ready to send.",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -192,10 +216,11 @@ class SubscriptionRenewalForm(forms.Form):
             subscriptions = CustomerSubscription.objects.filter(
                 organization=organization,
                 status=CustomerSubscription.Status.ACTIVE,
-            ).select_related("customer", "package")
+            ).select_related("customer", "package", "site")
             if customer is not None:
                 subscriptions = subscriptions.filter(customer=customer)
             self.fields["subscription"].queryset = subscriptions
+            self.fields["subscription"].label_from_instance = lambda obj: f"{obj.customer.name} - {obj.site.name if obj.site_id else 'Main Office'} - {obj.package.name}"
             self.fields["promotion"].queryset = Promotion.objects.filter(
                 organization=organization,
                 is_active=True,
@@ -232,6 +257,129 @@ class SubscriptionInvoiceIssueForm(forms.Form):
         if len(reason) < 5:
             raise forms.ValidationError("Add a short reason before resolving this invoice issue.")
         return reason
+
+
+class CancelSubscriptionForm(forms.Form):
+    reason = forms.CharField(
+        label="Reason",
+        help_text="Saved to the audit trail.",
+        widget=forms.Textarea(attrs={"rows": 3, "placeholder": "Example: Package was assigned to the wrong customer."}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if len(reason) < 5:
+            raise forms.ValidationError("Add a short reason before cancelling.")
+        return reason
+
+
+class InvoiceActionForm(forms.Form):
+    reason = forms.CharField(
+        label="Reason",
+        help_text="This is saved to the audit trail.",
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+
+    def __init__(self, *args, action_label: str = "continue", placeholder: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["reason"].widget.attrs["placeholder"] = placeholder or f"Why does this invoice need to {action_label}?"
+        apply_tailwind(self)
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if len(reason) < 5:
+            raise forms.ValidationError("Add a short reason before continuing.")
+        return reason
+
+
+class CreditNoteCreateForm(InvoiceActionForm):
+    amount = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        help_text="Enter the total amount to credit from the current remaining balance.",
+        widget=forms.NumberInput(attrs={"step": "0.01", "min": "0.01"}),
+    )
+    issue_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}), required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, action_label="credit", placeholder="Example: Discount approved after the invoice was issued.", **kwargs)
+
+
+class QuotationActionForm(forms.Form):
+    reason = forms.CharField(
+        label="Notes",
+        required=False,
+        help_text="Optional note saved to the audit trail.",
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+
+    def __init__(self, *args, action_label: str = "continue", placeholder: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["reason"].widget.attrs["placeholder"] = placeholder or f"Optional note for this {action_label} action."
+        apply_tailwind(self)
+
+
+class BillingSheetGenerateForm(forms.Form):
+    due_date = forms.DateField(
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+        label="Due date",
+        help_text="Optional. Leave blank if no payment deadline applies.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+
+
+class BillingSheetForm(forms.ModelForm):
+    class Meta:
+        model = BillingSheet
+        fields = ["customer", "title", "notes"]
+        widgets = {
+            "notes": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if organization is not None:
+            self.fields["customer"].queryset = self.fields["customer"].queryset.filter(
+                organization=organization, status="active"
+            )
+        apply_tailwind(self)
+
+
+class BillingItemForm(forms.ModelForm):
+    class Meta:
+        model = BillingItem
+        fields = ["description", "quantity", "unit_price", "notes"]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["quantity"].widget.attrs.update({"min": "0.01", "step": "0.01"})
+        self.fields["unit_price"].widget.attrs.update({"min": "0", "step": "0.01"})
+        apply_tailwind(self)
+
+    def clean_quantity(self):
+        quantity = self.cleaned_data.get("quantity")
+        if quantity is not None and quantity <= Decimal("0.00"):
+            raise forms.ValidationError("Quantity must be greater than 0.")
+        return quantity
+
+    def clean_unit_price(self):
+        unit_price = self.cleaned_data.get("unit_price")
+        if unit_price is not None and unit_price < Decimal("0.00"):
+            raise forms.ValidationError("Unit price cannot be negative.")
+        return unit_price
 
 
 class PromotionForm(forms.ModelForm):

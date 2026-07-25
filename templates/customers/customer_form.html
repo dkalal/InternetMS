@@ -3,8 +3,8 @@
 {% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
 
 {% block content %}
-<div class="mx-auto w-full max-w-7xl space-y-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-form-page mx-auto w-full max-w-7xl space-y-5">
+    <header class="jims-form-hero flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
             <div class="text-sm text-slate-500">
                 <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
@@ -23,13 +23,13 @@
         <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
             Back
         </a>
-    </div>
+    </header>
 
     <form method="post" class="space-y-5" data-customer-form>
         {% csrf_token %}
 
         {% if form.errors or internet_form.errors %}
-            <section class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" aria-labelledby="form-errors-title">
+            <section class="jims-error-summary" aria-labelledby="form-errors-title" role="alert" tabindex="-1">
                 <h2 id="form-errors-title" class="font-semibold text-rose-950">Fix the highlighted fields</h2>
                 <div class="mt-2 space-y-1">
                     {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
@@ -50,7 +50,7 @@
 
         <div class="grid grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
             <aside class="hidden lg:block">
-                <nav class="sticky top-6 rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm" aria-label="Customer form sections">
+                <nav class="jims-form-nav sticky top-6 rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm" aria-label="Customer form sections">
                     <a href="#customer-essentials" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Essentials</a>
                     <a href="#contact-network" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Contact and network</a>
                     <a href="#billing-identity" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Billing identity</a>
@@ -60,7 +60,7 @@
             </aside>
 
             <div class="space-y-5">
-                <section id="customer-essentials" class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                <section id="customer-essentials" class="jims-form-section">
                     <div class="border-b border-slate-200 px-5 py-4">
                         <h2 class="text-sm font-semibold text-slate-900">Customer essentials</h2>
                         <p class="mt-1 text-sm text-slate-600">The minimum information needed to identify and govern the customer account.</p>
@@ -93,7 +93,7 @@
                     </div>
                 </section>
 
-                <section id="contact-network" class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                <section id="contact-network" class="jims-form-section">
                     <div class="border-b border-slate-200 px-5 py-4">
                         <h2 class="text-sm font-semibold text-slate-900">Contact and network</h2>
                         <p class="mt-1 text-sm text-slate-600">Communication details and service addressing kept compact for repeated editing.</p>
@@ -110,7 +110,7 @@
                     </div>
                 </section>
 
-                <section id="billing-identity" class="rounded-lg border border-slate-200 bg-white shadow-sm">
+                <section id="billing-identity" class="jims-form-section">
                     <div class="border-b border-slate-200 px-5 py-4">
                         <h2 class="text-sm font-semibold text-slate-900">Tax and billing identity</h2>
                         <p class="mt-1 text-sm text-slate-600">These identifiers appear on financial documents when available.</p>
@@ -121,8 +121,10 @@
                     </div>
                 </section>
 
+                {% include "includes/custom_fields_form.html" %}
+
                 <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
-                    <section id="internet-section" class="rounded-lg border border-slate-200 bg-white shadow-sm lg:col-span-1 {% if form.customer_type.value != 'internet' %}hidden{% endif %}">
+                    <section id="internet-section" class="jims-form-section lg:col-span-1 {% if form.customer_type.value != 'internet' %}hidden{% endif %}">
                         <div class="border-b border-slate-200 px-5 py-4">
                             <h2 class="text-sm font-semibold text-slate-900">Internet service</h2>
                             <p class="mt-1 text-sm text-slate-600">Subscription dates and installation type for internet customers.</p>
@@ -134,7 +136,7 @@
                         </div>
                     </section>
 
-                    <section id="package-section" class="rounded-lg border border-slate-200 bg-white shadow-sm lg:col-span-2">
+                    <section id="package-section" class="jims-form-section lg:col-span-2">
                         <div class="border-b border-slate-200 px-5 py-4">
                             <h2 class="text-sm font-semibold text-slate-900">Service packages</h2>
                             <p class="mt-1 text-sm text-slate-600">Assign active packages for billing and service management.</p>
@@ -178,12 +180,16 @@
             </div>
         </div>
     </form>
+
+    {% include "includes/custom_field_definition_modal.html" %}
 </div>
 {% endblock %}
 
 {% block extra_js %}
+{% include "includes/form_state_preserver.html" with form_selector="[data-customer-form]" storage_key="customer-form-state" %}
 <script>
   (function () {
+    var errorSummary = document.querySelector('.jims-error-summary');
     var typeSelect = document.getElementById('customer-type-select');
     var internetSection = document.getElementById('internet-section');
     var statusSelect = document.getElementById('id_status');
@@ -219,6 +225,7 @@
     if (typeSelect) typeSelect.addEventListener('change', syncInternetSection);
     if (statusSelect) statusSelect.addEventListener('change', syncStatusReason);
     if (packageSearch) packageSearch.addEventListener('input', syncPackageSearch);
+    if (errorSummary) errorSummary.focus();
     syncInternetSection();
     syncStatusReason();
     syncPackageSearch();

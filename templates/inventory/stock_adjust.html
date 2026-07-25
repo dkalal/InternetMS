@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Stock adjustment{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+{{ stock_levels|json_script:"stock-level-data" }}
+<div class="mx-auto max-w-4xl space-y-5">
+  <header>
+    <p class="text-sm font-semibold text-brand-700">Sensitive stock operation</p>
+    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Adjust stock</h1>
+    <p class="mt-1 text-sm text-slate-600">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p>
+  </header>
+
+  <form method="post" class="grid gap-5 lg:grid-cols-3" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">
+    {% csrf_token %}
+    <section class="jims-panel p-5 lg:col-span-2">
+      {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="space-y-5">
+        {% include "components/form_field.html" with field=form.product %}
+        <fieldset>
+          <legend class="text-sm font-semibold text-slate-800">Adjustment direction <span class="text-rose-600">*</span></legend>
+          <div class="mt-2 grid gap-3 sm:grid-cols-2">
+            {% for choice in form.direction %}
+              <label class="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-800 hover:border-brand-300">
+                {{ choice.tag }} {{ choice.choice_label }}
+              </label>
+            {% endfor %}
+          </div>
+          {% for error in form.direction.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
+        </fieldset>
+        {% include "components/form_field.html" with field=form.quantity %}
+        {% include "components/form_field.html" with field=form.reason %}
+        {% include "components/form_field.html" with field=form.serial_numbers %}
+        {% include "components/form_field.html" with field=form.notes %}
+      </div>
+    </section>
+
+    <aside class="space-y-4">
+      <section class="jims-panel p-5 lg:sticky lg:top-24">
+        <h2 class="text-sm font-semibold text-slate-950">Balance preview</h2>
+        <dl class="mt-4 space-y-3 text-sm">
+          <div class="flex items-center justify-between"><dt class="text-slate-500">Current stock</dt><dd class="text-lg font-bold text-slate-950" data-current-stock>0.00</dd></div>
+          <div class="flex items-center justify-between border-t border-slate-200 pt-3"><dt class="text-slate-500">Expected stock</dt><dd class="text-lg font-bold text-brand-800" data-expected-stock>0.00</dd></div>
+        </dl>
+        <div class="mt-4 hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" data-negative-warning>Stock cannot fall below zero. Reduce the quantity or choose Increase stock.</div>
+        <p class="mt-4 text-xs leading-5 text-slate-500">The server validates this balance again before saving.</p>
+      </section>
+      <div class="flex gap-2">
+        <a href="{% url 'inventory:stock_list' %}" class="jims-btn jims-btn-secondary flex-1">Cancel</a>
+        <button type="submit" class="jims-btn jims-btn-primary flex-1" data-loading-label="Recording…">Review & record</button>
+      </div>
+    </aside>
+  </form>
+</div>
+{% endblock %}
