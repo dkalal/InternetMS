@@ -1,10 +1,11 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-form-page mx-auto w-full max-w-7xl space-y-5">
-    <header class="jims-form-hero flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-form-page w-full max-w-7xl space-y-5">
+    <header class="jims-page-header">
         <div>
             <div class="text-sm text-slate-500">
                 <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
@@ -15,13 +16,14 @@
                     <span class="text-slate-700">Edit</span>
                 {% endif %}
             </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+            <p class="jims-page-eyebrow">Customer workspace</p>
+            <h1 class="jims-page-title">
                 {% if form.instance.pk %}Edit customer{% else %}New customer{% endif %}
             </h1>
-            <p class="mt-1 text-sm text-slate-600">Capture account identity, contact details, network information, services, and billing identifiers.</p>
+            <p class="jims-page-subtitle">Capture account identity, contact details, network information, services, and billing identifiers.</p>
         </div>
-        <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-            Back
+        <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="jims-btn jims-btn-secondary">
+            Cancel
         </a>
     </header>
 
@@ -50,7 +52,8 @@
 
         <div class="grid grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
             <aside class="hidden lg:block">
-                <nav class="jims-form-nav sticky top-6 rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm" aria-label="Customer form sections">
+                <nav class="jims-form-nav jims-section-nav sticky top-6 text-sm" aria-label="Customer form sections">
+                    <p class="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">On this page</p>
                     <a href="#customer-essentials" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Essentials</a>
                     <a href="#contact-network" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Contact and network</a>
                     <a href="#billing-identity" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Billing identity</a>
@@ -137,29 +140,66 @@
                     </section>
 
                     <section id="package-section" class="jims-form-section lg:col-span-2">
-                        <div class="border-b border-slate-200 px-5 py-4">
-                            <h2 class="text-sm font-semibold text-slate-900">Service packages</h2>
-                            <p class="mt-1 text-sm text-slate-600">Assign active packages for billing and service management.</p>
+                        <div class="jims-package-heading px-5 py-5">
+                            <h2 class="text-lg font-semibold tracking-tight text-slate-950">Service packages</h2>
+                            <p class="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Manage active service levels and billing assignments for this customer’s primary site.</p>
                         </div>
-                        <div class="space-y-3 p-5">
-                            <label for="package-search" class="block text-sm font-medium text-slate-700">Find package</label>
-                            <input id="package-search" type="search" class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Search package name or speed..." data-package-search>
-                            {% if form.packages.errors %}
-                                {% for error in form.packages.errors %}<p class="text-sm text-rose-600">{{ error }}</p>{% endfor %}
-                            {% endif %}
-                            {% if form.packages.help_text %}
-                                <p class="text-xs text-slate-500">{{ form.packages.help_text }}</p>
-                            {% endif %}
-                            <div class="max-h-80 space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3" data-package-list>
-                                {% for choice in form.packages %}
-                                    <label class="flex items-start gap-3 rounded-md bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50" data-package-option>
-                                        {{ choice.tag }}
-                                        <span>{{ choice.choice_label }}</span>
-                                    </label>
-                                {% empty %}
-                                    <div class="rounded-md bg-white px-3 py-4 text-center text-sm text-slate-500 ring-1 ring-slate-200">No active packages available.</div>
-                                {% endfor %}
+                        <div class="space-y-5 p-5">
+                            <div>
+                                <label for="package-search" class="block text-sm font-semibold text-slate-900">Find package</label>
+                                <div class="jims-package-search-wrap mt-2">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke-width="1.9"/><path d="m16 16 4 4" stroke-linecap="round" stroke-width="1.9"/></svg>
+                                    <input id="package-search" type="search" class="jims-package-search" placeholder="Search for a package by name or speed…" data-package-search>
+                                </div>
                             </div>
+
+                            <p id="package-help" class="text-sm leading-6 text-slate-600">{{ form.packages.help_text }}</p>
+                            {% if form.packages.errors %}
+                                <div id="package-errors" class="jims-error-summary py-3 text-sm" role="alert">
+                                    {% for error in form.packages.errors %}<p>{{ error }}</p>{% endfor %}
+                                </div>
+                            {% endif %}
+
+                            <fieldset class="jims-package-picker" data-package-list aria-describedby="package-help{% if form.packages.errors %} package-errors{% endif %}">
+                                <legend class="sr-only">{{ form.packages.label }}</legend>
+                                {% for package in form.packages.field.queryset %}
+                                    {% with package_id=package.pk|stringformat:"s" %}
+                                    <label class="jims-package-option" data-package-option>
+                                        <input
+                                            id="id_packages_{{ forloop.counter0 }}"
+                                            type="checkbox"
+                                            name="{{ form.packages.html_name }}"
+                                            value="{{ package.pk }}"
+                                            class="jims-package-input"
+                                            {% if package_id in form.packages.value %}checked{% endif %}
+                                            {% if form.packages.field.disabled %}disabled{% endif %}
+                                        >
+                                        <span class="jims-package-card">
+                                            <span class="jims-package-icon" aria-hidden="true">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-7 w-7"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>
+                                            </span>
+                                            <span class="min-w-0 flex-1">
+                                                <span class="block truncate text-base font-semibold text-slate-950">{{ package.name }}</span>
+                                                <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
+                                                    <span>{{ package.speed|default:"Speed not specified" }}</span>
+                                                    <span class="text-slate-300" aria-hidden="true">•</span>
+                                                    <span>{{ package.get_package_type_display }}</span>
+                                                </span>
+                                            </span>
+                                            <span class="jims-package-price">
+                                                <span class="whitespace-nowrap text-lg font-bold tracking-tight text-slate-950">TZS {{ package.monthly_fee|floatformat:0|intcomma }}</span>
+                                                <span class="text-sm text-slate-600">/ month</span>
+                                            </span>
+                                            <span class="jims-package-control" aria-hidden="true">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 12 4 4L19 6"/></svg>
+                                            </span>
+                                        </span>
+                                    </label>
+                                    {% endwith %}
+                                {% empty %}
+                                    <div class="jims-package-empty">No active packages are available for this organization.</div>
+                                {% endfor %}
+                            </fieldset>
                         </div>
                     </section>
                 </div>

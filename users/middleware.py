@@ -3,80 +3,100 @@ from __future__ import annotations
 from django.core.exceptions import PermissionDenied
 from django.utils.deprecation import MiddlewareMixin
 
-from .models import Membership, UserAccessProfile
+from audit.models import AuditLog
+from .models import Membership, Organization, SupportAccessSession, TenantMembership, UserAccessProfile
 from .tenant_context import clear_current_tenant, set_current_tenant
 
 
 class ActiveOrganizationMiddleware(MiddlewareMixin):
-    """
-    Sets `request.tenant`/`request.organization`, `request.user_role`, and `request.membership`.
-
-    Strict behavior:
-    - SUPER_ADMIN has no tenant context by default.
-    - Non-super-admin users must have a tenant.
-    - ORM tenant scoping is enabled for authenticated users.
-    """
-
-    SESSION_KEY = "active_org_id"
+    SESSION_KEY = "active_tenant_id"
+    LEGACY_SESSION_KEY = "active_org_id"
+    SUPPORT_SESSION_KEY = "support_access_session_id"
 
     def process_request(self, request):
-        request.organization = None
-        request.tenant = None
-        request.membership = None
+        request.organization = request.tenant = request.membership = None
         request.user_role = None
-
+        request.support_access = None
         clear_current_tenant()
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             return None
 
-        profile = getattr(user, "access_profile", None)
-        if profile is None:
-            membership = (
-                Membership.objects.select_related("organization")
-                .filter(user=user, is_active=True, organization__is_active=True)
-                .order_by("organization__created_at")
-                .first()
-            )
-            role = UserAccessProfile.Role.SUPER_ADMIN if user.is_superuser else UserAccessProfile.Role.TENANT_STAFF
-            tenant = None if role == UserAccessProfile.Role.SUPER_ADMIN else (membership.organization if membership else None)
-            profile = UserAccessProfile.objects.create(user=user, tenant=tenant, role=role)
-
-        request.user_role = profile.role
-
-        membership_qs = Membership.objects.select_related("organization").filter(
-            user=user, is_active=True, organization__is_active=True
+        memberships = TenantMembership.objects.select_related("tenant").filter(
+            user=user, is_active=True, tenant__is_active=True
         )
-        active_org_id = request.session.get(self.SESSION_KEY)
-        membership = membership_qs.filter(organization_id=active_org_id).first() if active_org_id else None
-        if membership is None and profile.tenant_id:
-            membership = membership_qs.filter(organization_id=profile.tenant_id).first()
-        if membership is None:
-            membership = membership_qs.order_by("organization__created_at").first()
-
-        request.membership = membership
-
-        if profile.role == UserAccessProfile.Role.SUPER_ADMIN:
-            request.tenant = None
-            request.organization = None
-            set_current_tenant(None, scope_required=True)
+        if not memberships.exists():
+            # Transitional bridge for users created by legacy scripts. It derives
+            # access only from trusted server-side flags/profile data.
+            profile = getattr(user, "access_profile", None)
+            tenant = getattr(profile, "tenant", None)
+            legacy = Membership.objects.filter(user=user, is_active=True, organization__is_active=True).order_by("pk").first()
+            tenant = tenant or (legacy.organization if legacy else None)
+            if user.is_superuser:
+                tenant = tenant or Organization.objects.filter(is_active=True).order_by("created_at", "pk").first()
+                role = TenantMembership.BaseRole.SUPER_ADMIN
+            elif tenant is not None:
+                role = (
+                    TenantMembership.BaseRole.ADMIN_MANAGER
+                    if (profile and profile.role == UserAccessProfile.Role.TENANT_ADMIN)
+                    or (legacy and legacy.role in {Membership.Role.OWNER, Membership.Role.ADMIN})
+                    else TenantMembership.BaseRole.SALES
+                )
+            else:
+                role = None
+            if tenant is not None and role is not None:
+                TenantMembership.objects.get_or_create(
+                    tenant=tenant, user=user, defaults={"base_role": role, "is_active": user.is_active}
+                )
+                memberships = TenantMembership.objects.select_related("tenant").filter(
+                    user=user, is_active=True, tenant__is_active=True
+                )
+        super_membership = memberships.filter(base_role=TenantMembership.BaseRole.SUPER_ADMIN).first()
+        if super_membership is not None:
+            request.membership = super_membership
+            request.user_role = TenantMembership.BaseRole.SUPER_ADMIN
+            support_id = request.session.get(self.SUPPORT_SESSION_KEY)
+            support = SupportAccessSession.objects.select_related("tenant").filter(
+                pk=support_id,
+                actor=user,
+                session_key=request.session.session_key or "",
+                ended_at__isnull=True,
+                tenant__is_active=True,
+            ).first()
+            if support is not None:
+                request.support_access = support
+                request.tenant = request.organization = support.tenant
+                set_current_tenant(support.tenant, scope_required=True)
+                if not request.path.startswith(("/static/", "/health", "/ready", "/alive")):
+                    AuditLog.objects.create(
+                        organization=support.tenant,
+                        tenant=support.tenant,
+                        actor=user,
+                        action="security.support_request",
+                        object_type="Request",
+                        object_id=str(support.pk),
+                        metadata={
+                            "method": request.method,
+                            "path": request.path[:500],
+                            "ip": _client_ip(request),
+                            "support_reason": support.reason,
+                        },
+                    )
+            else:
+                request.session.pop(self.SUPPORT_SESSION_KEY, None)
+                set_current_tenant(None, scope_required=True)
             return None
 
-        if profile.tenant is None:
-            raise PermissionDenied("Tenant assignment is required.")
-
-        # Derive an effective tenant role from the organization membership.
-        # This keeps UI + permissions consistent for "tenant admins" even if their
-        # access_profile.role was never explicitly promoted.
-        if membership is not None and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN}:
-            request.user_role = UserAccessProfile.Role.TENANT_ADMIN
-        elif membership is not None:
-            request.user_role = UserAccessProfile.Role.TENANT_STAFF
-
-        request.tenant = profile.tenant
-        request.organization = profile.tenant
-        request.session[self.SESSION_KEY] = profile.tenant_id
-        set_current_tenant(profile.tenant, scope_required=True)
+        active_id = request.session.get(self.SESSION_KEY) or request.session.get(self.LEGACY_SESSION_KEY)
+        membership = memberships.filter(tenant_id=active_id).first() if active_id else None
+        membership = membership or memberships.order_by("created_at", "pk").first()
+        if membership is None:
+            raise PermissionDenied("An active tenant membership is required.")
+        request.membership = membership
+        request.user_role = membership.base_role
+        request.tenant = request.organization = membership.tenant
+        request.session[self.SESSION_KEY] = membership.tenant_id
+        set_current_tenant(membership.tenant, scope_required=True)
         return None
 
     def process_response(self, request, response):
@@ -84,5 +104,19 @@ class ActiveOrganizationMiddleware(MiddlewareMixin):
         return response
 
     def process_exception(self, request, exception):
+        if isinstance(exception, PermissionDenied) and getattr(request, "tenant", None) is not None:
+            path = getattr(request, "path", "")
+            if path.startswith(("/billing/", "/inventory/reports", "/inventory/purchases", "/inventory/suppliers")):
+                AuditLog.objects.create(
+                    organization=request.tenant, tenant=request.tenant,
+                    actor=request.user if request.user.is_authenticated else None,
+                    action="security.financial_permission_denied", object_type="Request", object_id="",
+                    metadata={"method": request.method, "path": path[:500], "ip": _client_ip(request)},
+                )
         clear_current_tenant()
         return None
+
+
+def _client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    return (forwarded.split(",", 1)[0].strip() if forwarded else request.META.get("REMOTE_ADDR", ""))[:64]

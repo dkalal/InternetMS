@@ -16,9 +16,9 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from billing.models import BillingDocument
-from billing.services import BillingServiceError
+from billing.services import BillingService, BillingServiceError
 from products.models import Product, ProductCategory
-from users.permissions import PermissionCode, require_permission, user_has_permission
+from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
 
 from .forms import (
@@ -66,13 +66,22 @@ def _cart_workspace(cart):
     for line in lines:
         _, line.pos_pricing_mode = CartService.line_pricing(
             product=line.product, quantity=line.quantity, customer=cart.customer,
+            sale_pricing_category=cart.sale_pricing_category,
         )
     subtotal = sum((line.line_total for line in lines), Decimal('0.00'))
-    discounted = max(subtotal - cart.discount_amount, Decimal('0.00'))
-    tax = money(discounted * cart.tax_rate / Decimal('100.00'))
+    taxable_subtotal = sum(
+        (line.line_total for line in lines if not line.product_id or line.product.tax_eligible),
+        Decimal('0.00'),
+    )
+    _, tax, grand_total = BillingService.compute_totals(
+        tax_rate=cart.tax_rate,
+        line_items=lines,
+        discount_amount=cart.discount_amount,
+    )
     return {
-        'cart': cart, 'lines': lines, 'subtotal': subtotal, 'tax': tax,
-        'grand_total': discounted + tax,
+        'cart': cart, 'lines': lines, 'subtotal': subtotal,
+        'taxable_subtotal': taxable_subtotal, 'tax': tax,
+        'grand_total': grand_total,
     }
 
 
@@ -89,6 +98,7 @@ def _pos_response(request, cart, *, message='', level='success', status=200):
         'cart_html': render_to_string('inventory/includes/pos_cart_lines.html', workspace, request=request),
         'checkout_html': render_to_string('inventory/includes/pos_checkout.html', workspace, request=request),
         'subtotal': str(workspace['subtotal']),
+        'taxable_subtotal': str(workspace['taxable_subtotal']),
         'discount': str(cart.discount_amount),
         'tax': str(workspace['tax']),
         'tax_rate': str(cart.tax_rate),
@@ -110,15 +120,19 @@ def _pos_response(request, cart, *, message='', level='success', status=200):
 @login_required
 def dashboard(request):
     organization = _scope(request, PermissionCode.STOCK_VIEW)
-    balances = InventoryBalance.objects.filter(tenant=organization).select_related('product')
+    finance_all = has_tenant_permission(
+        request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+        membership=request.membership,
+    )
+    balances = list(InventoryBalance.objects.filter(tenant=organization).select_related('product'))
     settings_obj, _ = InventorySettings.objects.get_or_create(
         organization=organization, tenant=organization,
         defaults={'walk_in_customer_label': 'Walk-in Customer'},
     )
     cutoff = timezone.now() - timedelta(days=settings_obj.dead_stock_days)
-    sold_product_ids = StockMovement.objects.filter(
+    sold_product_ids = set(StockMovement.objects.filter(
         tenant=organization, movement_type=StockMovement.MovementType.SALE_OUT, created_at__gte=cutoff
-    ).values_list('product_id', flat=True)
+    ).values_list('product_id', flat=True))
     fast_cutoff = timezone.now() - timedelta(days=settings_obj.fast_moving_days)
     fast_count = sum(
         1 for row in StockMovement.objects.filter(
@@ -133,21 +147,40 @@ def dashboard(request):
     )
     context = {
         'product_count': Product.objects.filter(tenant=organization).count(),
-        'total_stock_units': balances.aggregate(total=Sum('quantity'))['total'] or Decimal('0.00'),
+        'total_stock_units': sum((balance.quantity for balance in balances), Decimal('0.00')),
         'low_stock_count': stock_products.filter(
             quantity__gt=0, quantity__lte=F('reorder_threshold')
         ).count(),
         'out_of_stock_count': stock_products.filter(quantity__lte=0).count(),
-        'dead_stock_count': balances.filter(quantity__gt=0).exclude(product_id__in=sold_product_ids).count(),
+        'dead_stock_count': sum(
+            1 for balance in balances if balance.quantity > 0 and balance.product_id not in sold_product_ids
+        ),
         'fast_moving_count': fast_count,
-        'draft_purchase_count': Purchase.objects.filter(tenant=organization, status=Purchase.Status.DRAFT).count(),
         'draft_cart_count': Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT).count(),
-        'recent_movements': StockMovement.objects.filter(tenant=organization).select_related('product', 'created_by')[:10],
-        'recent_purchases': Purchase.objects.filter(tenant=organization).select_related(
-            'supplier', 'created_by'
-        ).annotate(item_count=Count('lines'))[:5],
     }
-    if user_has_permission(request.user, PermissionCode.COST_REPORT_VIEW):
+    if finance_all:
+        context['total_selling_value'] = sum(
+            (balance.quantity * balance.product.selling_price for balance in balances), Decimal('0.00')
+        )
+        context['total_technician_value'] = sum(
+            (balance.quantity * balance.product.effective_technician_price for balance in balances), Decimal('0.00')
+        )
+        context['total_wholesale_value'] = sum(
+            (
+                balance.quantity * balance.product.price_for_sale_category(
+                    sale_pricing_category=Product.PricingMode.WHOLESALE,
+                    quantity=balance.quantity,
+                )
+                for balance in balances
+            ),
+            Decimal('0.00'),
+        )
+        context['draft_purchase_count'] = Purchase.objects.filter(tenant=organization, status=Purchase.Status.DRAFT).count()
+        context['recent_movements'] = StockMovement.objects.filter(tenant=organization).select_related('product', 'created_by')[:10]
+        context['recent_purchases'] = Purchase.objects.filter(tenant=organization).select_related(
+            'supplier', 'created_by'
+        ).annotate(item_count=Count('lines'))[:5]
+    if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership):
         context['total_stock_value'] = sum((balance.total_value for balance in balances), Decimal('0.00'))
     return render(request, 'inventory/dashboard.html', context)
 
@@ -155,25 +188,43 @@ def dashboard(request):
 @login_required
 def category_list(request):
     organization = _scope(request, PermissionCode.PRODUCT_VIEW)
-    categories = ProductCategory.objects.filter(tenant=organization).order_by('name')
-    return render(request, 'inventory/category_list.html', {'categories': categories})
+    query = request.GET.get('q', '').strip()
+    categories = ProductCategory.objects.filter(tenant=organization).annotate(
+        product_count=Count('products'),
+    )
+    if query:
+        categories = categories.filter(Q(name__icontains=query) | Q(description__icontains=query))
+    categories = categories.order_by('name')
+    category_stats = {
+        'total': categories.count(),
+        'active': categories.filter(is_active=True).count(),
+        'products': sum(category.product_count for category in categories),
+    }
+    return render(request, 'inventory/category_list.html', {
+        'categories': categories, 'query': query, 'category_stats': category_stats,
+    })
 
 
 @login_required
 def category_form(request, pk=None):
     organization = _scope(request, PermissionCode.CATEGORY_MANAGE)
     category = get_object_or_404(ProductCategory.objects.filter(tenant=organization), pk=pk) if pk else None
-    old = {'name': category.name, 'is_active': category.is_active} if category else {}
+    old = {
+        'name': category.name, 'description': category.description, 'measure_unit': category.measure_unit,
+        'icon': category.icon, 'is_active': category.is_active,
+    } if category else {}
     form = ProductCategoryForm(request.POST or None, instance=category, organization=organization)
     if request.method == 'POST' and form.is_valid():
-        obj = form.save(commit=False)
-        obj.organization = obj.tenant = organization
-        obj.save()
-        audit(organization=organization, actor=request.user, action='inventory.category.saved', obj=obj, old_value=old, new_value={'name': obj.name, 'is_active': obj.is_active})
+        form.instance.organization = form.instance.tenant = organization
+        obj = form.save()
+        audit(organization=organization, actor=request.user, action='inventory.category.saved', obj=obj, old_value=old, new_value={
+            'name': obj.name, 'description': obj.description, 'measure_unit': obj.measure_unit,
+            'icon': obj.icon, 'is_active': obj.is_active,
+        })
         messages.success(request, 'Category saved.')
         return redirect('inventory:category_list')
-    return render(request, 'inventory/form.html', {
-        'form': form, 'title': 'Category', 'subtitle': 'Organize products and services for faster search and reporting.',
+    return render(request, 'inventory/category_form.html', {
+        'form': form, 'category': category, 'title': 'Edit category' if category else 'Add category',
         'cancel_url': 'inventory:category_list', 'submit_label': 'Save category',
     })
 
@@ -488,16 +539,34 @@ def cart_list(request):
 @login_required
 def cart_create(request):
     organization = _scope(request, PermissionCode.CART_MANAGE)
-    # A POS sale starts as an immediately editable draft. Customer and pricing
-    # details belong in the workspace, not on a separate setup screen.
-    cart = Cart.objects.create(
-        organization=organization, tenant=organization, created_by=request.user,
-    )
-    audit(organization=organization, actor=request.user, action='inventory.cart.created', obj=cart)
+    if request.method != 'POST':
+        raise Http404
+
+    # A sale must start as an editable draft, but a navigation request must
+    # never create one. Reuse only the operator's untouched draft so a double
+    # click or refresh cannot leave duplicate empty carts behind.
+    with transaction.atomic():
+        cart = Cart.objects.select_for_update(of=('self',)).filter(
+            tenant=organization,
+            created_by=request.user,
+            status=Cart.Status.DRAFT,
+            customer__isnull=True,
+            walk_in_name='',
+            discount_amount=Decimal('0.00'),
+            tax_rate=Decimal('0.00'),
+            notes='',
+            lines__isnull=True,
+        ).order_by('-updated_at', '-id').first()
+        if cart is None:
+            cart = Cart.objects.create(
+                organization=organization, tenant=organization, created_by=request.user,
+            )
+            audit(organization=organization, actor=request.user, action='inventory.cart.created', obj=cart)
     return redirect('inventory:cart_detail', pk=cart.pk)
 
 
 @login_required
+@ensure_csrf_cookie
 def cart_detail(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     cart = get_object_or_404(Cart.objects.filter(tenant=organization).select_related('customer', 'quotation', 'invoice'), pk=pk)
@@ -507,11 +576,26 @@ def cart_detail(request, pk):
             messages.error(request, 'Only draft carts can be edited.')
             return redirect('inventory:cart_detail', pk=cart.pk)
         if cart_form.is_valid():
-            with transaction.atomic():
-                cart_form.save()
-                CartService.refresh_cart_prices(cart=cart)
-            messages.success(request, 'Cart draft saved. Stock remains unchanged.')
-            return redirect('inventory:cart_detail', pk=cart.pk)
+            try:
+                with transaction.atomic():
+                    cart_form.save()
+                    CartService.refresh_cart_prices(cart=cart)
+                    # Validate the persisted, repriced cart before committing.
+                    _cart_workspace(cart)
+            except BillingServiceError as exc:
+                cart.refresh_from_db()
+                cart_form.add_error('discount_amount', str(exc))
+            else:
+                if _is_pos_request(request):
+                    return _pos_response(request, cart, message='Sale details saved.')
+                messages.success(request, 'Cart draft saved. Stock remains unchanged.')
+                return redirect('inventory:cart_detail', pk=cart.pk)
+        if _is_pos_request(request):
+            return JsonResponse({
+                'ok': False,
+                'message': 'Check the highlighted sale details and try again.',
+                'errors': cart_form.errors.get_json_data(),
+            }, status=422)
     workspace = _cart_workspace(cart)
     lines = workspace['lines']
     query = request.GET.get('q', '').strip()
@@ -527,11 +611,17 @@ def cart_detail(request, pk):
         catalog = catalog.filter(Q(name__icontains=query) | Q(sku__icontains=query) | Q(brand__icontains=query) | Q(model_number__icontains=query))
     if category_id.isdigit():
         catalog = catalog.filter(catalog_category_id=category_id)
+    catalog = list(catalog[:50])
+    for product in catalog:
+        product.pos_price, product.pos_pricing_mode = CartService.line_pricing(
+            product=product, quantity=Decimal('1.00'), customer=cart.customer,
+            sale_pricing_category=cart.sale_pricing_category,
+        )
     return render(request, 'inventory/cart_detail.html', {
         'cart': cart, 'cart_form': cart_form, **workspace,
-        'catalog': catalog[:50], 'query': query, 'category_id': category_id,
+        'catalog': catalog, 'query': query, 'category_id': category_id,
         'categories': ProductCategory.objects.filter(tenant=organization, is_active=True).order_by('name'),
-        'can_register_payment': user_has_permission(request.user, PermissionCode.PAYMENT_REGISTER),
+        'can_register_payment': has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership),
     })
 
 
@@ -541,15 +631,24 @@ def cart_line_form(request, cart_pk, line_pk=None):
     cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
     line = get_object_or_404(CartLine, pk=line_pk, cart=cart) if line_pk else None
     initial = {'product': request.GET.get('product')} if not line and request.GET.get('product') else None
-    form = CartLineForm(request.POST or None, instance=line, organization=organization, initial=initial)
+    form = CartLineForm(
+        request.POST or None, instance=line, organization=organization, initial=initial,
+        sale_pricing_category=cart.sale_pricing_category,
+    )
+    selected_product_id = request.POST.get('product') if request.method == 'POST' else (
+        request.GET.get('product') or (line.product_id if line else None)
+    )
+    selected_product = Product.objects.filter(tenant=organization, pk=selected_product_id).first() if selected_product_id else None
     if request.method == 'POST' and form.is_valid():
         unit_price, _ = CartService.line_pricing(
             product=form.cleaned_data['product'], quantity=form.cleaned_data['quantity'], customer=cart.customer,
+            sale_pricing_category=cart.sale_pricing_category,
         )
         if form.cleaned_data['discount_amount'] > form.cleaned_data['quantity'] * unit_price:
             form.add_error('discount_amount', 'Discount cannot exceed the effective sale price.')
             return render(request, 'inventory/cart_line_form.html', {
-                'form': form, 'cart': cart, 'line': line, 'title': 'Edit cart item' if line else 'Add cart item',
+                'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
+                'title': 'Edit cart item' if line else 'Add cart item',
             })
         with transaction.atomic():
             obj = form.save(commit=False)
@@ -558,12 +657,13 @@ def cart_line_form(request, cart_pk, line_pk=None):
             obj.save()
             CartSerialSelection.objects.filter(cart_line=obj).delete()
             CartSerialSelection.objects.bulk_create([
-                CartSerialSelection(cart_line=obj, stock_unit=unit) for unit in form.cleaned_data.get('serial_units', [])
+                CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit) for unit in form.cleaned_data.get('serial_units', [])
             ])
         messages.success(request, 'Cart item saved. Stock remains unchanged until full payment.')
         return redirect('inventory:cart_detail', pk=cart.pk)
     return render(request, 'inventory/cart_line_form.html', {
-        'form': form, 'cart': cart, 'line': line, 'title': 'Edit cart item' if line else 'Add cart item',
+        'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
+        'title': 'Edit cart item' if line else 'Add cart item',
     })
 
 
@@ -599,7 +699,7 @@ def cart_line_adjust(request, cart_pk):
                 line.delete()
             else:
                 line.quantity -= Decimal('1.00')
-                line.unit_price, _ = CartService.line_pricing(product=product, quantity=line.quantity, customer=cart.customer)
+                line.unit_price, _ = CartService.line_pricing(product=product, quantity=line.quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
                 line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
         else:
             quantity = (line.quantity if line else Decimal('0.00')) + Decimal('1.00')
@@ -609,10 +709,10 @@ def cart_line_adjust(request, cart_pk):
                 messages.warning(request, f'Only {product.available_stock} {product.measure_unit} of {product.name} are available.')
             elif line:
                 line.quantity = quantity
-                line.unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer)
+                line.unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
                 line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
             else:
-                unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer)
+                unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
                 CartLine.objects.create(cart=cart, product=product, quantity=quantity, unit_price=unit_price)
     if _is_pos_request(request):
         return _pos_response(request, cart)
@@ -634,12 +734,20 @@ def cart_abandon(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
         raise Http404
-    cart = get_object_or_404(Cart.objects.filter(tenant=organization), pk=pk)
-    if cart.status == Cart.Status.DRAFT:
-        cart.status = Cart.Status.ABANDONED
-        cart.save(update_fields=['status', 'updated_at'])
-        audit(organization=organization, actor=request.user, action='inventory.cart.abandoned', obj=cart)
-        messages.success(request, 'Cart abandoned. No stock was changed.')
+    get_object_or_404(Cart.objects.filter(tenant=organization), pk=pk)
+    try:
+        _cart, changed = CartService.abandon(
+            organization=organization,
+            cart_id=pk,
+            actor=request.user,
+        )
+    except InventoryError as exc:
+        messages.error(request, str(exc))
+    else:
+        if changed:
+            messages.success(request, 'Sale discarded. Its audit record was preserved and no stock was changed.')
+        else:
+            messages.info(request, 'This sale was already discarded.')
     return redirect('inventory:cart_list')
 
 
@@ -653,7 +761,7 @@ def cart_convert(request, pk, target):
     try:
         document = CartService.convert(organization=organization, cart_id=pk, target=target, actor=request.user)
         messages.success(request, f'Cart converted to {target} {document.number}.')
-        if target == BillingDocument.DocumentType.INVOICE and user_has_permission(request.user, PermissionCode.PAYMENT_REGISTER):
+        if target == BillingDocument.DocumentType.INVOICE and has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership):
             return redirect('billing:create_receipt_from_invoice', pk=document.pk)
         return redirect('billing:document_detail', doc_type=target, pk=document.pk)
     except (InventoryError, BillingServiceError) as exc:
@@ -779,7 +887,7 @@ def report(request, report_name='stock-valuation'):
         'title': REPORT_NAMES[report_name],
         'report_names': (
             REPORT_NAMES
-            if user_has_permission(request.user, PermissionCode.COST_REPORT_VIEW)
+            if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership)
             else {slug: label for slug, label in REPORT_NAMES.items() if slug not in COST_REPORT_NAMES}
         ),
         'description': REPORT_DESCRIPTIONS[report_name], 'result_count': len(rows),
@@ -792,8 +900,12 @@ def report(request, report_name='stock-valuation'):
 def export_records(request, record_type):
     organization = _scope(request, PermissionCode.INVENTORY_EXPORT)
     if record_type == 'products':
-        headers = ['SKU', 'Name', 'Type', 'Category', 'Brand', 'Model', 'Selling price', 'Active']
-        rows = [[p.sku, p.name, p.get_item_type_display(), p.catalog_category.name if p.catalog_category_id else p.get_category_display(), p.brand, p.model_number, p.selling_price, p.is_active] for p in Product.objects.filter(tenant=organization).select_related('catalog_category').order_by('name')]
+        headers = ['SKU', 'Name', 'Type', 'Category', 'Brand', 'Model', 'Selling price', 'Technician price', 'Wholesale price', 'Active']
+        rows = [[
+            p.sku, p.name, p.get_item_type_display(),
+            p.catalog_category.name if p.catalog_category_id else p.get_category_display(),
+            p.brand, p.model_number, p.selling_price, p.technician_price, p.wholesale_price, p.is_active,
+        ] for p in Product.objects.filter(tenant=organization).select_related('catalog_category').order_by('name')]
     elif record_type == 'suppliers':
         require_permission(request, PermissionCode.SUPPLIER_MANAGE)
         headers = ['Company', 'Contact', 'Phone', 'Email', 'Address', 'TIN/VRN', 'Active']

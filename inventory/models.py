@@ -120,6 +120,7 @@ class Purchase(TenantModel):
 
 
 class PurchaseLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_purchase_lines', db_index=True)
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='purchase_lines')
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
@@ -128,6 +129,7 @@ class PurchaseLine(models.Model):
     expiry_date = models.DateField(null=True, blank=True)
     serial_numbers = models.TextField(blank=True, default='', help_text='One serial number per line for serialized products.')
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
 
     class Meta:
         ordering = ['id']
@@ -140,6 +142,10 @@ class PurchaseLine(models.Model):
         return [value.strip() for value in self.serial_numbers.replace(',', '\n').splitlines() if value.strip()]
 
     def save(self, *args, **kwargs):
+        if self.purchase_id:
+            self.tenant_id = self.purchase.tenant_id
+        if self.product_id and self.product.tenant_id != self.tenant_id:
+            raise ValidationError('Purchase line product belongs to another tenant.')
         if self.purchase_id and self.purchase.status == Purchase.Status.CONFIRMED:
             raise ValidationError('Confirmed purchase lines are immutable.')
         super().save(*args, **kwargs)
@@ -272,6 +278,12 @@ class StockUnit(TenantModel):
 
 
 class Cart(TenantModel):
+    class SalePricingCategory(models.TextChoices):
+        STANDARD = 'standard', 'Standard Customer'
+        TECHNICIAN = 'technician', 'Technician Customer'
+        WHOLESALE = 'wholesale', 'Wholesale Customer'
+        LEGACY_RETAIL = 'retail', 'Legacy Retail'
+
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         CONVERTED = 'converted', 'Converted'
@@ -279,6 +291,12 @@ class Cart(TenantModel):
 
     customer = models.ForeignKey('customers.Customer', on_delete=models.PROTECT, null=True, blank=True, related_name='inventory_carts')
     walk_in_name = models.CharField(max_length=200, blank=True, default='')
+    sale_pricing_category = models.CharField(
+        max_length=20,
+        choices=SalePricingCategory.choices,
+        default=SalePricingCategory.STANDARD,
+        db_index=True,
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
     discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
@@ -305,6 +323,7 @@ class Cart(TenantModel):
 
 
 class CartLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_cart_lines', db_index=True)
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='cart_lines')
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('1.00'))
@@ -312,6 +331,7 @@ class CartLine(models.Model):
     discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
 
     class Meta:
         ordering = ['id']
@@ -321,13 +341,29 @@ class CartLine(models.Model):
     def line_total(self):
         return max((self.quantity * self.unit_price - self.discount_amount).quantize(Decimal('0.01')), Decimal('0.00'))
 
+    def save(self, *args, **kwargs):
+        if self.cart_id:
+            self.tenant_id = self.cart.tenant_id
+        if self.product_id and self.product.tenant_id != self.tenant_id:
+            raise ValidationError('Cart line product belongs to another tenant.')
+        super().save(*args, **kwargs)
+
 
 class CartSerialSelection(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_cart_serial_selections', db_index=True)
     cart_line = models.ForeignKey(CartLine, on_delete=models.CASCADE, related_name='serial_selections')
     stock_unit = models.ForeignKey(StockUnit, on_delete=models.PROTECT, related_name='cart_selections')
+    objects = TenantScopedManager()
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['cart_line', 'stock_unit'], name='uniq_cart_line_serial')]
+
+    def save(self, *args, **kwargs):
+        if self.cart_line_id:
+            self.tenant_id = self.cart_line.cart.tenant_id
+        if self.stock_unit_id and self.tenant_id != self.stock_unit.tenant_id:
+            raise ValidationError('Serial unit belongs to another tenant.')
+        super().save(*args, **kwargs)
 
 
 class InventorySale(TenantModel):
@@ -348,15 +384,24 @@ class InventorySale(TenantModel):
 
 
 class InventorySaleLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_inventory_sale_lines', db_index=True)
     sale = models.ForeignKey(InventorySale, on_delete=models.PROTECT, related_name='lines')
     billing_line = models.OneToOneField('billing.BillingLineItem', on_delete=models.PROTECT, related_name='inventory_sale_line')
     cost_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     net_revenue = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
 
     @property
     def gross_profit(self):
         return self.net_revenue - self.cost_total
+
+    def save(self, *args, **kwargs):
+        if self.sale_id:
+            self.tenant_id = self.sale.tenant_id
+        if self.billing_line_id and self.tenant_id != self.billing_line.tenant_id:
+            raise ValidationError('Billing line belongs to another tenant.')
+        super().save(*args, **kwargs)
 
 
 class DocumentSerialSelection(TenantModel):

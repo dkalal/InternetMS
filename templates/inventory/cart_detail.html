@@ -4,16 +4,16 @@
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
 
-<div class="space-y-4" data-cart-subtotal="{{ subtotal }}" data-pos>
-  <header class="flex flex-wrap items-center justify-between gap-3">
+<div class="jims-pos-page space-y-4" data-cart-subtotal="{{ subtotal }}" data-cart-taxable-subtotal="{{ taxable_subtotal }}" data-pos>
+  <header class="jims-page-header">
     <div>
       <p class="text-sm font-semibold text-brand-700">Point of sale</p>
       <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">New sale <span class="text-slate-400">#{{ cart.pk }}</span></h1>
       <p class="mt-1 text-sm text-slate-600">Tap products to build the sale. Customer and checkout stay in this workspace.</p>
     </div>
     {% if cart.status == "draft" %}
-      <form method="post" action="{% url 'inventory:cart_abandon' cart.pk %}" data-confirm="Discard this sale? No stock has been changed." data-confirm-title="Discard sale?" data-confirm-action="Discard sale" data-confirm-tone="danger">
-        {% csrf_token %}<button type="submit" class="jims-btn jims-btn-quiet">Discard sale</button>
+      <form method="post" action="{% url 'inventory:cart_abandon' cart.pk %}" data-confirm="This will close the draft and remove it from active sales. The audit record will remain, and inventory will not change." data-confirm-title="Discard sale #{{ cart.pk }}?" data-confirm-action="Discard draft" data-confirm-tone="danger" data-submit-lock>
+        {% csrf_token %}<button type="submit" class="jims-btn jims-btn-danger" data-loading-label="Discarding...">Discard sale</button>
       </form>
     {% endif %}
   </header>
@@ -28,12 +28,12 @@
   <div class="pos-workspace grid gap-5 md:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1.55fr)_minmax(24rem,0.85fr)]">
     {% if cart.status == "draft" %}
       <section class="is-active min-w-0 space-y-3" data-cart-panel="catalog" data-pos-catalog>
-        <form method="get" class="jims-panel p-3">
+        <form method="get" class="jims-pos-toolbar">
           <div class="flex flex-col gap-2 sm:flex-row">
             <label class="sr-only" for="catalog-search">Search products</label>
             <input id="catalog-search" autofocus name="q" value="{{ query }}" class="min-h-11 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search by product name, SKU, brand or model">
             <label class="sr-only" for="catalog-category">Category</label>
-            <select id="catalog-category" name="category" class="min-h-11 rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <select id="catalog-category" name="category" class="min-h-11 rounded-lg border border-slate-300 px-3 py-2 text-sm" data-searchable-select="true" data-search-label="Category" data-search-placeholder="Search categories...">
               <option value="">All categories</option>
               {% for category in categories %}<option value="{{ category.pk }}" {% if category_id == category.pk|stringformat:"s" %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
             </select>
@@ -41,24 +41,17 @@
           </div>
         </form>
 
-        <div class="flex gap-2 overflow-x-auto pb-1">
-          <a class="jims-btn {% if not category_id %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} shrink-0" href="{% url 'inventory:cart_detail' cart.pk %}{% if query %}?q={{ query|urlencode }}{% endif %}">All products</a>
-          {% for category in categories %}
-            <a class="jims-btn {% if category_id == category.pk|stringformat:'s' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} shrink-0" href="?category={{ category.pk }}{% if query %}&q={{ query|urlencode }}{% endif %}">{{ category.name }}</a>
-          {% endfor %}
-        </div>
-
         <div class="pos-catalog-scroll" data-pos-catalog-scroll>
         {% if catalog %}
           <div class="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
             {% for product in catalog %}
-              <article class="jims-panel flex min-h-40 flex-col p-3" data-pos-product-card="{{ product.pk }}">
+              <article class="jims-pos-product flex min-h-40 flex-col p-4" data-pos-product-card="{{ product.pk }}">
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0"><h2 class="truncate font-semibold text-slate-950">{{ product.name }}</h2><p class="mt-1 truncate text-xs text-slate-500">{{ product.sku|default:"No SKU" }}</p></div>
                   {% if product.item_type == "service" %}<span class="rounded-full bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-800">Service</span>{% elif product.available_stock > 0 %}<span class="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">{{ product.available_stock|intcomma }} in stock</span>{% else %}<span class="rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-800">Out of stock</span>{% endif %}
                 </div>
                 <div class="mt-auto flex items-end justify-between gap-2 pt-4">
-                  <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.price_for|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>Retail price</span>{% if product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity }}</p></div>
+                  <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity }}</p></div>
                   {% if product.is_serialized %}
                     {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
                   {% elif product.item_type == "service" or product.available_stock > 0 %}
@@ -85,7 +78,7 @@
         {% if cart.status == 'draft' %}
           <details class="jims-panel p-4">
             <summary class="cursor-pointer text-sm font-semibold text-slate-900">Customer, discount and VAT</summary>
-            <form method="post" class="mt-4 space-y-4 border-t border-slate-200 pt-4" data-submit-lock>{% csrf_token %}{% include "components/form.html" with form=cart_form %}<button class="jims-btn jims-btn-secondary w-full" type="submit">Save sale details</button></form>
+            <form method="post" class="mt-4 space-y-4 border-t border-slate-200 pt-4" data-pos-details>{% csrf_token %}{% include "components/form.html" with form=cart_form %}<button class="jims-btn jims-btn-secondary w-full" type="submit">Save sale details</button></form>
           </details>
         {% endif %}
 

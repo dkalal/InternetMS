@@ -32,7 +32,7 @@ def render_pdf_or_html(
 
     try:
         import weasyprint  # type: ignore
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ImportError, OSError):
         response = HttpResponse(html, content_type="text/html; charset=utf-8")
         response["X-PDF-Fallback"] = "html"
         response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"

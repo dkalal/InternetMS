@@ -1,5 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 from django.views.generic import TemplateView, ListView, DetailView, CreateView, UpdateView, DeleteView
@@ -9,7 +9,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
-from django.db.models import Exists, Max, OuterRef, Q, Subquery, Sum
+from django.db.models import Max, OuterRef, Q, Subquery, Sum
 from django.utils import timezone
 
 from audit.models import AuditLog
@@ -27,7 +27,7 @@ from .forms import (
     AnonymizeCustomerForm,
 )
 from .services import CustomerService, CustomerServiceError
-from users.permissions import PermissionCode, require_permission
+from users.permissions import PermissionCode, has_tenant_permission, require_permission, sales_document_queryset_for
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context
 
@@ -266,17 +266,43 @@ class CustomerListView(LoginRequiredMixin, ListView):
             status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
         ).values("subscription__customer_id")
 
+    def _selected_billing_month(self):
+        """Return a safe first-of-month value for finance worklists."""
+        raw_value = (self.request.GET.get("month") or "").strip()
+        if raw_value:
+            try:
+                year_text, month_text = raw_value.split("-", 1)
+                return date(int(year_text), int(month_text), 1)
+            except (TypeError, ValueError):
+                pass
+        return timezone.localdate().replace(day=1)
+
+    def _billing_periods_for_selected_month(self, organization):
+        selected_month = self._selected_billing_month()
+        return SubscriptionPeriod.objects.filter(
+            organization=organization,
+            period_start__year=selected_month.year,
+            period_start__month=selected_month.month,
+        )
+
     def _due_soon_customer_ids(self, organization):
         """Return customers with a paid, active service expiring later this month.
 
         This is a customer-level queue, so it uses the latest paid-through
         date across every active office/service. A customer who has already
         paid a later month for any active office must not be placed in Due
-        soon just because another office ends earlier. A missing paid-through
-        date means no payment has been recorded, and a date before today means
-        the service is already expired. Customers with an open subscription
-        invoice are kept in the unpaid worklist so queues never overlap.
+        soon just because another office ends earlier. The effective date also
+        accounts for paid legacy invoices whose recurring line covers multiple
+        months even when the stored paid-through summary was not synchronized.
+        A missing paid-through date means no payment has been recorded, and a
+        date before today means the service is already expired. Customers with
+        an open subscription invoice are kept in the unpaid worklist so queues
+        never overlap.
         """
+        cached = getattr(self, "_due_soon_ids_cache", None)
+        if cached is not None:
+            return cached
+
         today = timezone.localdate()
         month_end = today.replace(day=28)
         while True:
@@ -284,35 +310,80 @@ class CustomerListView(LoginRequiredMixin, ListView):
             if next_day.month != month_end.month:
                 break
             month_end = next_day
-        open_subscription_invoices = SubscriptionPeriod.objects.filter(
+
+        open_customer_ids = set(SubscriptionPeriod.objects.filter(
             organization=organization,
-            subscription__customer_id=OuterRef("customer_id"),
             status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-        )
-        return (
+        ).values_list("subscription__customer_id", flat=True))
+        subscriptions = (
             CustomerSubscription.objects.filter(
                 organization=organization,
                 status=CustomerSubscription.Status.ACTIVE,
             )
-            .values("customer_id")
-            .annotate(latest_paid_through=Max("paid_through_date"))
-            .filter(
-                latest_paid_through__gte=today,
-                latest_paid_through__lte=month_end,
-            )
-            .exclude(Exists(open_subscription_invoices))
-            .values("customer_id")
+            .prefetch_related("periods__invoice__items")
+            .order_by("customer_id", "id")
         )
+        paid_through_by_customer = {}
+        for subscription in subscriptions:
+            paid_through = _subscription_paid_through_date(subscription)
+            current = paid_through_by_customer.get(subscription.customer_id)
+            if paid_through is not None and (current is None or paid_through > current):
+                paid_through_by_customer[subscription.customer_id] = paid_through
+
+        self._due_soon_ids_cache = [
+            customer_id
+            for customer_id, paid_through in paid_through_by_customer.items()
+            if customer_id not in open_customer_ids and today <= paid_through <= month_end
+        ]
+        return self._due_soon_ids_cache
 
     def get_queryset(self):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.TENANT_READ)
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
         queryset = (
             Customer.objects.for_organization(organization)
             .exclude(status=Customer.Status.SUSPENDED)
             .optimized_list()
-            .prefetch_related("subscriptions__package", "subscriptions__periods", "subscriptions__periods__invoice__items")
         )
+        if finance_all:
+            queryset = queryset.prefetch_related("subscriptions__package", "subscriptions__periods", "subscriptions__periods__invoice__items")
+        else:
+            queryset = queryset.prefetch_related("subscriptions__package")
+            customer_type = self.request.GET.get('type')
+            if customer_type:
+                queryset = queryset.filter(customer_type=customer_type)
+            status = self.request.GET.get('status')
+            if status:
+                queryset = queryset.filter(status=status)
+            search_query = self.request.GET.get('search')
+            if search_query:
+                queryset = queryset.search(search_query)
+            worklist = self.request.GET.get("worklist")
+            if worklist == "today":
+                queryset = queryset.filter(
+                    id__in=self._worked_today_customer_ids(organization, self.request.user)
+                )
+            elif worklist == "no_contact":
+                queryset = queryset.filter(
+                    (Q(email__isnull=True) | Q(email=""))
+                    & (Q(phone__isnull=True) | Q(phone=""))
+                )
+            elif worklist == "inactive":
+                queryset = queryset.inactive()
+            elif worklist == "active":
+                queryset = queryset.active()
+            elif worklist == "suspended":
+                queryset = Customer.objects.for_organization(organization).suspended().optimized_list()
+            queryset, self.active_sort = apply_sort(
+                queryset.distinct(), self.request.GET.get("sort"),
+                {key: value for key, value in self.sort_options.items() if key not in {"billing", "-billing", "paid_through", "-paid_through"}},
+                "created",
+            )
+            return queryset
         unpaid_periods = SubscriptionPeriod.objects.filter(
             organization=organization,
             subscription__customer_id=OuterRef("pk"),
@@ -354,7 +425,18 @@ class CustomerListView(LoginRequiredMixin, ListView):
 
         worklist = self.request.GET.get('worklist')
         if worklist == 'unpaid':
-            queryset = queryset.filter(id__in=self._unpaid_customer_ids(organization))
+            if self.request.GET.get("month"):
+                unpaid_ids = self._billing_periods_for_selected_month(organization).filter(
+                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                ).values("subscription__customer_id")
+            else:
+                unpaid_ids = self._unpaid_customer_ids(organization)
+            queryset = queryset.filter(id__in=unpaid_ids)
+        elif worklist == 'paid':
+            paid_ids = self._billing_periods_for_selected_month(organization).filter(
+                status=SubscriptionPeriod.Status.PAID,
+            ).values("subscription__customer_id")
+            queryset = queryset.filter(id__in=paid_ids)
         elif worklist == 'due':
             queryset = queryset.filter(id__in=self._due_soon_customer_ids(organization))
         elif worklist == 'no_contact':
@@ -494,12 +576,96 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 else:
                     customer.billing_note = latest_note
 
+    def _enrich_customers_for_sales(self, customers, organization):
+        """Expose operational billing health without exposing monetary data.
+
+        Sales may work every customer in their tenant, but may only inspect
+        billing documents they created or were assigned.  Health therefore
+        uses non-monetary subscription state, while the latest-invoice link is
+        resolved through the same ownership scope as the billing views.
+        """
+        customer_ids = [customer.id for customer in customers]
+        if not customer_ids:
+            return
+
+        open_customer_ids = set(
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                subscription__customer_id__in=customer_ids,
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+            ).values_list("subscription__customer_id", flat=True)
+        )
+        visible_invoices = sales_document_queryset_for(
+            self.request.user,
+            organization,
+            membership=self.request.membership,
+        ).filter(
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id__in=customer_ids,
+        ).only("id", "customer_id", "number", "status", "issue_date", "created_at").order_by(
+            "customer_id", "-issue_date", "-created_at", "-id"
+        )
+        latest_visible_invoice_by_customer = {}
+        for invoice in visible_invoices:
+            latest_visible_invoice_by_customer.setdefault(invoice.customer_id, invoice)
+
+        today = timezone.localdate()
+        for customer in customers:
+            subscriptions = list(customer.subscriptions.all())
+            customer.primary_subscription = subscriptions[0] if subscriptions else None
+            customer.whatsapp_url = self._whatsapp_link(customer.phone)
+            customer.latest_visible_invoice = latest_visible_invoice_by_customer.get(customer.id)
+            if customer.latest_visible_invoice is not None:
+                customer.latest_visible_invoice_status = customer.latest_visible_invoice.get_status_display()
+
+            paid_through_dates = [
+                subscription.paid_through_date
+                for subscription in subscriptions
+                if subscription.paid_through_date is not None
+            ]
+            paid_through = max(paid_through_dates, default=None)
+            if customer.id in open_customer_ids:
+                customer.billing_state = "unpaid"
+                customer.billing_label = "Invoice requires attention"
+                customer.billing_note = "Payment status needs follow-up"
+            elif paid_through is not None and paid_through < today:
+                customer.billing_state = "unpaid"
+                customer.billing_label = "Expired"
+                customer.billing_note = f"Service paid through {paid_through:%b %d, %Y}"
+            elif paid_through is not None and paid_through.month == today.month and paid_through.year == today.year:
+                customer.billing_state = "due"
+                customer.billing_label = "Due soon"
+                customer.billing_note = f"Service paid through {paid_through:%b %d, %Y}"
+            elif paid_through is not None:
+                customer.billing_state = "paid"
+                customer.billing_label = "Paid"
+                customer.billing_note = f"Service paid through {paid_through:%b %d, %Y}"
+            elif customer.primary_subscription:
+                customer.billing_state = "due"
+                customer.billing_label = "Not billed"
+                customer.billing_note = "No payment status recorded"
+            elif not customer.email and not customer.phone:
+                customer.billing_state = "incomplete"
+                customer.billing_label = "Incomplete"
+                customer.billing_note = "Missing contact details"
+            else:
+                customer.billing_state = "neutral"
+                customer.billing_label = "No subscription"
+                customer.billing_note = "No active package billing"
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         organization = require_organization(self.request)
         context['page_title'] = 'Customer List'
         base = Customer.objects.for_organization(organization)
-        self._enrich_customers(context['customers'], organization)
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
+        if finance_all:
+            self._enrich_customers(context['customers'], organization)
+        else:
+            self._enrich_customers_for_sales(context['customers'], organization)
 
         unpaid_customer_ids = self._unpaid_customer_ids(organization)
         due_soon_customer_ids = self._due_soon_customer_ids(organization)
@@ -511,32 +677,42 @@ class CustomerListView(LoginRequiredMixin, ListView):
         context['active_customers'] = base.active().count()
         context['inactive_customers'] = base.inactive().count()
         context['suspended_customers'] = base.suspended().count()
-        context['overdue_customers'] = base.filter(id__in=unpaid_customer_ids).distinct().count()
-        context['due_soon_customers'] = base.filter(id__in=due_soon_customer_ids).distinct().count()
+        if finance_all:
+            context['overdue_customers'] = base.filter(id__in=unpaid_customer_ids).distinct().count()
+            context['due_soon_customers'] = base.filter(id__in=due_soon_customer_ids).distinct().count()
         context['no_contact_customers'] = no_contact.count()
         context['today_customers'] = len(self._worked_today_customer_ids(organization, self.request.user))
-        context['estimated_receivable'] = (
-            SubscriptionPeriod.objects.filter(
-                organization=organization,
+        if finance_all:
+            selected_month = self._selected_billing_month()
+            selected_periods = self._billing_periods_for_selected_month(organization)
+            context['selected_billing_month'] = selected_month
+            context['selected_billing_month_value'] = selected_month.strftime('%Y-%m')
+            context['selected_billing_month_label'] = selected_month.strftime('%B %Y')
+            context['selected_paid_customers'] = selected_periods.filter(
+                status=SubscriptionPeriod.Status.PAID,
+            ).values('subscription__customer_id').distinct().count()
+            context['selected_unpaid_customers'] = selected_periods.filter(
                 status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-            ).aggregate(total=Sum("final_amount"))["total"]
-            or 0
-        )
-        today = timezone.localdate()
-        context['monthly_receivable'] = (
-            SubscriptionPeriod.objects.filter(
-                organization=organization,
-                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-                period_start__year=today.year,
-                period_start__month=today.month,
-            ).aggregate(total=Sum("final_amount"))["total"]
-            or 0
-        )
+            ).values('subscription__customer_id').distinct().count()
+            context['estimated_receivable'] = (
+                SubscriptionPeriod.objects.filter(
+                    organization=organization,
+                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                ).aggregate(total=Sum("final_amount"))["total"]
+                or 0
+            )
+            context['monthly_receivable'] = (
+                selected_periods.filter(
+                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                ).aggregate(total=Sum("final_amount"))["total"]
+                or 0
+            )
         query_params = self.request.GET.copy()
         query_params.pop("page", None)
         context["querystring"] = query_params.urlencode()
         context["active_worklist"] = self.request.GET.get("worklist", "")
         context["active_sort"] = getattr(self, "active_sort", self.request.GET.get("sort", "created"))
+        context["finance_all"] = finance_all
         if context.get("page_obj"):
             context.update(page_context(self.request, context["page_obj"], page_size=self.get_paginate_by(self.object_list)))
         return context
@@ -561,9 +737,16 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
         context = super().get_context_data(**kwargs)
         organization = require_organization(self.request)
         customer = self.get_object()
+        allowed_documents = sales_document_queryset_for(
+            self.request.user, organization, membership=self.request.membership
+        ).filter(customer=customer)
         context['billing_documents'] = (
-            BillingDocument.objects.filter(organization=organization, customer=customer)
+            allowed_documents
             .order_by('-issue_date', '-created_at')[:10]
+        )
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
         )
         context['subscriptions'] = (
             CustomerSubscription.objects.filter(
@@ -577,7 +760,7 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
         )
         subscriptions = list(context["subscriptions"])
         for subscription in subscriptions:
-            latest_period, latest_amount = _subscription_billing_snapshot(subscription)
+            latest_period, latest_amount = _subscription_billing_snapshot(subscription) if finance_all else (None, None)
             subscription.latest_period = latest_period
             subscription.latest_billing_amount = latest_amount
             subscription.latest_period_label = _period_label(latest_period)
@@ -590,8 +773,10 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
                 subscription__status=CustomerSubscription.Status.ACTIVE,
             )
             .select_related("subscription", "subscription__package", "subscription__site", "invoice", "receipt", "promotion")
+            .filter(Q(invoice__isnull=True) | Q(invoice_id__in=allowed_documents.values('id')))
             .order_by("-period_start")[:8]
         )
+        context['finance_all'] = finance_all
         context['packages'] = customer.packages.all()
         context['sites'] = (
             customer.sites.filter(is_active=True)

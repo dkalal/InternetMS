@@ -5,14 +5,16 @@
 
 {% block content %}
 <div class="jims-detail-page space-y-6">
-    <header class="jims-detail-hero flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+    <header class="jims-record-header flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex min-w-0 items-center gap-4">
+            <div class="jims-record-avatar" aria-hidden="true">{{ customer.name|slice:":1"|upper }}</div>
+            <div class="min-w-0">
             <div class="text-sm text-slate-500">
                 <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
                 <span class="px-1">/</span>
                 <span class="text-slate-700">{{ customer.name }}</span>
             </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">{{ customer.name }}</h1>
+            <h1 class="mt-1 truncate text-2xl font-semibold tracking-tight text-slate-950">{{ customer.name }}</h1>
             <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                 <span>{{ customer.get_customer_type_display }}</span>
                 <span class="text-slate-300">&middot;</span>
@@ -26,27 +28,22 @@
                     <span class="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Suspended</span>
                 {% endif %}
             </div>
+            </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
             {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=customer whatsapp_category="general" %}
-            <a href="{% url 'customer-list' %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                Back
+            <a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-primary">
+                Edit customer
             </a>
-            <a href="{% url 'customer-update' customer.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                Edit
-            </a>
-            <a href="{% url 'customer-delete' customer.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
-                Delete
-            </a>
-            <a href="{% url 'customer-anonymize' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                Anonymize
-            </a>
-            {% if user.is_superuser %}
-              <a href="{% url 'customer-hard-delete' customer.id %}" class="rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50">
-                  Hard delete
-              </a>
-            {% endif %}
+            <details class="jims-action-menu">
+                <summary class="jims-btn jims-btn-secondary">More actions</summary>
+                <div class="jims-action-menu-panel">
+                    <a href="{% url 'customer-delete' customer.id %}">Delete customer</a>
+                    <a href="{% url 'customer-anonymize' customer.id %}">Anonymize personal data</a>
+                    {% if user.is_superuser %}<a class="is-danger" href="{% url 'customer-hard-delete' customer.id %}">Permanently delete</a>{% endif %}
+                </div>
+            </details>
         </div>
     </header>
 

@@ -5,14 +5,14 @@
 
 {% block content %}
 <div class="jims-list-page space-y-6">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <header class="jims-page-header">
         <div>
-            <div class="text-sm text-slate-500">Settings / Custom Fields</div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Custom fields</h1>
-            <p class="mt-1 text-sm text-slate-600">Define extra metadata fields for customers and products without migrations.</p>
+            <p class="jims-page-eyebrow">Settings / Custom fields</p>
+            <h1 class="jims-page-title">Custom fields</h1>
+            <p class="jims-page-subtitle">Define extra metadata fields for customers and products without migrations.</p>
         </div>
-        <a href="{% url 'custom-field-create' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">New custom field</a>
-    </div>
+        <a href="{% url 'custom-field-create' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="jims-btn jims-btn-primary">New custom field</a>
+    </header>
 
     <section class="jims-list-results rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div class="jims-scroll-region rounded-lg border border-slate-200" tabindex="0" role="region" aria-label="Custom fields">
@@ -46,14 +46,14 @@
                             </td>
                             <td class="px-3 py-2 text-right">
                                 <div class="inline-flex flex-wrap justify-end gap-2">
-                                    <a href="{% url 'custom-field-edit' field.id %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
+        <a href="{% url 'custom-field-edit' field.id %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="jims-btn jims-btn-secondary jims-btn-compact">Edit</a>
                                     {% if field.is_active %}
                                         <form method="post" action="{% url 'custom-field-deactivate' field.id %}">
                                             {% csrf_token %}
                                             {% if user.is_superuser %}
                                                 <input type="hidden" name="organization" value="{{ organization.id }}">
                                             {% endif %}
-                                            <button type="submit" class="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100">Deactivate</button>
+                                            <button type="submit" class="jims-btn jims-btn-danger jims-btn-compact">Deactivate</button>
                                         </form>
                                     {% endif %}
                                 </div>

@@ -4,6 +4,10 @@ from django.db import models
 
 
 class IntegrationConsumer(models.Model):
+    tenant = models.ForeignKey(
+        'users.Organization', on_delete=models.PROTECT, related_name='tenant_integration_consumers',
+        db_index=True,
+    )
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -38,3 +42,7 @@ class IntegrationConsumer(models.Model):
         if profile.tenant_id != self.organization_id:
             raise ValidationError('Integration consumer user must belong to the same tenant.')
 
+    def save(self, *args, **kwargs):
+        self.tenant_id = self.organization_id
+        self.full_clean()
+        super().save(*args, **kwargs)

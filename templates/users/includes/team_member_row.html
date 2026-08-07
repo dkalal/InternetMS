@@ -1,0 +1,24 @@
+<tr>
+  <td>
+    <div class="team-member-cell">
+      <span class="team-avatar" aria-hidden="true">{{ member.initials }}</span>
+      <span><strong>{{ member.display_name }}</strong><small>{{ member.user.email|default:"No email address" }}</small></span>
+    </div>
+  </td>
+  <td>{% include "users/includes/role_badge.html" with member=member %}</td>
+  <td><span class="team-access-summary">{{ member.access_summary }}</span></td>
+  <td>{% include "users/includes/status_badge.html" with member=member %}</td>
+  <td class="team-actions-cell">
+    {% if member.can_manage %}
+      <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact" data-team-drawer-open="{{ member.id }}">Manage access</button>
+      <details class="jims-menu">
+        <summary class="jims-btn jims-btn-quiet jims-btn-compact" aria-label="More actions for {{ member.display_name }}">•••</summary>
+        <div class="jims-menu-panel"><button type="button" data-team-drawer-open="{{ member.id }}">View access</button>{% if member.status_key == "invited" %}<form method="post" action="{% url 'resend_member_activation' member.id %}">{% csrf_token %}<button type="submit">Resend setup email</button></form>{% endif %}</div>
+      </details>
+    {% elif member.id == ACTIVE_MEMBERSHIP.id %}
+      <span class="text-xs font-medium text-slate-500">Your access</span>
+    {% else %}
+      <span class="text-xs font-medium text-slate-500">Platform-managed</span>
+    {% endif %}
+  </td>
+</tr>

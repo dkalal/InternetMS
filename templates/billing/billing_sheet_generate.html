@@ -4,8 +4,8 @@
 {% block title %}Generate Invoice — {{ sheet.reference_number }}{% endblock %}
 
 {% block content %}
-<div class="mx-auto max-w-xl space-y-6">
-  <div>
+<div class="jims-workflow-page jims-form-page--compact space-y-5">
+  <header>
     <div class="text-sm text-slate-500">
       <a class="hover:underline" href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}">{{ sheet.reference_number }}</a>
       <span class="px-1">/</span>
@@ -16,11 +16,11 @@
       {{ sheet.customer.name }} &middot; {{ sheet.title }} &middot;
       <span class="font-medium text-slate-900">{{ sheet.subtotal|intcomma }} TZS</span>
     </p>
-  </div>
+  </header>
 
-  <form method="post" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+  <form method="post" class="jims-form-card">
     {% csrf_token %}
-
+    <div class="jims-form-section-body space-y-5">
     {% if form.non_field_errors %}
       <div class="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
         {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
@@ -44,11 +44,12 @@
       Set the invoice due date here if you need one. This will lock the billing sheet and create a draft invoice, which you can still edit before issuing.
     </div>
 
-    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-      <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+    </div>
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:billing_sheet_detail' pk=sheet.id %}" class="jims-btn jims-btn-secondary">
         Cancel
       </a>
-      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+      <button type="submit" class="jims-btn jims-btn-primary">
         Generate invoice
       </button>
     </div>

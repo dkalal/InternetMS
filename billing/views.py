@@ -16,7 +16,7 @@ from django.utils.text import slugify
 from django.views.generic import CreateView, ListView, UpdateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 
-from users.permissions import PermissionCode, require_permission
+from users.permissions import PermissionCode, permissions_for_membership, require_permission, sales_document_queryset_for
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, paginate_queryset, positive_decimal
 
@@ -172,15 +172,21 @@ def _require_valid_doc_type(doc_type: str) -> str:
 
 
 def _require_billing_read(request):
-    require_permission(request, PermissionCode.TENANT_READ)
+    allowed = permissions_for_membership(getattr(request, "membership", None))
+    if not ({PermissionCode.SALES_DOCUMENTS_VIEW_OWN, PermissionCode.FINANCE_SALES_VIEW_ALL} & allowed):
+        raise PermissionDenied("Billing access is not permitted.")
 
 
 def _require_billing_write(request):
     require_permission(request, PermissionCode.BILLING_CREATE)
 
 
+def _require_finance_all(request):
+    require_permission(request, PermissionCode.FINANCE_SALES_VIEW_ALL)
+
+
 def _build_document_form_context(*, form, formset, doc_type: str, doc_type_display: str, **extra):
-    primary_order = ("customer", "issue_date", "due_date", "status", "currency", "tax_rate")
+    primary_order = ("customer", "sale_pricing_category", "issue_date", "due_date", "status", "currency", "tax_rate")
     primary_fields = [form[name] for name in primary_order if name in form.fields]
     secondary_fields = [form[name] for name in form.fields if name not in set(primary_order) | {"notes"}]
     empty_item_form = formset.empty_form
@@ -195,7 +201,9 @@ def _build_document_form_context(*, form, formset, doc_type: str, doc_type_displ
         "primary_fields": primary_fields,
         "secondary_fields": secondary_fields,
         "notes_field": form["notes"] if "notes" in form.fields else None,
-        "product_catalog": empty_item_form.fields["product"].queryset.order_by("name"),
+        "product_catalog": empty_item_form.fields["product"].queryset.select_related(
+            "sales_unit", "catalog_category", "catalog_category__default_unit"
+        ).prefetch_related("catalog_category__allowed_units").order_by("name"),
         "package_catalog": empty_item_form.fields["package"].queryset.order_by("name"),
         "customer_catalog": customer_catalog,
         "promotion_catalog": promotion_catalog,
@@ -216,6 +224,7 @@ def _extract_items(formset) -> list[LineItemInput]:
                 product_id=product.id if product else None,
                 package_id=package.id if package else None,
                 description=form.cleaned_data.get("description") or "",
+                unit_snapshot=form.cleaned_data.get("unit_snapshot") or "",
                 quantity=form.cleaned_data.get("quantity") or Decimal("0.00"),
                 unit_price=form.cleaned_data.get("unit_price") or Decimal("0.00"),
                 discount_amount=form.cleaned_data.get("discount_amount") or Decimal("0.00"),
@@ -248,8 +257,7 @@ def _attach_quotation_list_state(organization, document: BillingDocument) -> Bil
 
 def _build_invoice_action_form(*, request, organization, pk: int, form_class, action_title: str, submit_label: str, action_url_name: str, success_message: str, service_call, form_kwargs: dict | None = None, initial: dict | None = None, extra_context: dict | None = None):
     invoice = get_object_or_404(
-        BillingDocument.objects.select_related("customer"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer"),
         document_type=BillingDocument.DocumentType.INVOICE,
         pk=pk,
     )
@@ -283,8 +291,7 @@ def _build_invoice_action_form(*, request, organization, pk: int, form_class, ac
 
 def _build_quotation_action_form(*, request, organization, pk: int, action_title: str, submit_label: str, action_url_name: str, success_message: str, service_call, form_kwargs: dict | None = None):
     quotation = get_object_or_404(
-        BillingDocument.objects.select_related("customer", "converted_invoice"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "converted_invoice"),
         document_type=BillingDocument.DocumentType.QUOTATION,
         pk=pk,
     )
@@ -323,7 +330,9 @@ def document_list(request, doc_type: str):
     _require_billing_read(request)
     doc_type_display = _require_valid_doc_type(doc_type)
 
-    documents = BillingDocument.objects.filter(organization=organization, document_type=doc_type).select_related("customer", "invoice")
+    documents = sales_document_queryset_for(
+        request.user, organization, membership=request.membership
+    ).filter(document_type=doc_type).select_related("customer", "invoice")
     if doc_type == BillingDocument.DocumentType.QUOTATION and request.GET.get("include_history") != "1":
         documents = documents.filter(is_current_version=True)
 
@@ -398,7 +407,9 @@ def document_list(request, doc_type: str):
     pagination = paginate_queryset(request, documents)
     page_obj = pagination["page_obj"]
 
-    invoice_base = BillingDocument.objects.filter(organization=organization, document_type=BillingDocument.DocumentType.INVOICE)
+    invoice_base = sales_document_queryset_for(
+        request.user, organization, membership=request.membership
+    ).filter(document_type=BillingDocument.DocumentType.INVOICE)
     invoice_worklists = {}
     if doc_type == BillingDocument.DocumentType.INVOICE:
         invoice_worklists = {
@@ -444,8 +455,7 @@ def document_detail(request, doc_type: str, pk: int):
     _require_valid_doc_type(doc_type)
 
     document = get_object_or_404(
-        BillingDocument.objects.select_related("customer", "created_by", "source_quotation", "converted_invoice", "invoice", "superseded_by"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "created_by", "source_quotation", "converted_invoice", "invoice", "superseded_by"),
         document_type=doc_type,
         pk=pk,
     )
@@ -466,9 +476,14 @@ def document_detail(request, doc_type: str, pk: int):
     quotation_action_state = None
     invoice_supersession_details = None
     invoice_carry_forward = None
+    invoice_account_summary = None
+    invoice_payment_policy = None
 
     if document.document_type == BillingDocument.DocumentType.INVOICE:
         invoice_action_state = BillingService.get_invoice_action_state(organization=organization, invoice=document)
+        invoice_payment_policy = BillingService.invoice_payment_policy(
+            organization=organization, invoice=document
+        )
         invoice_supersession_details = BillingService.get_invoice_supersession_details(organization=organization, invoice=document)
         payment_receipts = list(
             BillingDocument.objects.filter(
@@ -502,6 +517,9 @@ def document_detail(request, doc_type: str, pk: int):
                 customer=document.customer,
             ),
         }
+        invoice_account_summary = BillingService.invoice_account_summary(
+            organization=organization, invoice=document
+        )
         linked_subscription_period = (
             SubscriptionPeriod.objects.filter(organization=organization, invoice=document)
             .select_related("subscription", "subscription__customer", "subscription__package", "receipt")
@@ -571,6 +589,8 @@ def document_detail(request, doc_type: str, pk: int):
             "has_inventory_items": document.items.filter(product__isnull=False).exists(),
             "invoice_supersession_details": invoice_supersession_details,
             "invoice_carry_forward": invoice_carry_forward,
+            "invoice_account_summary": invoice_account_summary,
+            "invoice_payment_policy": invoice_payment_policy,
             "can_resolve_subscription_issue": linked_subscription_period is not None
             and linked_subscription_period.status in {SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE}
             and (can_void_invoice or can_reissue_invoice),
@@ -614,6 +634,7 @@ def document_create(request, doc_type: str):
                     tax_rate=form.cleaned_data["tax_rate"],
                     notes=form.cleaned_data.get("notes") or "",
                     items=_extract_items(formset),
+                    sale_pricing_category=form.cleaned_data["sale_pricing_category"],
                 )
             except BillingServiceError as exc:
                 messages.error(request, str(exc))
@@ -621,7 +642,10 @@ def document_create(request, doc_type: str):
                 messages.success(request, f"{document.get_document_type_display()} created.")
                 return redirect("billing:document_detail", doc_type=doc_type, pk=document.pk)
     else:
-        initial = {"issue_date": timezone.now().date(), "tax_rate": Decimal("18.00"), "currency": "TZS"}
+        initial = {
+            "issue_date": timezone.now().date(), "tax_rate": Decimal("18.00"), "currency": "TZS",
+            "sale_pricing_category": BillingDocument.SalePricingCategory.STANDARD,
+        }
         customer_id = request.GET.get("customer")
         if customer_id:
             try:
@@ -657,8 +681,7 @@ def document_edit(request, doc_type: str, pk: int):
     _require_valid_doc_type(doc_type)
 
     document = get_object_or_404(
-        BillingDocument.objects.select_related("customer", "created_by"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "created_by"),
         document_type=doc_type,
         pk=pk,
     )
@@ -696,6 +719,7 @@ def document_edit(request, doc_type: str, pk: int):
                         tax_rate=form.cleaned_data["tax_rate"],
                         notes=form.cleaned_data.get("notes") or "",
                         items=items,
+                        sale_pricing_category=form.cleaned_data["sale_pricing_category"],
                     )
                     messages.success(request, "Quotation version created.")
                 else:
@@ -716,6 +740,7 @@ def document_edit(request, doc_type: str, pk: int):
             form = form_class(
                 initial={
                     "customer": document.customer,
+                    "sale_pricing_category": document.sale_pricing_category,
                     "issue_date": document.issue_date,
                     "due_date": document.due_date,
                     "status": document.status,
@@ -750,12 +775,11 @@ def document_pdf(request, doc_type: str, pk: int):
     _require_valid_doc_type(doc_type)
 
     document = get_object_or_404(
-        BillingDocument.objects.select_related("customer", "organization"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "organization"),
         document_type=doc_type,
         pk=pk,
     )
-    items = document.items.filter(organization=organization).select_related("product", "package")
+    items = list(document.items.filter(organization=organization).select_related("product", "package"))
 
     branding = None
     try:
@@ -778,6 +802,7 @@ def document_pdf(request, doc_type: str, pk: int):
     if doc_type == BillingDocument.DocumentType.RECEIPT:
         template_name = "billing/receipt_print_tra.html"
     invoice_carry_forward = None
+    invoice_account_summary = None
     if doc_type == BillingDocument.DocumentType.INVOICE:
         state = BillingService.get_invoice_action_state(organization=organization, invoice=document)
         invoice_carry_forward = {
@@ -788,6 +813,11 @@ def document_pdf(request, doc_type: str, pk: int):
                 customer=document.customer,
             ),
         }
+        invoice_account_summary = BillingService.invoice_account_summary(
+            organization=organization, invoice=document
+        )
+    if doc_type in {BillingDocument.DocumentType.QUOTATION, BillingDocument.DocumentType.INVOICE}:
+        template_name = "billing/sales_document_print.html"
     return render_pdf_or_html(
         request=request,
         template_name=template_name,
@@ -796,6 +826,9 @@ def document_pdf(request, doc_type: str, pk: int):
             "items": items,
             "LOGO_DATA_URI": logo_data_uri,
             "invoice_carry_forward": invoice_carry_forward,
+            "invoice_account_summary": invoice_account_summary,
+            "show_discount_column": any(item.discount_amount for item in items),
+            "show_tax_column": bool(document.tax_amount),
         },
         filename=filename,
         as_attachment=as_attachment,
@@ -809,6 +842,10 @@ def create_invoice_from_quotation(request, pk: int):
 
     if request.method != "POST":
         raise PermissionDenied("POST required.")
+    get_object_or_404(
+        sales_document_queryset_for(request.user, organization, membership=request.membership),
+        pk=pk, document_type=BillingDocument.DocumentType.QUOTATION,
+    )
 
     try:
         invoice = BillingService.create_invoice_from_quotation(
@@ -849,7 +886,7 @@ def send_quotation(request, pk: int):
 @login_required
 def accept_quotation(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.QUOTATIONS_APPROVE)
     return _build_quotation_action_form(
         request=request,
         organization=organization,
@@ -871,7 +908,7 @@ def accept_quotation(request, pk: int):
 @login_required
 def reject_quotation(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.QUOTATIONS_REJECT)
     return _build_quotation_action_form(
         request=request,
         organization=organization,
@@ -893,7 +930,7 @@ def reject_quotation(request, pk: int):
 @login_required
 def expire_quotation(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.QUOTATIONS_CANCEL)
     return _build_quotation_action_form(
         request=request,
         organization=organization,
@@ -915,7 +952,7 @@ def expire_quotation(request, pk: int):
 @login_required
 def void_invoice(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.FINANCE_REVERSALS_MANAGE)
 
     return _build_invoice_action_form(
         request=request,
@@ -939,7 +976,7 @@ def void_invoice(request, pk: int):
 @login_required
 def reissue_invoice(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.FINANCE_REVERSALS_MANAGE)
 
     return _build_invoice_action_form(
         request=request,
@@ -963,11 +1000,10 @@ def reissue_invoice(request, pk: int):
 @login_required
 def create_credit_note(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.FINANCE_REVERSALS_MANAGE)
 
     invoice = get_object_or_404(
-        BillingDocument.objects.select_related("customer"),
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer"),
         document_type=BillingDocument.DocumentType.INVOICE,
         pk=pk,
     )
@@ -1011,7 +1047,7 @@ def create_credit_note(request, pk: int):
 @login_required
 def resolve_subscription_invoice_issue(request, period_id: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.FINANCE_REVERSALS_MANAGE)
 
     period = get_object_or_404(
         SubscriptionPeriod.objects.select_related(
@@ -1085,8 +1121,7 @@ def create_receipt_from_invoice(request, pk: int):
     require_permission(request, PermissionCode.PAYMENT_REGISTER)
 
     invoice = get_object_or_404(
-        BillingDocument,
-        organization=organization,
+        sales_document_queryset_for(request.user, organization, membership=request.membership),
         document_type=BillingDocument.DocumentType.INVOICE,
         pk=pk,
     )
@@ -1152,6 +1187,7 @@ def create_receipt_from_invoice(request, pk: int):
             "invoice": invoice,
             "form": form,
             "has_inventory_items": getattr(form, "has_inventory_items", False),
+            "requires_full_payment": getattr(form, "requires_full_payment", False),
             "outstanding_balance": BillingService.invoice_remaining_balance(organization=organization, invoice=invoice),
             "credited_total": BillingService.invoice_credited_total(organization=organization, invoice=invoice),
         },
@@ -1221,7 +1257,7 @@ def renew_subscription(request, subscription_id: int):
 @login_required
 def cancel_subscription(request, subscription_id: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    require_permission(request, PermissionCode.FINANCE_REVERSALS_MANAGE)
 
     subscription = get_object_or_404(
         CustomerSubscription.objects.select_related("customer", "package", "site"),
@@ -1263,7 +1299,7 @@ def cancel_subscription(request, subscription_id: int):
 @login_required
 def billing_sheet_list(request):
     organization = require_organization(request)
-    _require_billing_read(request)
+    _require_finance_all(request)
 
     sheets = BillingSheet.objects.filter(organization=organization).select_related("customer", "invoice")
 
@@ -1310,7 +1346,7 @@ def billing_sheet_list(request):
 @login_required
 def billing_sheet_create(request):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     if request.method == "POST":
         form = BillingSheetForm(request.POST, organization=organization)
@@ -1344,7 +1380,7 @@ def billing_sheet_create(request):
 @login_required
 def billing_sheet_detail(request, pk: int):
     organization = require_organization(request)
-    _require_billing_read(request)
+    _require_finance_all(request)
 
     sheet = get_object_or_404(
         BillingSheet.objects.select_related("customer", "invoice", "created_by"),
@@ -1366,7 +1402,7 @@ def billing_sheet_detail(request, pk: int):
 @login_required
 def billing_sheet_edit(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     sheet = get_object_or_404(
         BillingSheet,
@@ -1392,7 +1428,7 @@ def billing_sheet_edit(request, pk: int):
 @login_required
 def billing_item_add(request, sheet_pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     sheet = get_object_or_404(BillingSheet, organization=organization, pk=sheet_pk)
     if not sheet.is_open:
@@ -1417,7 +1453,7 @@ def billing_item_add(request, sheet_pk: int):
 @login_required
 def billing_item_edit(request, sheet_pk: int, item_pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     sheet = get_object_or_404(BillingSheet, organization=organization, pk=sheet_pk)
     if not sheet.is_open:
@@ -1442,7 +1478,7 @@ def billing_item_edit(request, sheet_pk: int, item_pk: int):
 @login_required
 def billing_item_delete(request, sheet_pk: int, item_pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     if request.method != "POST":
         raise PermissionDenied("POST required.")
@@ -1462,7 +1498,7 @@ def billing_item_delete(request, sheet_pk: int, item_pk: int):
 @login_required
 def billing_sheet_generate_invoice(request, pk: int):
     organization = require_organization(request)
-    _require_billing_write(request)
+    _require_finance_all(request)
 
     sheet = get_object_or_404(
         BillingSheet.objects.select_related("customer"),

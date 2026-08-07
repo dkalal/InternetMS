@@ -19,7 +19,7 @@
       var serialized = document.getElementById("id_is_serialized");
       var buying = document.getElementById("id_buying_price");
       var selling = document.getElementById("id_selling_price");
-      var retail = document.getElementById("id_retail_price");
+      var technician = document.getElementById("id_technician_price");
       var wholesaleToggle = document.getElementById("id_allow_wholesale");
       var wholesalePanel = document.querySelector("[data-wholesale-panel]");
 
@@ -48,20 +48,28 @@
         document.querySelectorAll("[data-serialized-only]").forEach(function (element) {
           element.classList.toggle("hidden", !serialEnabled);
         });
+        document.querySelectorAll("[data-product-type-summary]").forEach(function (summary) {
+          summary.textContent = service
+            ? "Services are available for quotations and invoices but do not use stock, serial, expiry, or reorder controls."
+            : "Physical items can use stock, serial, expiry, and reorder controls. Stock balances are created through receiving and authorized adjustments.";
+        });
       }
 
       function syncPricing() {
         var buy = optionalNumber(buying);
         var sell = optionalNumber(selling);
-        var retailValue = optionalNumber(retail);
-        var effective = retailValue !== null ? retailValue : sell;
+        var effective = sell;
+        var technicianValue = optionalNumber(technician);
+        var effectiveTechnician = technicianValue !== null ? technicianValue : sell;
         var profit = buy !== null && effective !== null ? effective - buy : null;
         var margin = document.querySelector("[data-product-margin]");
         var marginRate = document.querySelector("[data-product-margin-rate]");
-        var effectiveRetail = document.querySelector("[data-product-effective-retail]");
+        var standardSelling = document.querySelector("[data-product-standard-selling]");
+        var effectiveTechnicianNode = document.querySelector("[data-product-effective-technician]");
         if (margin) margin.textContent = money(profit);
         if (marginRate) marginRate.textContent = profit !== null && effective ? ((profit / effective) * 100).toFixed(1) + "%" : "—";
-        if (effectiveRetail) effectiveRetail.textContent = money(effective);
+        if (standardSelling) standardSelling.textContent = money(effective);
+        if (effectiveTechnicianNode) effectiveTechnicianNode.textContent = money(effectiveTechnician);
       }
 
       function syncWholesale() {
@@ -71,13 +79,59 @@
       [itemType, trackStock, serialized].forEach(function (input) {
         if (input) input.addEventListener("change", syncProductFields);
       });
-      [buying, selling, retail].forEach(function (input) {
+      [buying, selling, technician].forEach(function (input) {
         if (input) input.addEventListener("input", syncPricing);
       });
       if (wholesaleToggle) wholesaleToggle.addEventListener("change", syncWholesale);
       syncProductFields();
       syncPricing();
       syncWholesale();
+    }
+
+    var cartLineForm = document.querySelector("[data-cart-line-form]");
+    if (cartLineForm) {
+      var serialPicker = cartLineForm.querySelector("[data-serial-picker]");
+      var productSelect = document.getElementById("id_product");
+      if (productSelect) {
+        productSelect.addEventListener("change", function () {
+          var selectedProduct = productSelect.value;
+          if (!selectedProduct) return;
+          var url = new URL(window.location.href);
+          url.searchParams.set("product", selectedProduct);
+          window.location.assign(url.toString());
+        });
+      }
+      if (serialPicker) {
+        var serialSearch = serialPicker.querySelector("[data-serial-search]");
+        var serialOptions = Array.prototype.slice.call(serialPicker.querySelectorAll("[data-serial-option]"));
+        var selectedOutput = serialPicker.querySelector("[data-serial-selected]");
+        var requiredOutput = serialPicker.querySelector("[data-serial-required]");
+        var quantityInput = document.getElementById("id_quantity");
+
+        function syncSerialPicker() {
+          var selected = serialOptions.filter(function (option) {
+            var input = option.querySelector("input");
+            return input && input.checked;
+          }).length;
+          if (selectedOutput) selectedOutput.textContent = String(selected);
+          if (requiredOutput) requiredOutput.textContent = String(Math.max(1, Math.floor(number(quantityInput && quantityInput.value))));
+        }
+
+        function filterSerials() {
+          var term = serialSearch ? serialSearch.value.trim().toLowerCase() : "";
+          serialOptions.forEach(function (option) {
+            option.hidden = Boolean(term && option.textContent.toLowerCase().indexOf(term) === -1);
+          });
+        }
+
+        if (serialSearch) serialSearch.addEventListener("input", filterSerials);
+        if (quantityInput) quantityInput.addEventListener("input", syncSerialPicker);
+        serialOptions.forEach(function (option) {
+          var input = option.querySelector("input");
+          if (input) input.addEventListener("change", syncSerialPicker);
+        });
+        syncSerialPicker();
+      }
     }
 
     var formset = document.querySelector("[data-purchase-formset]");
@@ -172,18 +226,25 @@
 
       function syncCartTotals() {
         var subtotal = number(cart.dataset.cartSubtotal);
+        var taxableSubtotal = number(cart.dataset.cartTaxableSubtotal);
         var discountValue = Math.min(Math.max(number(discount && discount.value), 0), subtotal);
         var rateValue = Math.max(number(rate && rate.value), 0);
-        var taxable = subtotal - discountValue;
+        var taxableDiscount = subtotal > 0 ? discountValue * taxableSubtotal / subtotal : 0;
+        var taxable = Math.max(taxableSubtotal - taxableDiscount, 0);
         var tax = Math.round((taxable * rateValue / 100) * 100) / 100;
         var discountOutput = document.querySelector("[data-live-discount]");
         var rateOutput = document.querySelector("[data-live-tax-rate]");
         var taxOutput = document.querySelector("[data-live-tax]");
         var totalOutput = document.querySelector("[data-live-total]");
+        var paymentOutputs = document.querySelectorAll("[data-pos-payment-total]");
+        var total = taxable === 0 && taxableSubtotal === 0
+          ? subtotal - discountValue
+          : subtotal - discountValue + tax;
         if (discountOutput) discountOutput.textContent = "-" + discountValue.toFixed(2);
         if (rateOutput) rateOutput.textContent = rateValue.toFixed(2);
         if (taxOutput) taxOutput.textContent = tax.toFixed(2);
-        if (totalOutput) totalOutput.textContent = (taxable + tax).toFixed(2);
+        if (totalOutput) totalOutput.textContent = total.toFixed(2);
+        paymentOutputs.forEach(function (output) { output.textContent = total.toFixed(2); });
       }
 
       if (discount) discount.addEventListener("input", syncCartTotals);
@@ -210,6 +271,8 @@
         if (container) container.innerHTML = data.cart_html;
         var checkout = pos.querySelector("[data-pos-checkout-container]");
         if (checkout) checkout.innerHTML = data.checkout_html;
+        pos.dataset.cartSubtotal = data.subtotal;
+        pos.dataset.cartTaxableSubtotal = data.taxable_subtotal;
         var subtotal = pos.querySelector("[data-pos-subtotal]");
         var discountOutput = pos.querySelector("[data-live-discount]");
         var rateOutput = pos.querySelector("[data-live-tax-rate]");
@@ -235,7 +298,69 @@
             quantity.textContent = line ? "In cart: " + line.quantity : "";
           }
           if (price && line) price.textContent = formatter.format(number(line.unit_price));
-          if (priceLabel && line) priceLabel.textContent = line.pricing_mode === "wholesale" ? "Wholesale price" : "Retail price";
+          if (priceLabel && line) {
+            var pricingLabels = { wholesale: "Wholesale", technician: "Technician", standard: "Standard", retail: "Legacy retail" };
+            priceLabel.textContent = pricingLabels[line.pricing_mode] || "Transaction price";
+          }
+        });
+      }
+
+      var detailsForm = pos.querySelector("form[data-pos-details]");
+      var detailsTimer;
+      var detailsRequest;
+
+      function setCheckoutPending(pending) {
+        pos.querySelectorAll("[data-pos-checkout-container] button[type='submit']").forEach(function (button) {
+          button.disabled = pending;
+          button.setAttribute("aria-disabled", pending ? "true" : "false");
+        });
+      }
+
+      function savePosDetails() {
+        if (!detailsForm) return;
+        setCheckoutPending(true);
+        if (detailsRequest) detailsRequest.abort();
+        detailsRequest = new AbortController();
+        var token = detailsForm.querySelector("input[name='csrfmiddlewaretoken']");
+        fetch(detailsForm.action || window.location.href, {
+          method: "POST",
+          body: new FormData(detailsForm),
+          credentials: "same-origin",
+          signal: detailsRequest.signal,
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": token ? token.value : ""
+          }
+        }).then(function (response) {
+          return response.json().then(function (data) { return { response: response, data: data }; });
+        }).then(function (result) {
+          if (!result.response.ok) {
+            showPosFeedback(result.data.message || "Sale details could not be saved.", "warning");
+            return;
+          }
+          updatePos(result.data);
+          setCheckoutPending(false);
+          showPosFeedback(result.data.message, result.data.level);
+        }).catch(function (error) {
+          if (error.name !== "AbortError") showPosFeedback("Connection issue. Sale details were not saved; try again.", "warning");
+        });
+      }
+
+      function queuePosDetailsSave() {
+        syncCartTotals();
+        setCheckoutPending(true);
+        window.clearTimeout(detailsTimer);
+        detailsTimer = window.setTimeout(savePosDetails, 450);
+      }
+
+      if (detailsForm) {
+        detailsForm.addEventListener("input", queuePosDetailsSave);
+        detailsForm.addEventListener("change", queuePosDetailsSave);
+        detailsForm.addEventListener("submit", function (event) {
+          event.preventDefault();
+          window.clearTimeout(detailsTimer);
+          savePosDetails();
         });
       }
 

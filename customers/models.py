@@ -20,7 +20,8 @@ class Customer(models.Model):
         SUSPENDED = 'suspended', 'Suspended'
 
     class PricingTier(models.TextChoices):
-        RETAIL = 'retail', 'Retail'
+        RETAIL = 'retail', 'Standard'
+        TECHNICIAN = 'technician', 'Technician'
         WHOLESALE = 'wholesale', 'Wholesale'
         CORPORATE = 'corporate', 'Corporate'
         VIP = 'vip', 'VIP'
@@ -38,8 +39,6 @@ class Customer(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_customers',
-        null=True,
-        blank=True,
         db_index=True,
     )
     uuid = models.UUIDField(default=uuid_lib.uuid4, editable=False, unique=True, db_index=True)
@@ -163,8 +162,6 @@ class CustomerSite(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_customer_sites',
-        null=True,
-        blank=True,
         db_index=True,
     )
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='sites')
@@ -207,6 +204,8 @@ class CustomerSite(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValueError("Customer site belongs to another tenant.")
         super().save(*args, **kwargs)
 
     @property
@@ -226,8 +225,6 @@ class InternetCustomer(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_internet_customers',
-        null=True,
-        blank=True,
         db_index=True,
     )
     package_type = models.CharField(max_length=50, choices=[('indoor', 'Indoor'), ('outdoor', 'Outdoor')])
@@ -244,6 +241,8 @@ class InternetCustomer(models.Model):
     def save(self, *args, **kwargs):
         if self.tenant_id is None and self.customer_id:
             self.tenant_id = self.customer.tenant_id or self.customer.organization_id
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValueError("Internet profile belongs to another tenant.")
         super().save(*args, **kwargs)
     
     @property
@@ -282,8 +281,6 @@ class CustomerDocument(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_customer_documents',
-        null=True,
-        blank=True,
         db_index=True,
     )
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='documents')
@@ -315,4 +312,6 @@ class CustomerDocument(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValueError("Customer document belongs to another tenant.")
         super().save(*args, **kwargs)

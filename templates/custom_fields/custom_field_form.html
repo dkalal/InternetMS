@@ -3,23 +3,23 @@
 {% block title %}{% if form.instance.pk %}Edit Custom Field{% else %}New Custom Field{% endif %}{% endblock %}
 
 {% block content %}
-<div class="mx-auto w-full max-w-4xl space-y-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-form-page jims-form-page--compact space-y-5">
+    <header class="jims-page-header">
         <div>
-            <div class="text-sm text-slate-500">
+            <nav class="jims-breadcrumb" aria-label="Breadcrumb">
                 <a class="hover:underline" href="{% url 'custom-field-list' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}">Custom fields</a>
                 {% if form.instance.pk %}
                     <span class="px-1">/</span>
                     <span class="text-slate-700">{{ form.instance.label }}</span>
                 {% endif %}
-            </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+            </nav>
+            <h1 class="jims-page-title mt-1">
                 {% if form.instance.pk %}Edit custom field{% else %}New custom field{% endif %}
             </h1>
-            <p class="mt-1 text-sm text-slate-600">Keep these fields lightweight and limited to extra metadata.</p>
+            <p class="jims-page-subtitle">Keep these fields lightweight and limited to extra metadata.</p>
         </div>
-        <a href="{% url 'custom-field-list' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Back</a>
-    </div>
+        <a href="{% url 'custom-field-list' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="jims-btn jims-btn-secondary">Back</a>
+    </header>
 
     <form method="post" class="space-y-5">
         {% csrf_token %}
@@ -33,11 +33,11 @@
             </div>
         {% endif %}
 
-        <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-            <div class="border-b border-slate-200 px-5 py-4">
+        <section class="jims-form-section">
+            <div class="jims-form-section-header">
                 <h2 class="text-sm font-semibold text-slate-900">Definition</h2>
             </div>
-            <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+            <div class="jims-form-section-body grid grid-cols-1 gap-4 md:grid-cols-2">
                 {% include "components/form_field.html" with field=form.target_model %}
                 {% include "components/form_field.html" with field=form.key %}
                 <div class="md:col-span-2">{% include "components/form_field.html" with field=form.label %}</div>
@@ -50,11 +50,11 @@
             </div>
         </section>
 
-        <section class="rounded-lg border border-slate-200 bg-white shadow-sm">
-            <div class="border-b border-slate-200 px-5 py-4">
+        <section class="jims-form-section">
+            <div class="jims-form-section-header">
                 <h2 class="text-sm font-semibold text-slate-900">Display rules</h2>
             </div>
-            <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+            <div class="jims-form-section-body grid grid-cols-1 gap-4 md:grid-cols-2">
                 {% include "components/form_field.html" with field=form.required %}
                 {% include "components/form_field.html" with field=form.is_active %}
                 {% include "components/form_field.html" with field=form.show_on_create %}
@@ -63,9 +63,9 @@
             </div>
         </section>
 
-        <div class="flex items-center justify-end gap-3">
-            <a href="{% url 'custom-field-list' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</a>
-            <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Save custom field</button>
+        <div class="jims-form-actions">
+            <a href="{% url 'custom-field-list' %}{% if user.is_superuser %}?organization={{ organization.id }}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a>
+            <button type="submit" class="jims-btn jims-btn-primary">Save custom field</button>
         </div>
     </form>
 </div>

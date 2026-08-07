@@ -9,8 +9,8 @@ from custom_fields.mixins import CustomFieldPageContextMixin
 from custom_fields.services import CustomFieldService
 from .models import Package
 from .forms import PackageForm
-from billing.models import CustomerSubscription, SubscriptionPeriod
-from users.permissions import PermissionCode, require_permission
+from billing.models import BillingDocument, CustomerSubscription, SubscriptionPeriod
+from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
 
@@ -56,7 +56,12 @@ class PackageListView(LoginRequiredMixin, ListView):
         if max_price is not None:
             queryset = queryset.filter(monthly_fee__lte=max_price)
 
-        queryset = queryset.annotate(
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
+        if finance_all:
+            queryset = queryset.annotate(
             active_subscribers=Count(
                 "subscriptions",
                 filter=Q(subscriptions__status=CustomerSubscription.Status.ACTIVE),
@@ -71,16 +76,16 @@ class PackageListView(LoginRequiredMixin, ListView):
                 distinct=True,
             ),
         )
-        subscriber_state = self.request.GET.get("subscriber_state")
-        if subscriber_state == "has":
-            queryset = queryset.filter(active_subscribers__gt=0)
-        elif subscriber_state == "none":
-            queryset = queryset.filter(active_subscribers=0)
-        unpaid_state = self.request.GET.get("unpaid_state")
-        if unpaid_state == "has":
-            queryset = queryset.filter(unpaid_periods__gt=0)
-        elif unpaid_state == "none":
-            queryset = queryset.filter(unpaid_periods=0)
+            subscriber_state = self.request.GET.get("subscriber_state")
+            if subscriber_state == "has":
+                queryset = queryset.filter(active_subscribers__gt=0)
+            elif subscriber_state == "none":
+                queryset = queryset.filter(active_subscribers=0)
+            unpaid_state = self.request.GET.get("unpaid_state")
+            if unpaid_state == "has":
+                queryset = queryset.filter(unpaid_periods__gt=0)
+            elif unpaid_state == "none":
+                queryset = queryset.filter(unpaid_periods=0)
         queryset, self.active_sort = apply_sort(queryset, self.request.GET.get("sort"), self.sort_options, "name")
         return queryset
 
@@ -105,6 +110,16 @@ class PackageDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
         context = super().get_context_data(**kwargs)
         package = self.object
         organization = require_organization(self.request)
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
+        if not finance_all:
+            context["subscriptions"] = []
+            context["finance_all"] = False
+            context.update(self.get_custom_field_modal_context(target_model="package"))
+            context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
+            return context
         subscriptions = CustomerSubscription.objects.filter(
             organization=organization,
             package=package,
@@ -115,7 +130,12 @@ class PackageDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
         context["unpaid_period_count"] = periods.filter(
             status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
         ).count()
-        context["collected_amount"] = periods.filter(status=SubscriptionPeriod.Status.PAID).aggregate(total=Sum("final_amount"))["total"] or 0
+        subscription_invoice_ids = periods.exclude(invoice_id=None).values("invoice_id")
+        context["collected_amount"] = BillingDocument.objects.filter(
+            organization=organization,
+            document_type=BillingDocument.DocumentType.RECEIPT,
+            invoice_id__in=subscription_invoice_ids,
+        ).aggregate(total=Sum("total"))["total"] or 0
         context.update(self.get_custom_field_modal_context(target_model="package"))
         context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
         return context

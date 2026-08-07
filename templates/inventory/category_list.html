@@ -3,14 +3,44 @@
 {% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="jims-list-page space-y-5">
-  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p class="text-sm font-semibold text-brand-700">Catalog setup</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Product and service categories</h1><p class="mt-1 text-sm text-slate-600">Keep search and reporting consistent with a small, useful category set.</p></div>{% if INVENTORY_CAN_MANAGE_CATEGORIES %}<a class="jims-btn jims-btn-primary" href="{% url 'inventory:category_create' %}">Add category</a>{% endif %}</header>
-  {% if categories %}
-    <div class="jims-list-scroll grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {% for category in categories %}{% if INVENTORY_CAN_MANAGE_CATEGORIES %}<a href="{% url 'inventory:category_edit' category.pk %}" class="jims-panel p-5 transition hover:border-brand-300 hover:shadow-md">{% else %}<article class="jims-panel p-5">{% endif %}<div class="flex items-start justify-between gap-3"><div class="font-semibold text-slate-950">{{ category.name }}</div>{% if category.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</div><p class="mt-3 text-sm text-slate-600">{{ category.description|default:"No description" }}</p>{% if INVENTORY_CAN_MANAGE_CATEGORIES %}</a>{% else %}</article>{% endif %}{% endfor %}
+<div class="jims-list-page jims-category-page space-y-5">
+  <header class="jims-category-hero">
+    <div>
+      <p class="jims-page-eyebrow">Catalog setup</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Product &amp; service categories</h1>
+      <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Create a consistent, high-value catalog structure for faster search, purchasing, stock work, and reporting.</p>
     </div>
+    {% if INVENTORY_CAN_MANAGE_CATEGORIES %}<a class="jims-btn jims-btn-primary" href="{% url 'inventory:category_create' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-4 w-4" aria-hidden="true"><path stroke-linecap="round" stroke-width="2" d="M12 5v14m-7-7h14"/></svg>Add category</a>{% endif %}
+  </header>
+
+  <div class="jims-category-toolbar">
+    <form method="get" class="jims-category-search" role="search">
+      <label class="sr-only" for="category-search">Search categories</label>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke-width="1.9"/><path d="m16 16 4 4" stroke-linecap="round" stroke-width="1.9"/></svg>
+      <input id="category-search" name="q" value="{{ query }}" placeholder="Search categories by name or description">
+      {% if query %}<a href="{% url 'inventory:category_list' %}" class="jims-btn jims-btn-quiet jims-btn-compact">Clear</a>{% endif %}
+    </form>
+    <dl class="jims-category-stats" aria-label="Category summary"><div><dt>Categories</dt><dd>{{ category_stats.total }}</dd></div><div><dt>Active</dt><dd>{{ category_stats.active }}</dd></div><div><dt>Catalog items</dt><dd>{{ category_stats.products }}</dd></div></dl>
+  </div>
+
+  {% if categories %}
+    <section class="jims-list-results jims-category-results" aria-label="Catalog categories">
+      <div class="jims-category-grid">
+        {% for category in categories %}
+          <article class="jims-category-card {% if not category.is_active %}jims-category-card--inactive{% endif %}">
+            <div class="jims-category-card-top">
+              <span class="jims-category-card-icon">{% include "components/category_icon.html" with icon=category.icon %}</span>
+              <div class="min-w-0 flex-1"><h2 class="truncate text-base font-semibold text-slate-950">{{ category.name }}</h2><p class="mt-1 text-xs font-medium text-slate-500">{{ category.measure_unit }} default unit</p></div>
+              {% include "components/status_badge.html" with value=category.is_active|yesno:"active,inactive" label=category.is_active|yesno:"Active,Inactive" %}
+            </div>
+            <p class="jims-category-description">{{ category.description|default:"No description yet. Add one to guide consistent cataloging." }}</p>
+            <footer class="jims-category-card-footer"><span>{{ category.product_count }} item{{ category.product_count|pluralize }}</span>{% if INVENTORY_CAN_MANAGE_CATEGORIES %}<a href="{% url 'inventory:category_edit' category.pk %}" class="jims-category-edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-4 w-4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m14.7 5.3 4 4M5 19l3.4-.7L19.3 7.4a1.4 1.4 0 0 0 0-2l-.7-.7a1.4 1.4 0 0 0-2 0L5.7 15.6 5 19Z"/></svg><span class="sr-only">Edit {{ category.name }}</span></a>{% endif %}</footer>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
   {% else %}
-    {% url 'inventory:category_create' as category_create_url %}<div class="jims-panel">{% if INVENTORY_CAN_MANAGE_CATEGORIES %}{% include "components/empty_state.html" with title="No categories yet" message="Add a category to make catalog search and reports easier to scan." action_url=category_create_url action_label="Add category" %}{% else %}{% include "components/empty_state.html" with title="No categories yet" message="No catalog categories have been configured." %}{% endif %}</div>
+    {% url 'inventory:category_create' as category_create_url %}<div class="jims-panel">{% if query %}{% include "components/empty_state.html" with title="No matching categories" message="Try another name or clear the search to see all categories." %}{% elif INVENTORY_CAN_MANAGE_CATEGORIES %}{% include "components/empty_state.html" with title="Start your catalog structure" message="Add categories to make product setup, search, and reporting faster." action_url=category_create_url action_label="Add category" %}{% else %}{% include "components/empty_state.html" with title="No categories yet" message="No catalog categories have been configured." %}{% endif %}</div>
   {% endif %}
 </div>
 {% endblock %}

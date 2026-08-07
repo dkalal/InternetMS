@@ -3,23 +3,25 @@
 {% block title %}Promotion{% endblock %}
 
 {% block content %}
-<div class="mx-auto max-w-4xl space-y-6">
-  <div class="flex items-end justify-between">
+<div class="jims-form-page jims-form-page--compact space-y-5">
+  <header class="jims-page-header">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{% if form.instance.pk %}Edit{% else %}Create{% endif %} promotion</h1>
-      <p class="mt-1 text-sm text-slate-600">Define discounts for packages, products, cart value, or multi-month subscription offers.</p>
+      <p class="jims-page-eyebrow">Billing settings</p>
+      <h1 class="jims-page-title">{% if form.instance.pk %}Edit{% else %}Create{% endif %} promotion</h1>
+      <p class="jims-page-subtitle">Define discounts for packages, products, cart value, or multi-month subscription offers.</p>
     </div>
-    <a href="{% url 'billing:promotion_list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Back</a>
-  </div>
+    <a href="{% url 'billing:promotion_list' %}" class="jims-btn jims-btn-secondary">Back</a>
+  </header>
 
-  <form method="post" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+  <form method="post" class="jims-form-section">
     {% csrf_token %}
-    {% if form.non_field_errors %}
+    <div class="jims-form-section-body">
+      {% if form.non_field_errors %}
       <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
         {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
       </div>
-    {% endif %}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {% endif %}
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <div class="md:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
       {% include "components/form_field.html" with field=form.applies_to %}
       {% include "components/form_field.html" with field=form.reward_type %}
@@ -32,10 +34,11 @@
       {% include "components/form_field.html" with field=form.valid_from %}
       {% include "components/form_field.html" with field=form.valid_until %}
       <div class="md:col-span-2">{% include "components/form_field.html" with field=form.is_active %}</div>
+      </div>
     </div>
-    <div class="mt-5 flex justify-end gap-3">
-      <a href="{% url 'billing:promotion_list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</a>
-      <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Save promotion</button>
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:promotion_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <button type="submit" class="jims-btn jims-btn-primary">Save promotion</button>
     </div>
   </form>
 </div>

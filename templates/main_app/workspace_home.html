@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Workspace{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="text-sm font-semibold text-brand-700">{{ ACTIVE_ORGANIZATION.name }}</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{% if is_manager_workspace %}Operations overview{% else %}My sales workspace{% endif %}</h1>
+      <p class="mt-1 max-w-2xl text-sm text-slate-600">{% if is_manager_workspace %}See the operational work that needs attention, then move directly into the right workflow.{% else %}Pick up your current sales work without exposing tenant-wide financial information.{% endif %}</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      {% if "customers.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-create' %}" class="jims-btn jims-btn-secondary">New customer</a>{% endif %}
+      {% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}" class="jims-btn jims-btn-primary">New invoice</a>{% endif %}
+    </div>
+  </header>
+
+  <section aria-labelledby="workspace-status">
+    <h2 id="workspace-status" class="sr-only">Workspace status</h2>
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {% if is_manager_workspace and can_view_customers %}<a href="{% url 'customer-list' %}" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Active customers</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ customer_count }}</div><div class="mt-2 text-xs text-brand-700">Open customers</div></a>{% endif %}
+      {% if is_manager_workspace and can_view_customers %}<a href="{% url 'customer-list' %}?worklist=active" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Active services</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ active_subscription_count }}</div><div class="mt-2 text-xs text-slate-500">Current subscriptions</div></a>{% endif %}
+      <a href="{% url 'billing:document_list' doc_type='invoice' %}?status=draft" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Draft invoices</div><div class="mt-2 text-2xl font-bold text-amber-800">{{ draft_invoice_count }}</div><div class="mt-2 text-xs text-brand-700">Continue work</div></a>
+      <a href="{% url 'billing:document_list' doc_type='quotation' %}" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Open quotations</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ open_quotation_count }}</div><div class="mt-2 text-xs text-brand-700">Review pipeline</div></a>
+      {% if can_manage_work_reports %}<a href="{% url 'work_reports:approval_queue' %}" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Work approvals</div><div class="mt-2 text-2xl font-bold {% if pending_work_report_count %}text-orange-700{% else %}text-slate-950{% endif %}">{{ pending_work_report_count }}</div><div class="mt-2 text-xs text-brand-700">Review queue</div></a>{% endif %}
+    </div>
+  </section>
+
+  <section class="jims-panel p-4 sm:p-5" aria-labelledby="quick-actions">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div><h2 id="quick-actions" class="text-sm font-semibold text-slate-950">Start a task</h2><p class="mt-1 text-sm text-slate-600">Actions shown here follow your assigned access.</p></div><div class="flex flex-wrap gap-2">{% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a class="jims-btn jims-btn-secondary" href="{% url 'billing:document_create' doc_type='quotation' %}">Create quotation</a>{% endif %}{% if can_view_customers %}<a class="jims-btn jims-btn-secondary" href="{% url 'customer-list' %}">Find customer</a>{% endif %}{% if is_manager_workspace and can_view_inventory %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:dashboard' %}">Open inventory</a>{% endif %}{% if can_manage_work_reports %}<a class="jims-btn jims-btn-secondary" href="{% url 'work_reports:approval_queue' %}">Review work reports</a>{% endif %}</div></div>
+  </section>
+
+  <section class="jims-panel overflow-hidden" aria-labelledby="recent-work"><div class="jims-panel-header flex items-center justify-between"><div><h2 id="recent-work" class="text-sm font-semibold text-slate-950">{% if is_manager_workspace %}Recent commercial documents{% else %}My recent commercial documents{% endif %}</h2><p class="mt-1 text-xs text-slate-500">Only documents available to your role are shown.</p></div><a href="{% url 'billing:document_list' doc_type='invoice' %}" class="text-sm font-semibold text-brand-700 hover:text-brand-800">Open invoices</a></div>{% if recent_documents %}<div class="jims-table-wrap"><table class="jims-table"><thead><tr><th>Document</th><th>Customer</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>{% for document in recent_documents %}<tr><td><div class="font-semibold text-slate-900">{{ document.get_document_type_display }} {{ document.number }}</div></td><td class="text-slate-600">{{ document.customer.name }}</td><td class="whitespace-nowrap text-slate-600">{{ document.issue_date|date:'d M Y' }}</td><td>{% include "components/status_badge.html" with value=document.status label=document.get_status_display %}</td><td class="text-right"><a href="{% url 'billing:document_detail' doc_type=document.document_type pk=document.pk %}" class="font-semibold text-brand-700">Open</a></td></tr>{% endfor %}</tbody></table></div>{% else %}{% include "components/empty_state.html" with title="No commercial documents yet" message="Create a quotation or invoice to begin work in this workspace." %}{% endif %}</section>
+</div>
+{% endblock %}

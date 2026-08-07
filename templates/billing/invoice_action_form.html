@@ -4,8 +4,8 @@
 {% block title %}{{ action_title }}{% endblock %}
 
 {% block content %}
-<div class="mx-auto max-w-3xl space-y-6">
-  <div>
+<div class="jims-workflow-page jims-form-page--compact space-y-5">
+  <header>
     <div class="text-sm text-slate-500">
       <a class="hover:underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=invoice.id %}">{{ invoice.number }}</a>
       <span class="px-1">/</span>
@@ -13,9 +13,9 @@
     </div>
     <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">{{ action_title }}</h1>
     <p class="mt-1 text-sm text-slate-600">Financial changes stay auditable. The original invoice remains in history.</p>
-  </div>
+  </header>
 
-  <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+  <section class="jims-form-card p-5">
     <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2>
     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div>
@@ -45,9 +45,9 @@
     </dl>
   </section>
 
-  <form method="post" action="{{ action_url }}" class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+  <form method="post" action="{{ action_url }}" class="jims-form-card">
     {% csrf_token %}
-
+    <div class="jims-form-section-body">
     {% if form.non_field_errors %}
       <div class="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
         {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
@@ -71,11 +71,12 @@
       This action cannot be undone by editing the original invoice later.
     </div>
 
-    <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-      <a href="{% url 'billing:document_detail' doc_type='invoice' pk=invoice.id %}" class="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+    </div>
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:document_detail' doc_type='invoice' pk=invoice.id %}" class="jims-btn jims-btn-secondary">
         Back
       </a>
-      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+      <button type="submit" class="jims-btn {% if action_tone == 'danger' %}jims-btn-danger{% else %}jims-btn-primary{% endif %}">
         {{ submit_label }}
       </button>
     </div>

@@ -20,8 +20,6 @@ class Package(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_packages',
-        null=True,
-        blank=True,
         db_index=True,
     )
     name = models.CharField(max_length=100)

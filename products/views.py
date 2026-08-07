@@ -25,8 +25,8 @@ class ProductListView(LoginRequiredMixin, ListView):
         "-category": ("-catalog_category__name", "-category", "name"),
         "stock": ("quantity", "name"),
         "-stock": ("-quantity", "name"),
-        "retail": ("retail_price", "selling_price", "name"),
-        "-retail": ("-retail_price", "-selling_price", "name"),
+        "retail": ("selling_price", "name"),
+        "-retail": ("-selling_price", "name"),
         "wholesale": ("wholesale_price", "name"),
         "-wholesale": ("-wholesale_price", "name"),
     }
@@ -87,9 +87,9 @@ class ProductListView(LoginRequiredMixin, ListView):
         min_price = positive_decimal(self.request.GET.get("min_price"))
         max_price = positive_decimal(self.request.GET.get("max_price"))
         if min_price is not None:
-            queryset = queryset.filter(Q(retail_price__gte=min_price) | Q(retail_price__isnull=True, selling_price__gte=min_price))
+            queryset = queryset.filter(selling_price__gte=min_price)
         if max_price is not None:
-            queryset = queryset.filter(Q(retail_price__lte=max_price) | Q(retail_price__isnull=True, selling_price__lte=max_price))
+            queryset = queryset.filter(selling_price__lte=max_price)
         queryset, self.active_sort = apply_sort(queryset, self.request.GET.get("sort"), self.sort_options, "name")
         return queryset
 
@@ -174,6 +174,14 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
         context = super().get_context_data(**kwargs)
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)
+        categories = ProductCategory.objects.filter(tenant=require_organization(self.request)).prefetch_related('allowed_units')
+        context['unit_rules'] = {
+            str(category.pk): {
+                'allowed': [unit.pk for unit in category.allowed_units.all()],
+                'default': category.default_unit_id or '',
+            }
+            for category in categories
+        }
         return context
 
 class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateView):
@@ -232,6 +240,14 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
         context = super().get_context_data(**kwargs)
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)
+        categories = ProductCategory.objects.filter(tenant=require_organization(self.request)).prefetch_related('allowed_units')
+        context['unit_rules'] = {
+            str(category.pk): {
+                'allowed': [unit.pk for unit in category.allowed_units.all()],
+                'default': category.default_unit_id or '',
+            }
+            for category in categories
+        }
         return context
 
 class ProductDeleteView(LoginRequiredMixin, DeleteView):

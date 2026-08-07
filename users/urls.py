@@ -8,6 +8,13 @@ from .forms import TailwindPasswordResetForm
 urlpatterns = [
     path('register/', views.register, name='register'),
     path("settings/branding/", views.branding_settings, name="branding_settings"),
+    path("team/", views.team_access, name="team_access"),
+    path("team/invite/", views.invite_member, name="invite_member"),
+    path("team/<int:membership_id>/resend-activation/", views.resend_member_activation, name="resend_member_activation"),
+    path("team/<int:membership_id>/access/", views.update_member_access, name="update_member_access"),
+    path("team/<int:membership_id>/status/", views.change_member_status, name="change_member_status"),
+    path("support/start/", views.start_support_access, name="start_support_access"),
+    path("support/exit/", views.exit_support_access, name="exit_support_access"),
     # path('test-email/', views.test_email, name='test_email'),
     # path('test-email-multiple/', views.test_email_multiple, name='test_email_multiple'),
     path(

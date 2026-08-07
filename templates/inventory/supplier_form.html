@@ -2,11 +2,11 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="mx-auto max-w-4xl space-y-5">
-  <header>
-    <p class="text-sm font-semibold text-brand-700">Suppliers</p>
-    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1>
-    <p class="mt-1 text-sm text-slate-600">Keep purchasing contacts accurate without adding unnecessary accounting detail.</p>
+<div class="jims-form-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header">
+    <div><p class="jims-page-eyebrow">Suppliers</p>
+    <h1 class="jims-page-title">{{ title }}</h1>
+    <p class="jims-page-subtitle">Keep purchasing contacts accurate without adding unnecessary accounting detail.</p></div>
   </header>
 
   <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
@@ -37,7 +37,7 @@
       <div class="p-5">{% include "components/form_field.html" with field=form.notes %}</div>
     </section>
 
-    <div class="flex justify-end gap-2">
+    <div class="jims-form-actions">
       {% if supplier %}<a href="{% url 'inventory:supplier_detail' supplier.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>{% else %}<a href="{% url 'inventory:supplier_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>{% endif %}
       <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save supplier</button>
     </div>

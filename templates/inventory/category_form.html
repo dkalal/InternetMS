@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="jims-form-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header">
+    <div>
+      <nav class="jims-breadcrumb" aria-label="Breadcrumb"><a href="{% url 'inventory:category_list' %}">Categories</a><span class="px-1" aria-hidden="true">/</span><span>{{ title }}</span></nav>
+      <h1 class="jims-page-title mt-1">{{ title }}</h1>
+      <p class="jims-page-subtitle">Create a clear catalog structure that teams can recognize quickly across purchasing, stock, and sales.</p>
+    </div>
+    <a href="{% url cancel_url %}" class="jims-btn jims-btn-secondary">Back to categories</a>
+  </header>
+
+  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="jims-error-summary" role="alert">{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <section class="jims-form-section">
+        <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Category details</p><h2 class="mt-1 font-semibold text-slate-950">Make the category instantly recognizable</h2></div>
+        <div class="space-y-6 p-5">
+          <div class="grid gap-4 sm:grid-cols-2">
+            {% include "components/form_field.html" with field=form.name %}
+            {% include "components/form_field.html" with field=form.default_unit %}
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.allowed_units %}</div>
+            {{ form.measure_unit }}
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.description %}</div>
+          </div>
+          <fieldset>
+            <legend class="text-sm font-medium text-slate-700">Category icon</legend>
+            <p class="mt-1 text-xs leading-5 text-slate-500">Used on the catalog setup page to improve recognition. It does not change product data.</p>
+            <div class="jims-category-icon-grid mt-3">
+              {% for choice in form.icon %}
+                <label class="jims-category-icon-choice">
+                  {{ choice.tag }}
+                  <span class="jims-category-icon-tile"><span class="jims-category-icon-glyph">{% include "components/category_icon.html" with icon=choice.data.value %}</span><span>{{ choice.choice_label }}</span></span>
+                </label>
+              {% endfor %}
+            </div>
+            {% for error in form.icon.errors %}<p class="mt-2 text-sm text-rose-600">{{ error }}</p>{% endfor %}
+          </fieldset>
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
+        </div>
+      </section>
+
+      <aside class="space-y-4">
+        <section class="jims-category-guidance">
+          <h2 class="font-semibold text-slate-950">Unit rule</h2>
+          <p class="mt-2 text-sm leading-6 text-slate-600">Choose every sales unit products in this category may use, then select one default. Saved quotation and invoice lines retain their own unit snapshot.</p>
+        </section>
+        {% if category %}<section class="jims-panel p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current usage</p><p class="mt-2 text-sm text-slate-600">Changes here affect future item setup; they do not rewrite existing product or stock records.</p></section>{% endif %}
+      </aside>
+    </div>
+    <div class="jims-form-actions"><a href="{% url cancel_url %}" class="jims-btn jims-btn-secondary">Cancel</a><button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">{{ submit_label }}</button></div>
+  </form>
+</div>
+{% endblock %}

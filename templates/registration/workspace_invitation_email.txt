@@ -1,0 +1,10 @@
+Hello {{ user.get_full_name|default:user.username }},
+
+You have been invited to the {{ tenant.name }} workspace in JIMS.
+
+Set your password and activate your login using this secure link:
+{{ activation_url }}
+
+After setting your password, sign in with this username: {{ user.username }}.
+
+If you were not expecting this invitation, you can ignore this email.

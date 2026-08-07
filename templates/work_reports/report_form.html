@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-5">
+  <header><a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="text-sm font-semibold text-brand-700">← Back</a><h1 class="mt-2 text-2xl font-bold tracking-tight text-slate-950">{{ page_title }}</h1>{% if approved_correction %}<p class="mt-1 text-sm text-slate-600">This controlled correction keeps the prior approved values in immutable history.</p>{% else %}<p class="mt-1 text-sm text-slate-600">Save accurate details after the work is complete. You can review the draft before submitting.</p>{% endif %}</header>
+  <form method="post" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="grid gap-5 sm:grid-cols-2">
+      {% for field in form %}<div class="{% if field.name == 'activity_description' or field.name == 'internal_notes' or field.name == 'correction_reason' %}sm:col-span-2{% endif %}">{% include "components/form_field.html" with field=field %}</div>{% endfor %}
+    </div>
+    <div class="mt-7 flex justify-end gap-3"><a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a><button type="submit" class="jims-btn jims-btn-primary">{% if approved_correction %}Save controlled correction{% else %}Save draft{% endif %}</button></div>
+  </form>
+</div>
+{% endblock %}

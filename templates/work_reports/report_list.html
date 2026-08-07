@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{% if can_review %}Work Reports{% else %}My Work Reports{% endif %}{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-sm font-semibold text-brand-700">Technician accountability</p><h1 class="text-2xl font-bold tracking-tight text-slate-950">{% if can_review %}Work Reports{% else %}My Work Reports{% endif %}</h1><p class="mt-1 text-sm text-slate-500">Completed work, private agreed amounts, and approval history.</p></div>
+    {% if "technician_work_reports.create_own" in ACTIVE_PERMISSIONS %}<a href="{% url 'work_reports:create' %}" class="jims-btn jims-btn-primary">New Work Report</a>{% endif %}
+  </header>
+
+  <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="Report status">
+    <a href="{% url 'work_reports:list' %}" class="jims-btn {% if not selected_status %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} jims-btn-compact">All</a>
+    <a href="?status=DRAFT" class="jims-btn {% if selected_status == 'DRAFT' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} jims-btn-compact">Drafts</a>
+    <a href="?status=SUBMITTED" class="jims-btn {% if selected_status == 'SUBMITTED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} jims-btn-compact">Awaiting Review</a>
+    <a href="?status=REJECTED" class="jims-btn {% if selected_status == 'REJECTED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} jims-btn-compact">Needs Correction</a>
+    <a href="?status=APPROVED" class="jims-btn {% if selected_status == 'APPROVED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %} jims-btn-compact">Approved</a>
+  </nav>
+
+  <form method="get" class="flex max-w-xl gap-2">
+    {% if selected_status %}<input type="hidden" name="status" value="{{ selected_status }}">{% endif %}
+    <label class="sr-only" for="report-search">Search reports</label><input id="report-search" name="q" value="{{ query }}" placeholder="Search work, client, location, or Technician" class="min-h-10 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+    <button class="jims-btn jims-btn-secondary">Search</button>
+  </form>
+
+  <section class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200 text-sm">
+        <thead class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><tr>{% if can_review %}<th class="px-4 py-3">Technician</th>{% endif %}<th class="px-4 py-3">Work / client</th><th class="px-4 py-3">Service date</th><th class="px-4 py-3 text-right">Agreed amount</th><th class="px-4 py-3">Status</th><th class="px-4 py-3"><span class="sr-only">Open</span></th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for report in reports %}<tr class="hover:bg-slate-50/70">{% if can_review %}<td class="whitespace-nowrap px-4 py-3 font-medium text-slate-700">{{ report.technician.user.get_full_name|default:report.technician.user.username }}</td>{% endif %}<td class="px-4 py-3"><p class="font-semibold text-slate-900">{{ report.work_title }}</p><p class="text-xs text-slate-500">{{ report.client_name }}</p></td><td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ report.service_date|date:"d M Y" }}</td><td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-800">TZS {{ report.agreed_amount|floatformat:2 }}</td><td class="px-4 py-3"><span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {% if report.status == 'APPROVED' %}bg-emerald-50 text-emerald-700{% elif report.status == 'REJECTED' %}bg-rose-50 text-rose-700{% elif report.status == 'SUBMITTED' %}bg-amber-50 text-amber-800{% else %}bg-slate-100 text-slate-700{% endif %}">{{ report.get_status_display }}</span></td><td class="px-4 py-3 text-right"><a class="font-semibold text-brand-700 hover:text-brand-900" href="{% url 'work_reports:detail' report.pk %}">{% if can_review and report.status == 'SUBMITTED' %}Review{% else %}View{% endif %}</a></td></tr>
+          {% empty %}<tr><td colspan="6" class="px-6 py-14 text-center"><p class="font-semibold text-slate-800">No work reports found</p><p class="mt-1 text-sm text-slate-500">Reports matching this view will appear here.</p></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

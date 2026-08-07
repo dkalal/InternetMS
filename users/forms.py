@@ -4,8 +4,35 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 
 from internetservices.tailwind import apply_tailwind
-from .models import OrganizationBranding
+from .models import OrganizationBranding, TenantMembership
 User = get_user_model()
+
+
+class TenantMemberInviteForm(forms.Form):
+    email = forms.EmailField()
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    base_role = forms.ChoiceField(choices=[
+        (TenantMembership.BaseRole.ADMIN_MANAGER, "Administrator / Manager"),
+        (TenantMembership.BaseRole.SALES, "Sales"),
+        (TenantMembership.BaseRole.TECHNICIAN, "Technician"),
+    ])
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+
+
+class SupportAccessForm(forms.Form):
+    tenant_id = forms.ModelChoiceField(queryset=None, label="Company")
+    reason = forms.CharField(max_length=500, widget=forms.Textarea(attrs={"rows": 3}))
+
+    def __init__(self, *args, **kwargs):
+        from .models import Organization
+
+        super().__init__(*args, **kwargs)
+        self.fields["tenant_id"].queryset = Organization.objects.filter(is_active=True).order_by("name")
+        apply_tailwind(self)
 
 class UserRegisterForm(UserCreationForm):
     email = forms.EmailField()  # Add email field which is not in the default UserCreationForm

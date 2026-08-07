@@ -1,0 +1,19 @@
+<details class="team-permission-group">
+  <summary>
+    <span><strong>{{ group.title }}</strong><small>{{ group.helper }}</small></span>
+    <span class="team-permission-count">{{ group.enabled_count }} enabled</span>
+  </summary>
+  <div class="team-permission-group__body">
+    {% for permission in group.items %}
+      <label class="team-permission-item">
+        {% if permission.inherited %}
+          <input type="checkbox" checked disabled aria-label="{{ permission.label }} is included with the base role">
+          <span><strong>{{ permission.label }}</strong><small>Included with base role</small></span>
+        {% else %}
+          <input type="checkbox" name="permissions" value="{{ permission.code }}" {% if permission.granted %}checked{% endif %}>
+          <span><strong>{{ permission.label }}</strong><small>{% if permission.granted %}Granted as an exception{% else %}Optional additional access{% endif %}</small></span>
+        {% endif %}
+      </label>
+    {% endfor %}
+  </div>
+</details>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}{{ document }}{% endblock %}
 
@@ -6,13 +7,16 @@
 <div class="space-y-6">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ document.get_document_type_display }} {{ document.number }}</h1>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}{{ document.get_document_type_display }}{% endif %} {{ document.number }}</h1>
       <p class="mt-1 text-sm text-slate-600">
         {{ document.customer.name }} &middot; {{ document.issue_date|date:"d M Y" }}
         {% if document.document_type == "quotation" %}&middot; v{{ document.version_number }}{% endif %}
         {% if document.created_by %}&middot; Created by {{ document.created_by.get_full_name|default:document.created_by.username }}{% endif %}
       </p>
-      <div class="mt-2">{% include "components/status_badge.html" with value=document.status label=document.get_status_display %}</div>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {% include "components/status_badge.html" with value=document.status label=document.get_status_display %}
+        <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ document.get_sale_pricing_category_display }} pricing</span>
+      </div>
     </div>
     <div class="flex flex-wrap items-center gap-2">
       {% if document.document_type == "invoice" %}
@@ -87,9 +91,9 @@
       </div>
     </div>
   {% endif %}
-  {% if document.document_type == "invoice" and has_inventory_items and document.status != "paid" %}
+  {% if document.document_type == "invoice" and invoice_payment_policy.requires_full_payment and document.status != "paid" %}
     <div class="rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900">
-      This inventory invoice requires full payment. Drafts and unpaid invoices do not deduct or reserve stock; availability is checked again when payment is confirmed.
+      This cart/inventory invoice requires full payment. Drafts and unpaid invoices do not deduct or reserve stock; availability is checked again when payment is confirmed.
     </div>
   {% endif %}
   {% if document.document_type == "invoice" and invoice_supersession_details %}
@@ -169,30 +173,32 @@
     </section>
   {% endif %}
 
-  {% if document.document_type == "invoice" and invoice_carry_forward %}
-    <section class="rounded-lg border border-sky-200 bg-sky-50 p-4 shadow-sm">
+  {% if document.document_type == "invoice" and invoice_account_summary.has_previous_outstanding %}
+    <section class="rounded-lg border border-brand-200 bg-white p-4">
       <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div class="text-sm font-semibold text-sky-950">Account carry-forward</div>
-          <p class="mt-1 max-w-2xl text-sm text-sky-900">
-            The brought-forward amount is a snapshot of older unpaid invoices when this invoice was created. It is shown for collection clarity and is not taxed or charged again on this invoice.
+          <div class="text-sm font-semibold text-slate-950">Customer account summary</div>
+          <p class="mt-1 max-w-2xl text-sm text-slate-600">
+            Previous outstanding balance relates to earlier unpaid invoices and is not included in this invoice's item total.
           </p>
         </div>
-        <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-800 ring-1 ring-sky-200">Account due {{ invoice_carry_forward.account_balance }}</span>
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800 ring-1 ring-brand-200">Total Amount Due {{ document.currency }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</span>
       </div>
-      <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
-        <div class="rounded-md border border-sky-100 bg-white p-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">Brought forward</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.brought_forward }}</dd>
+      <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+        <div class="border-l-2 border-slate-200 pl-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Previous Outstanding Balance</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ document.currency }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</dd>
         </div>
-        <div class="rounded-md border border-sky-100 bg-white p-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">This invoice open</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.current_balance }}</dd>
+        <div class="border-l-2 border-slate-200 pl-3">
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Current Invoice Total</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ document.currency }} {{ invoice_account_summary.current_invoice_total|floatformat:2|intcomma }}</dd>
         </div>
-        <div class="rounded-md border border-sky-100 bg-white p-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">Carried forward now</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ invoice_carry_forward.account_balance }}</dd>
+        <div class="border-l-2 border-brand-400 pl-3">
+          <dt class="text-xs uppercase tracking-wide text-brand-700">Total Amount Due</dt>
+          <dd class="mt-1 font-bold text-brand-800">{{ document.currency }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</dd>
         </div>
+        {% if invoice_account_summary.has_payment %}<div class="border-l-2 border-emerald-300 pl-3"><dt class="text-xs uppercase tracking-wide text-slate-500">Payment Received</dt><dd class="mt-1 font-semibold text-emerald-700">{{ document.currency }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</dd></div>{% endif %}
+        <div class="border-l-2 border-slate-900 pl-3"><dt class="text-xs uppercase tracking-wide text-slate-500">Outstanding Account Balance</dt><dd class="mt-1 font-bold text-slate-950">{{ document.currency }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</dd></div>
       </dl>
     </section>
   {% endif %}
@@ -204,15 +210,19 @@
         <table class="min-w-full divide-y divide-slate-200">
           <thead class="bg-slate-50">
             <tr>
+              {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">#</th>{% endif %}
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Description</th>
+              {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Unit</th>{% endif %}
               <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Qty</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Unit</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}Unit price{% else %}Unit{% endif %}</th>
+              {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<th class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Discount</th>{% endif %}
               <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Total</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-200">
             {% for item in items %}
               <tr>
+                {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-sm text-slate-500">{{ forloop.counter }}</td>{% endif %}
                 <td class="px-4 py-3 text-sm text-slate-900">
                   {% if item.package %}
                     {{ item.package.name }}
@@ -242,13 +252,15 @@
                     </div>
                   {% endif %}
                 </td>
+                {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-sm font-medium text-slate-700">{{ item.unit_snapshot }}</td>{% endif %}
                 <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
-                <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price }}</td>
-                <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.line_total }}</td>
+                <td class="px-4 py-3 text-right text-sm text-slate-700{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.unit_price|floatformat:2|intcomma }}{% else %}{{ item.unit_price }}{% endif %}</td>
+                {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-right text-sm text-slate-700 whitespace-nowrap">{% if item.discount_amount %}{{ document.currency }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
+                <td class="px-4 py-3 text-right text-sm font-medium text-slate-900{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.line_total|floatformat:2|intcomma }}{% else %}{{ item.line_total }}{% endif %}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="4" class="px-4 py-10 text-center text-sm text-slate-500">No items.</td>
+                <td colspan="{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}7{% else %}4{% endif %}" class="px-4 py-10 text-center text-sm text-slate-500">No items.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -270,16 +282,17 @@
             <dd class="font-medium text-slate-900">{{ document.tax_amount }}</dd>
           </div>
           <div class="flex items-center justify-between border-t border-slate-200 pt-2">
-            <dt class="text-slate-900 font-semibold">Total</dt>
+            <dt class="text-slate-900 font-semibold">{% if document.document_type == 'invoice' %}Current Invoice Total{% elif document.document_type == 'quotation' %}Quotation Total{% else %}Total{% endif %}</dt>
             <dd class="text-slate-900 font-semibold">{{ document.total }}</dd>
           </div>
         </dl>
       </div>
 
-      <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div class="text-sm font-semibold text-slate-900">Notes</div>
+      {% if document.notes or document.document_type != 'quotation' and document.document_type != 'invoice' %}<div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div class="text-sm font-semibold text-slate-900">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}Internal notes{% else %}Notes{% endif %}</div>
+        {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<p class="mt-1 text-xs text-slate-500">Staff-only; excluded from the customer PDF.</p>{% endif %}
         <p class="mt-2 text-sm text-slate-700">{{ document.notes|default:"-" }}</p>
-      </div>
+      </div>{% endif %}
 
       {% if document.document_type == "quotation" and document.converted_invoice %}
         <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

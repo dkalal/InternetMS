@@ -6,16 +6,16 @@
 {% include "inventory/includes/module_nav.html" %}
 
 <div class="jims-list-page space-y-5">
-  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+  <header class="jims-page-header">
     <div>
-      <p class="text-sm font-semibold text-brand-700">Catalog</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Products and services</h1>
-      <p class="mt-1 text-sm text-slate-600">Find stock items and billable services, with live availability at a glance.</p>
+      <p class="jims-page-eyebrow">Catalog</p>
+      <h1 class="jims-page-title">Products and services</h1>
+      <p class="jims-page-subtitle">Find stock items and billable services, with live availability at a glance.</p>
     </div>
     {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-create' %}" class="jims-btn jims-btn-primary">Add item</a>{% endif %}
   </header>
 
-  <section class="jims-panel p-4" aria-label="Catalog filters">
+  <section class="jims-toolbar" aria-label="Catalog filters">
     <form method="get" class="space-y-4">
       <input type="hidden" name="sort" value="{{ active_sort }}">
       <input type="hidden" name="page_size" value="{{ page_size }}">
@@ -30,7 +30,7 @@
           <div class="mt-3 grid gap-4 border-t border-slate-200 pt-4 sm:absolute sm:right-0 sm:z-20 sm:w-[36rem] sm:grid-cols-2 sm:rounded-xl sm:border sm:bg-white sm:p-5 sm:shadow-xl lg:grid-cols-3">
             <div>
               <label for="catalog_category" class="block text-sm font-medium text-slate-700">Category</label>
-              <select id="catalog_category" name="catalog_category" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <select id="catalog_category" name="catalog_category" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-searchable-select="true" data-search-label="Category" data-search-placeholder="Search categories...">
                 <option value="">All categories</option>
                 {% for category in catalog_categories %}<option value="{{ category.pk }}" {% if request.GET.catalog_category == category.pk|stringformat:"s" %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
               </select>
@@ -141,7 +141,7 @@
                     {% include "components/status_badge.html" with value="available" label="Available" %}
                   {% endif %}
                 </td>
-                <td class="text-right font-semibold text-slate-950">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</td>
+                <td class="text-right font-semibold text-slate-950">{{ product.selling_price|intcomma }} TZS</td>
                 <td>{% if product.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</td>
                 <td class="text-right">
                   <div class="jims-menu">
@@ -171,7 +171,7 @@
             </div>
             <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div><div class="text-xs text-slate-500">Type</div><div class="mt-1 font-medium">{% if product.item_type == "service" %}Service{% else %}Physical product{% endif %}</div></div>
-              <div class="text-right"><div class="text-xs text-slate-500">Price</div><div class="mt-1 font-semibold">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</div></div>
+              <div class="text-right"><div class="text-xs text-slate-500">Price</div><div class="mt-1 font-semibold">{{ product.selling_price|intcomma }} TZS</div></div>
               <div class="col-span-2 border-t border-slate-100 pt-3">
                 {% if product.item_type == "service" %}
                   {% include "components/status_badge.html" with value="service" label="Service · no stock tracking" %}

@@ -11,28 +11,40 @@ The repository root is the project boundary. The virtual environment is no longe
 ```text
 Browser
   -> internetservices.urls
+  -> ActiveOrganizationMiddleware
   -> app urls/views
+  -> permission + tenant policy checks
   -> forms/services/models
-  -> SQLite in development, PostgreSQL-ready dependencies for production
+  -> SQLite for simple local development or PostgreSQL via DATABASE_URL
 ```
 
-`users.middleware.ActiveOrganizationMiddleware` establishes tenant/organization context for requests. Apps that store tenant-owned data should continue to make tenancy explicit in models, forms, querysets, and tests.
+`users.middleware.ActiveOrganizationMiddleware` establishes tenant/organization context for requests. `TenantMembership` is the authoritative relationship used by request-time RBAC. Apps that store tenant-owned data must keep tenancy explicit in models, forms, querysets, services, audit events, and tests.
 
 ## App Responsibilities
 
 `internetservices` owns Django settings, root URL routing, ASGI/WSGI entrypoints, and global context processors.
 
-`users` owns authentication, organizations, active tenant selection, permissions, and tenant helper utilities.
+`main_app` owns the role-aware post-login workspace landing.
+
+`users` owns authentication, organizations, active tenant selection, memberships, permission grants, and audited support access.
 
 `customers` owns customer records, customer documents, customer lifecycle state, and customer-facing query rules.
 
 `services` owns internet service packages.
 
-`products` owns product catalog records.
+`products` owns product catalog records, categories, tenant units of measure, and pricing tiers.
 
 `billing` owns billing documents, billing line items, numbering, printable templates, receipts, and PDF-related behavior.
 
 `audit` owns append-only audit records and audit metadata.
+
+`inventory` owns suppliers, purchases, balances, stock movements, serialized units, carts, imports, and inventory reports.
+
+`custom_fields` owns tenant-defined fields and values for supported domain records.
+
+`messaging` owns message templates, previews, and delivery workflows.
+
+`work_reports` owns technician work reports, approval transitions, and immutable report history.
 
 `templates` owns shared templates and cross-app UI fragments.
 
@@ -51,6 +63,12 @@ Do not put application code, templates, media, or databases under `.venv`.
 Do not import across apps for convenience if the dependency is really a domain action. Prefer a small service function in the owning app.
 
 Keep migrations committed with their app. Never edit old migrations after they have been applied outside your machine.
+
+Treat tenant identity as server-established state. Do not filter tenant-owned data using a tenant ID accepted directly from request data. Require an active membership, use tenant-scoped managers/querysets, and test cross-tenant denial paths.
+
+Permission codes in `users.permissions` are the stable authorization contract. Views and services should fail closed with `require_permission`; templates may hide unavailable actions, but UI visibility is never an authorization boundary.
+
+Super Administrator access to tenant data requires an explicit support session with a reason. Preserve the audit trail when extending this workflow.
 
 ### Inventory boundaries
 
@@ -79,7 +97,11 @@ The settings include WhiteNoise static-file support. For production, run:
 .\.venv\Scripts\python.exe manage.py collectstatic
 ```
 
-Use PostgreSQL for production rather than SQLite. The project already pins `psycopg2-binary`, but database URL parsing has not been introduced yet; add that when the deployment target is known.
+Use PostgreSQL for production rather than SQLite. `DATABASE_URL` is parsed by Django settings and production connections are reused with a finite connection age.
+
+The application enables secure cookies, HTTPS redirect, proxy TLS handling, HSTS, MIME sniffing protection, and frame denial when debug mode is disabled. HSTS preload remains opt-in because enabling it is a long-lived operational commitment.
+
+Filesystem media storage is suitable for a single persistent instance only. Use durable object storage before scaling across ephemeral or multiple application instances.
 
 ## Integration Contract
 

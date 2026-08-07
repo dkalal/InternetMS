@@ -30,9 +30,13 @@
     </button>
   </div>
 
-  <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(14rem,1fr)_7rem_9rem_12rem_auto] lg:items-end">
+  <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(14rem,1fr)_6rem_7rem_9rem_12rem_auto] lg:items-end">
     <div class="js-description-col min-w-0">
       {% include "components/form_field.html" with field=item_form.description %}
+    </div>
+
+    <div>
+      {% include "components/form_field.html" with field=item_form.unit_snapshot %}
     </div>
 
     <div>

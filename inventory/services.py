@@ -443,22 +443,36 @@ class CartService:
     }
 
     @classmethod
-    def line_pricing(cls, *, product: Product, quantity: Decimal, customer: Customer | None):
-        """Return the one authoritative POS price and its audit-friendly mode.
+    def line_pricing(
+        cls, *, product: Product, quantity: Decimal, customer: Customer | None = None,
+        sale_pricing_category: str = Cart.SalePricingCategory.LEGACY_RETAIL,
+    ):
+        """Return the authoritative explicit-category POS price and audit mode.
 
-        Wholesale is a customer entitlement, not an accidental discount for any
-        walk-in shopper who happens to buy a large quantity.  The product's
-        minimum quantity remains a mandatory second condition.
+        The legacy/standard POS quantity break remains for backward compatibility;
+        Technician pricing is never inferred from a logged-in user's role.
         """
-        wants_wholesale = customer is not None and customer.pricing_tier in cls.WHOLESALE_TIERS
-        product_mode = Product.PricingMode.WHOLESALE if wants_wholesale else Product.PricingMode.RETAIL
-        unit_price = money(product.price_for(quantity=quantity, pricing_mode=product_mode))
-        mode = (
-            BillingLineItem.PricingMode.WHOLESALE
-            if product_mode == Product.PricingMode.WHOLESALE and product.wholesale_price is not None
-            and unit_price == money(product.wholesale_price)
-            else BillingLineItem.PricingMode.RETAIL
-        )
+        category = sale_pricing_category
+        if category in {Cart.SalePricingCategory.LEGACY_RETAIL, Cart.SalePricingCategory.STANDARD}:
+            qualifies_for_wholesale = (
+                product.allow_wholesale and product.wholesale_price is not None
+                and quantity >= product.wholesale_min_quantity
+            )
+            if qualifies_for_wholesale:
+                category = Product.PricingMode.WHOLESALE
+            elif category == Cart.SalePricingCategory.LEGACY_RETAIL:
+                category = Product.PricingMode.RETAIL
+        unit_price = money(product.price_for_sale_category(sale_pricing_category=category, quantity=quantity))
+        if category == Product.PricingMode.WHOLESALE and product.wholesale_price is not None and unit_price == money(product.wholesale_price):
+            mode = BillingLineItem.PricingMode.WHOLESALE
+        elif category == Product.PricingMode.WHOLESALE:
+            mode = BillingLineItem.PricingMode.STANDARD
+        elif category == Product.PricingMode.TECHNICIAN:
+            mode = BillingLineItem.PricingMode.TECHNICIAN
+        elif category == Product.PricingMode.STANDARD:
+            mode = BillingLineItem.PricingMode.STANDARD
+        else:
+            mode = BillingLineItem.PricingMode.RETAIL
         return unit_price, mode
 
     @classmethod
@@ -467,10 +481,41 @@ class CartService:
         for line in cart.lines.select_related('product').all():
             unit_price, _ = cls.line_pricing(
                 product=line.product, quantity=line.quantity, customer=cart.customer,
+                sale_pricing_category=cart.sale_pricing_category,
             )
             if money(line.unit_price) != unit_price:
                 line.unit_price = unit_price
                 line.save(update_fields=['unit_price', 'updated_at'])
+
+    @classmethod
+    @transaction.atomic
+    def abandon(cls, *, organization, cart_id: int, actor) -> tuple[Cart, bool]:
+        """Soft-discard an editable sale without mutating stock or financial records."""
+        cart = Cart.objects.unscoped().select_for_update().filter(pk=cart_id).first()
+        if cart is None:
+            raise InventoryError('Sale not found.')
+        if cart.tenant_id != organization.id:
+            raise PermissionDenied('Cross-tenant cart access denied.')
+        if cart.status == Cart.Status.ABANDONED:
+            return cart, False
+        if cart.status != Cart.Status.DRAFT or cart.invoice_id or cart.quotation_id:
+            raise InventoryError('Only an unconverted draft sale can be discarded.')
+
+        line_count = cart.lines.count()
+        subtotal = money(cart.subtotal)
+        old_value = {'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal)}
+        cart.status = Cart.Status.ABANDONED
+        cart.save(update_fields=['status', 'updated_at'])
+        audit(
+            organization=organization,
+            actor=actor,
+            action='inventory.cart.abandoned',
+            obj=cart,
+            old_value=old_value,
+            new_value={'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal)},
+            metadata={'stock_changed': False, 'financial_document_created': False},
+        )
+        return cart, True
 
     @classmethod
     def _walk_in_customer(cls, *, organization, label=''):
@@ -517,6 +562,7 @@ class CartService:
                 raise InventoryError('A cart product is unavailable.')
             fixed_price, pricing_mode = cls.line_pricing(
                 product=line.product, quantity=line.quantity, customer=customer,
+                sale_pricing_category=cart.sale_pricing_category,
             )
             if money(line.unit_price) != fixed_price:
                 line.unit_price = fixed_price
@@ -549,6 +595,7 @@ class CartService:
             discount_amount=cart.discount_amount,
             notes=cart.notes,
             items=inputs,
+            sale_pricing_category=cart.sale_pricing_category,
         )
         document_lines = list(document.items.order_by('id'))
         for cart_line, document_line in zip(lines, document_lines):

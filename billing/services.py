@@ -14,7 +14,7 @@ from audit.models import AuditLog
 from customers.models import Customer, CustomerSite
 from products.models import Product
 from services.models import Package
-from users.models import Organization
+from users.models import Organization, TenantMembership
 
 from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion, SubscriptionPeriod
 from .numbering import DocumentNumberService
@@ -41,6 +41,8 @@ class LineItemInput:
     pricing_mode: str = BillingLineItem.PricingMode.RETAIL
     billing_behavior: str = BillingLineItem.BillingBehavior.ONE_TIME
     promotion_id: int | None = None
+    preserve_unit_price: bool = False
+    unit_snapshot: str = ""
 
 
 class BillingServiceError(Exception):
@@ -93,13 +95,19 @@ class BillingService:
             cls._raise_cross_tenant()
 
     @classmethod
-    def _compute_totals(
+    def compute_totals(
         cls,
         *,
         tax_rate: Decimal,
-        line_items: list[BillingLineItem],
+        line_items: list,
         discount_amount: Decimal = Decimal('0.00'),
     ) -> tuple[Decimal, Decimal, Decimal]:
+        """Calculate document totals while respecting a product's tax treatment.
+
+        Tax-exempt products are excluded from VAT. Document-level discounts are
+        allocated proportionally before VAT so mixed taxable/exempt sales remain
+        mathematically consistent in both invoices and the POS preview.
+        """
         subtotal = sum((li.line_total for li in line_items), Decimal("0.00"))
         if tax_rate < Decimal('0.00'):
             raise BillingServiceError('Tax rate cannot be negative.')
@@ -108,10 +116,26 @@ class BillingService:
             raise BillingServiceError('Credit-note documents cannot use a document discount.')
         if subtotal >= Decimal('0.00') and (discount_amount < Decimal('0.00') or discount_amount > subtotal):
             raise BillingServiceError('Document discount cannot be negative or exceed the subtotal.')
-        taxable_subtotal = subtotal - discount_amount
+        taxable_before_discount = sum(
+            (
+                line.line_total
+                for line in line_items
+                if not getattr(line, 'product_id', None)
+                or getattr(line.product, 'tax_eligible', True)
+            ),
+            Decimal('0.00'),
+        )
+        taxable_discount = (
+            discount_amount * taxable_before_discount / subtotal
+            if subtotal > Decimal('0.00') and taxable_before_discount > Decimal('0.00')
+            else Decimal('0.00')
+        )
+        taxable_subtotal = taxable_before_discount - taxable_discount
         tax_amount = (taxable_subtotal * (tax_rate / Decimal("100.00"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        total = (taxable_subtotal + tax_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        total = (subtotal - discount_amount + tax_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return subtotal.quantize(Decimal("0.01")), tax_amount, total
+
+    _compute_totals = compute_totals
 
     @classmethod
     def default_tax_rate_for_customer(cls, customer: Customer) -> Decimal:
@@ -216,6 +240,31 @@ class BillingService:
         return max(invoice.total - paid - credited, Decimal("0.00")).quantize(Decimal("0.01"))
 
     @classmethod
+    def invoice_payment_policy(cls, *, organization: Organization, invoice: BillingDocument) -> dict:
+        """Return the authoritative payment rule for an invoice.
+
+        Cart/inventory invoices are atomic sales: payment and stock completion
+        happen together, so they require the entire remaining balance. Service
+        and subscription invoices may accumulate multiple allocated receipts.
+        """
+        cls._require_same_tenant(organization, invoice)
+        if invoice.document_type != BillingDocument.DocumentType.INVOICE:
+            raise BillingServiceError('Payment policy is only available for invoices.')
+        from inventory.services import InventoryService
+
+        requires_full_payment = InventoryService.requires_full_payment(
+            organization=organization,
+            invoice=invoice,
+        )
+        remaining_balance = cls.invoice_remaining_balance(organization=organization, invoice=invoice)
+        return {
+            'requires_full_payment': requires_full_payment,
+            'allows_partial_payment': not requires_full_payment,
+            'remaining_balance': remaining_balance,
+            'policy_code': 'inventory_full_payment' if requires_full_payment else 'service_partial_payment',
+        }
+
+    @classmethod
     def customer_open_invoice_balance(
         cls,
         *,
@@ -296,6 +345,32 @@ class BillingService:
             "can_register_payment": can_register_payment,
             "can_create_credit_note": can_create_credit_note,
             "is_locked": status != BillingDocument.Status.DRAFT,
+        }
+
+    @classmethod
+    def invoice_account_summary(cls, *, organization: Organization, invoice: BillingDocument) -> dict:
+        """Return one accounting-safe summary for invoice screens and PDFs."""
+        cls._require_same_tenant(organization, invoice)
+        state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
+        previous_outstanding = invoice.balance_brought_forward.quantize(Decimal('0.01'))
+        current_total = invoice.total.quantize(Decimal('0.01'))
+        payment_received = state['paid_total']
+        total_amount_due = (previous_outstanding + current_total).quantize(Decimal('0.01'))
+        open_account_balance = cls.customer_open_invoice_balance(
+            organization=organization,
+            customer=invoice.customer,
+        )
+        if invoice.status == BillingDocument.Status.DRAFT:
+            open_account_balance = (open_account_balance + state['remaining_balance']).quantize(Decimal('0.01'))
+        return {
+            'previous_outstanding_balance': previous_outstanding,
+            'current_invoice_total': current_total,
+            'total_amount_due': total_amount_due,
+            'payment_received': payment_received,
+            'current_invoice_balance': state['remaining_balance'],
+            'outstanding_account_balance': open_account_balance,
+            'has_previous_outstanding': previous_outstanding > Decimal('0.00'),
+            'has_payment': payment_received > Decimal('0.00'),
         }
 
     @classmethod
@@ -409,7 +484,7 @@ class BillingService:
         unit_price: Decimal,
         gross: Decimal,
     ) -> tuple[Decimal, Decimal, str]:
-        today = timezone.now().date()
+        today = timezone.localdate()
         if not promotion.is_valid_for(when=today):
             raise BillingServiceError("Selected promotion is not active for today.")
         if promotion.minimum_quantity and quantity < promotion.minimum_quantity:
@@ -480,6 +555,7 @@ class BillingService:
             "voided_at": document.voided_at.isoformat() if document.voided_at else None,
             "due_date": document.due_date.isoformat() if document.due_date else None,
             "currency": document.currency,
+            "sale_pricing_category": document.sale_pricing_category,
             "tax_rate": str(document.tax_rate),
             "subtotal": str(document.subtotal),
             "discount_amount": str(document.discount_amount),
@@ -582,17 +658,36 @@ class BillingService:
             # Catalog products have fixed prices. MANUAL remains available for
             # legacy free-text/package billing, but never overrides an inventory
             # catalog item's configured selling price.
-            if pricing_mode != BillingLineItem.PricingMode.MANUAL or (product is not None and product.sku):
+            if not item.preserve_unit_price and (pricing_mode != BillingLineItem.PricingMode.MANUAL or (product is not None and product.sku)):
                 if product is not None:
-                    wants_wholesale = pricing_mode == BillingLineItem.PricingMode.WHOLESALE or document.customer.pricing_tier in {
-                        Customer.PricingTier.WHOLESALE,
-                        Customer.PricingTier.CORPORATE,
-                        Customer.PricingTier.VIP,
-                    }
-                    product_mode = Product.PricingMode.WHOLESALE if wants_wholesale else Product.PricingMode.RETAIL
-                    unit = product.price_for(quantity=qty, pricing_mode=product_mode).quantize(Decimal("0.01"))
-                    if product_mode == Product.PricingMode.WHOLESALE and unit == product.wholesale_price:
+                    category = document.sale_pricing_category
+                    if category == BillingDocument.SalePricingCategory.LEGACY_RETAIL:
+                        wants_wholesale = pricing_mode == BillingLineItem.PricingMode.WHOLESALE or document.customer.pricing_tier in {
+                            Customer.PricingTier.WHOLESALE,
+                            Customer.PricingTier.CORPORATE,
+                            Customer.PricingTier.VIP,
+                        }
+                        category = Product.PricingMode.WHOLESALE if wants_wholesale else Product.PricingMode.RETAIL
+                    elif category == BillingDocument.SalePricingCategory.STANDARD and (
+                        pricing_mode == BillingLineItem.PricingMode.WHOLESALE
+                        or document.customer.pricing_tier in {
+                            Customer.PricingTier.WHOLESALE,
+                            Customer.PricingTier.CORPORATE,
+                            Customer.PricingTier.VIP,
+                        }
+                    ):
+                        category = Product.PricingMode.WHOLESALE
+                    unit = product.price_for_sale_category(
+                        sale_pricing_category=category, quantity=qty,
+                    ).quantize(Decimal("0.01"))
+                    if category == Product.PricingMode.WHOLESALE and product.wholesale_price is not None and unit == product.wholesale_price:
                         pricing_mode = BillingLineItem.PricingMode.WHOLESALE
+                    elif category == Product.PricingMode.WHOLESALE:
+                        pricing_mode = BillingLineItem.PricingMode.STANDARD
+                    elif category == Product.PricingMode.TECHNICIAN:
+                        pricing_mode = BillingLineItem.PricingMode.TECHNICIAN
+                    elif category == Product.PricingMode.STANDARD:
+                        pricing_mode = BillingLineItem.PricingMode.STANDARD
                     else:
                         pricing_mode = BillingLineItem.PricingMode.RETAIL
                 elif package is not None:
@@ -603,7 +698,7 @@ class BillingService:
             base_unit = (item.base_unit_price if item.base_unit_price is not None else unit).quantize(Decimal("0.01"))
             discount_amount = (item.discount_amount or Decimal("0.00")).quantize(Decimal("0.01"))
             discount_reason = item.discount_reason
-            if promotion is not None and pricing_mode != BillingLineItem.PricingMode.MANUAL:
+            if promotion is not None and pricing_mode != BillingLineItem.PricingMode.MANUAL and not item.preserve_unit_price:
                 gross = (qty * unit).quantize(Decimal("0.01"))
                 unit, promotion_discount, promotion_reason = cls._promotion_discount(
                     promotion=promotion,
@@ -628,6 +723,11 @@ class BillingService:
                     package=package,
                     description=item.description,
                     quantity=qty,
+                    unit_snapshot=cls._resolve_line_unit(
+                        item=item,
+                        product=product,
+                        package=package,
+                    ),
                     base_unit_price=base_unit,
                     unit_price=unit,
                     discount_amount=discount_amount,
@@ -640,6 +740,36 @@ class BillingService:
                 )
             )
         return created_items
+
+    @classmethod
+    def _resolve_line_unit(cls, *, item: LineItemInput, product: Product | None, package: Package | None) -> str:
+        requested = (item.unit_snapshot or '').strip()
+        if requested and item.preserve_unit_price:
+            return requested
+        if product is not None:
+            configured = product.get_measure_unit_display()
+            if requested:
+                if product.catalog_category_id:
+                    allowed = {
+                        unit.label
+                        for unit in product.catalog_category.allowed_units.filter(is_active=True)
+                    }
+                    if requested not in allowed:
+                        raise BillingServiceError('Select a unit allowed by the product category.')
+                elif requested != configured:
+                    raise BillingServiceError('Product unit must match its configured sales unit.')
+                return requested
+            return configured
+        if package is not None:
+            configured = (
+                'Month'
+                if item.billing_behavior == BillingLineItem.BillingBehavior.RECURRING_MONTHLY
+                else 'Installation'
+            )
+            if requested and requested != configured:
+                raise BillingServiceError('Package unit is determined by its billing behavior.')
+            return configured
+        return requested or 'Unit'
 
     @classmethod
     def _store_document(
@@ -656,6 +786,7 @@ class BillingService:
         tax_rate: Decimal,
         notes: str,
         items: list[LineItemInput],
+        sale_pricing_category: str = BillingDocument.SalePricingCategory.STANDARD,
         discount_amount: Decimal = Decimal('0.00'),
         invoice: BillingDocument | None = None,
         original_invoice: BillingDocument | None = None,
@@ -674,12 +805,25 @@ class BillingService:
         converted_invoice: BillingDocument | None = None,
     ) -> BillingDocument:
         if number is None:
+            document_date = (
+                payment_date
+                if document_type == BillingDocument.DocumentType.RECEIPT and payment_date is not None
+                else issue_date
+            )
             number = DocumentNumberService.next_number(
                 organization=organization,
                 document_type=document_type,
-                issue_date=issue_date,
+                issue_date=document_date,
             ).value
         now = timezone.now()
+        actor_membership = TenantMembership.objects.filter(
+            tenant=organization, user=created_by, is_active=True
+        ).first()
+        responsible_membership = (
+            getattr(source_quotation, "responsible_membership", None)
+            or getattr(invoice, "responsible_membership", None)
+            or actor_membership
+        )
         timestamp_fields = {
             "issued_at": now,
             "sent_at": now if status == BillingDocument.Status.SENT else None,
@@ -699,11 +843,17 @@ class BillingService:
             due_date=due_date,
             status=status,
             currency=currency,
+            sale_pricing_category=sale_pricing_category,
             tax_rate=tax_rate,
             discount_amount=discount_amount,
             balance_brought_forward=balance_brought_forward,
             notes=notes,
             created_by=created_by,
+            created_by_membership=actor_membership,
+            responsible_membership=responsible_membership,
+            issued_by_membership=actor_membership if status != BillingDocument.Status.DRAFT else None,
+            payment_recorded_by_membership=actor_membership if document_type == BillingDocument.DocumentType.RECEIPT else None,
+            last_modified_by_membership=actor_membership,
             invoice=invoice,
             original_invoice=original_invoice,
             corrected_invoice=corrected_invoice,
@@ -751,9 +901,10 @@ class BillingService:
         payment_method: str = "",
         payment_reference: str = "",
         items: list[LineItemInput] | None = None,
+        sale_pricing_category: str = BillingDocument.SalePricingCategory.STANDARD,
     ) -> BillingDocument:
         if issue_date is None:
-            issue_date = timezone.now().date()
+            issue_date = timezone.localdate()
         if items is None:
             items = []
         cls._validate_document_status(document_type=document_type, status=status)
@@ -797,6 +948,7 @@ class BillingService:
                 discount_amount=discount_amount,
                 notes=notes,
                 items=items,
+                sale_pricing_category=sale_pricing_category,
                 invoice=invoice,
                 payment_date=payment_date,
                 payment_method=payment_method,
@@ -882,14 +1034,17 @@ class BillingService:
         tax_rate: Decimal = Decimal("18.00"),
         notes: str = "",
         items: list[LineItemInput] | None = None,
+        sale_pricing_category: str | None = None,
     ) -> BillingDocument:
         if issue_date is None:
-            issue_date = timezone.now().date()
+            issue_date = timezone.localdate()
         if items is None:
             items = []
         cls._validate_document_status(document_type=BillingDocument.DocumentType.QUOTATION, status=status)
         previous = cls._resolve_quotation(organization=organization, quotation_id=quotation_id)
         customer = cls._resolve_customer(organization=organization, customer_id=customer_id)
+        if sale_pricing_category is None:
+            sale_pricing_category = previous.sale_pricing_category
         cls._validate_editable_items(items=items)
         root = previous.root_quotation or previous
         with transaction.atomic():
@@ -912,6 +1067,7 @@ class BillingService:
                 parent_quotation=previous,
                 root_quotation=root,
                 is_current_version=True,
+                sale_pricing_category=sale_pricing_category,
             )
             from inventory.services import CartService
 
@@ -1126,6 +1282,8 @@ class BillingService:
                 pricing_mode=item.pricing_mode,
                 billing_behavior=item.billing_behavior,
                 promotion_id=item.promotion_id,
+                preserve_unit_price=True,
+                unit_snapshot=item.unit_snapshot,
             )
             for item in quotation.items.all()
         ]
@@ -1136,7 +1294,7 @@ class BillingService:
                 created_by=created_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=quotation.customer_id,
-                issue_date=timezone.now().date(),
+                issue_date=timezone.localdate(),
                 due_date=quotation.due_date,
                 status=BillingDocument.Status.DRAFT,
                 currency=quotation.currency,
@@ -1144,6 +1302,7 @@ class BillingService:
                 discount_amount=quotation.discount_amount,
                 notes=quotation.notes,
                 items=items,
+                sale_pricing_category=quotation.sale_pricing_category,
             )
             BillingDocument.objects.filter(pk=invoice.pk).update(source_quotation=quotation)
             BillingDocument.objects.filter(pk=quotation.pk).update(
@@ -1325,6 +1484,8 @@ class BillingService:
                 pricing_mode=item.pricing_mode,
                 billing_behavior=item.billing_behavior,
                 promotion_id=item.promotion_id,
+                preserve_unit_price=True,
+                unit_snapshot=item.unit_snapshot,
             )
             for item in invoice.items.all()
         ]
@@ -1335,7 +1496,7 @@ class BillingService:
                 created_by=performed_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer=invoice.customer,
-                issue_date=timezone.now().date(),
+                issue_date=timezone.localdate(),
                 due_date=invoice.due_date,
                 status=BillingDocument.Status.DRAFT,
                 currency=invoice.currency,
@@ -1344,6 +1505,7 @@ class BillingService:
                 balance_brought_forward=invoice.balance_brought_forward,
                 notes=invoice.notes,
                 items=items,
+                sale_pricing_category=invoice.sale_pricing_category,
                 original_invoice=invoice,
             )
             from inventory.services import CartService, InventoryService
@@ -1395,7 +1557,7 @@ class BillingService:
         if len(reason) < 5:
             raise BillingServiceError("A short reason is required to create a credit note.")
         if issue_date is None:
-            issue_date = timezone.now().date()
+            issue_date = timezone.localdate()
         invoice = cls._resolve_invoice(organization=organization, invoice_id=invoice_id)
         state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
         if not state["can_create_credit_note"]:
@@ -1429,6 +1591,7 @@ class BillingService:
                 tax_rate=invoice.tax_rate,
                 notes=notes or reason,
                 items=[item],
+                sale_pricing_category=invoice.sale_pricing_category,
                 corrected_invoice=invoice,
             )
             cls._log_action(
@@ -1471,6 +1634,10 @@ class BillingService:
                 raise BillingServiceError('Invalid invoice.')
             cls._require_same_tenant(organization, invoice)
 
+            amount_paid = amount_paid.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if amount_paid <= Decimal("0.00"):
+                raise BillingServiceError("Amount paid must be greater than zero.")
+
             payment_reference = (payment_reference or "").strip()
             if payment_reference:
                 reference_owner = BillingDocument.objects.unscoped().filter(
@@ -1482,32 +1649,35 @@ class BillingService:
                         reference_owner.document_type == BillingDocument.DocumentType.RECEIPT
                         and reference_owner.invoice_id == invoice.id
                     ):
+                        if reference_owner.total != amount_paid:
+                            raise BillingServiceError(
+                                "This payment reference was already used for a different payment amount."
+                            )
                         return reference_owner
                     raise BillingServiceError("This payment reference has already been used for another document.")
 
             state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
             if not state["can_register_payment"]:
                 raise BillingServiceError("This invoice cannot accept a payment in its current state.")
-            amount_paid = amount_paid.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            if amount_paid <= Decimal("0.00"):
-                raise BillingServiceError("Amount paid must be greater than zero.")
-            if amount_paid > state["remaining_balance"]:
+            policy = cls.invoice_payment_policy(organization=organization, invoice=invoice)
+            remaining_balance = state["remaining_balance"]
+            if amount_paid > remaining_balance:
                 raise BillingServiceError(
-                    f"Amount paid ({amount_paid:,.2f}) cannot exceed the remaining balance ({state['remaining_balance']:,.2f})."
+                    f"Payment cannot exceed the remaining balance ({remaining_balance:,.2f})."
                 )
 
             from inventory.services import InventoryError, InventoryService
 
-            inventory_sale = InventoryService.requires_full_payment(organization=organization, invoice=invoice)
-            if inventory_sale and amount_paid != state['remaining_balance']:
+            inventory_sale = policy['requires_full_payment']
+            if inventory_sale and amount_paid != remaining_balance:
                 raise BillingServiceError('Inventory sales require complete payment of the full remaining balance.')
             payment_method = (payment_method or '').strip().lower()
             if inventory_sale and payment_method not in {'cash', 'bank', 'mobile_money', 'card', 'other'}:
                 raise BillingServiceError('Select Cash, Bank, Mobile money, Credit/Debit card, or Other.')
             if payment_date is None:
-                payment_date = timezone.now().date()
-            remaining_after_payment = (state["remaining_balance"] - amount_paid).quantize(Decimal("0.01"))
-            is_partial = remaining_after_payment > Decimal("0.00")
+                payment_date = timezone.localdate()
+            remaining_after_payment = (remaining_balance - amount_paid).quantize(Decimal('0.01'))
+            is_partial = remaining_after_payment > Decimal('0.00')
             receipt_item = LineItemInput(
                 description=f"Payment for invoice {invoice.number}",
                 quantity=Decimal("1.00"),
@@ -1520,13 +1690,14 @@ class BillingService:
                     created_by=created_by,
                     document_type=BillingDocument.DocumentType.RECEIPT,
                     customer=invoice.customer,
-                    issue_date=timezone.now().date(),
+                    issue_date=timezone.localdate(),
                     due_date=None,
                     status=BillingDocument.Status.PAID,
                     currency=invoice.currency,
                     tax_rate=Decimal("0.00"),
                     notes=notes,
                     items=[receipt_item],
+                    sale_pricing_category=invoice.sale_pricing_category,
                     invoice=invoice,
                     payment_date=payment_date,
                     payment_method=payment_method,
@@ -1562,9 +1733,17 @@ class BillingService:
                     paid_at=timezone.now(),
                 )
                 for period in linked_periods:
-                    CustomerSubscription.objects.filter(id=period.subscription_id).update(
-                        paid_through_date=period.period_end
+                    subscription = CustomerSubscription.objects.select_for_update().get(
+                        id=period.subscription_id,
+                        organization=organization,
                     )
+                    if (
+                        subscription.paid_through_date is None
+                        or period.period_end > subscription.paid_through_date
+                    ):
+                        CustomerSubscription.objects.filter(id=subscription.id).update(
+                            paid_through_date=period.period_end
+                        )
 
             AuditLog.objects.create(
                 organization=organization,
@@ -1695,7 +1874,7 @@ class SubscriptionBillingService:
         promotion: Promotion | None = None,
     ) -> CustomerSubscription:
         if start_date is None:
-            start_date = timezone.now().date()
+            start_date = timezone.localdate()
         if customer.organization_id != organization.id or package.organization_id != organization.id:
             cls._raise_cross_tenant()
         if site is None:
@@ -1944,7 +2123,7 @@ class SubscriptionBillingService:
                 created_by=created_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=subscription.customer_id,
-                issue_date=timezone.now().date(),
+                issue_date=timezone.localdate(),
                 due_date=due_date,
                 status=BillingDocument.Status.ISSUED,
                 notes=f"Monthly subscription renewal for {period.period_start:%B %Y}.",

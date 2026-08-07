@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#104558">
+    <meta name="theme-color" content="#6257df">
     <title>{% block title %}JBMS{% endblock %} · JS Business Management System</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -14,110 +14,80 @@
     <script defer src="{% static 'inventory/js/inventory-ui.js' %}"></script>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased {% block body_class %}{% endblock %}">
+<body class="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased {% if user.is_authenticated %}jims-auth-shell{% endif %} {% block body_class %}{% endblock %}">
     <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[80] focus:rounded-md focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-slate-900 focus:shadow-lg">
         Skip to content
     </a>
 
-    <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div class="flex min-h-16 items-center justify-between gap-4">
-                <a href="{% url 'customer-list' %}" class="flex min-w-0 items-center gap-3">
-                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold tracking-tight text-white">JS</span>
-                    <span class="min-w-0">
-                        <span class="block truncate text-sm font-bold tracking-tight text-slate-950">JBMS</span>
-                        {% if user.is_authenticated and ACTIVE_ORGANIZATION %}
-                            <span class="block max-w-44 truncate text-xs text-slate-500">{{ ACTIVE_ORGANIZATION.name }}</span>
-                        {% else %}
-                            <span class="block text-xs text-slate-500">Internet Management</span>
-                        {% endif %}
-                    </span>
+    {% if user.is_authenticated %}
+        <div class="jims-app-shell">
+            {% include "includes/app_sidebar.html" %}
+            <div class="jims-mobile-backdrop" data-nav-backdrop hidden></div>
+            <div class="jims-app-frame">
+                <header class="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+                    <div class="flex min-w-0 items-center gap-3">
+                        <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact lg:hidden" data-nav-toggle aria-controls="primary-navigation" aria-expanded="false">
+                            <span class="sr-only">Open navigation</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><path stroke-linecap="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/></svg>
+                        </button>
+                        <div class="min-w-0">
+                            <div class="truncate text-sm font-semibold text-slate-900">{{ ACTIVE_ORGANIZATION.name|default:"JS Business Management" }}</div>
+                            <div class="hidden truncate text-xs text-slate-500 sm:block">{% if SUPPORT_ACCESS %}<span class="font-bold text-amber-700">SUPPORT MODE · audited</span>{% else %}Operational workspace{% endif %}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        {% if SUPPORT_ACCESS %}<form method="post" action="{% url 'exit_support_access' %}">{% csrf_token %}<button type="submit" class="jims-btn jims-btn-secondary">Exit support</button></form>{% endif %}
+                        {% if "customers.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-create' %}" class="jims-btn jims-btn-secondary jims-btn-compact hidden sm:inline-flex">New customer</a>{% endif %}
+                        {% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}" class="jims-btn jims-btn-primary jims-btn-compact">New invoice</a>
+                        <form method="post" action="{% url 'inventory:cart_create' %}">
+                            {% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary">Start sale</button>
+                        </form>{% endif %}
+                    </div>
+                </header>
+    {% else %}
+        <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+            <div class="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+                <a href="{% url 'main_app:workspace_home' %}" class="flex items-center gap-3">
+                    <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-sm font-extrabold text-white">JS</span>
+                    <span><span class="block text-sm font-extrabold text-slate-950">JBMS</span><span class="block text-xs text-slate-500">Business Management</span></span>
                 </a>
-
-                {% if user.is_authenticated %}
-                    <button type="button" class="jims-btn jims-btn-secondary lg:hidden" data-nav-toggle aria-controls="primary-navigation" aria-expanded="false">
-                        <span class="sr-only">Toggle navigation</span>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/>
-                        </svg>
-                        Menu
-                    </button>
-
-                    <nav id="primary-navigation" class="absolute inset-x-0 top-16 hidden border-b border-slate-200 bg-white p-4 shadow-lg lg:static lg:flex lg:items-center lg:gap-1 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none" data-nav-panel aria-label="Primary navigation">
-                        <div class="grid gap-1 sm:grid-cols-2 lg:flex">
-                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'customer-list' %}" {% if request.resolver_match.url_name == "customer-list" %}aria-current="page"{% endif %}>Customers</a>
-                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'package-list' %}" {% if request.resolver_match.url_name == "package-list" %}aria-current="page"{% endif %}>Services</a>
-                            {% if INVENTORY_CAN_VIEW_STOCK %}
-                                <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.app_name == "inventory" or "product-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Inventory</a>
-                            {% endif %}
-                            <a class="jims-nav-link rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950" href="{% url 'billing:document_list' doc_type='invoice' %}" {% if request.resolver_match.app_name == "billing" %}aria-current="page"{% endif %}>Billing</a>
-                        </div>
-
-                        <div class="mt-3 border-t border-slate-200 pt-3 lg:ml-2 lg:mt-0 lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0">
-                            <div class="jims-menu">
-                                <button type="button" class="jims-btn jims-btn-quiet w-full lg:w-auto" data-menu-button aria-controls="account-menu" aria-expanded="false">
-                                    <span class="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700" aria-hidden="true">{{ user.username|slice:":1"|upper }}</span>
-                                    <span class="max-w-32 truncate">{{ user.get_short_name|default:user.username }}</span>
-                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 text-slate-400" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.72a.75.75 0 0 1 1.06 0L10 11.44l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.78a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
-                                </button>
-                                <div id="account-menu" class="jims-menu-panel" data-menu-panel hidden>
-                                    <a href="{% url 'billing:document_list' doc_type='quotation' %}">Quotations</a>
-                                    <a href="{% url 'billing:document_list' doc_type='receipt' %}">Receipts</a>
-                                    {% if user.is_superuser or request.user_role == "TENANT_ADMIN" %}
-                                        <a href="{% url 'branding_settings' %}">Organization settings</a>
-                                        <a href="{% url 'custom-field-list' %}">Custom fields</a>
-                                        <a href="{% url 'inventory:settings' %}">Inventory settings</a>
-                                    {% endif %}
-                                    {% if user.is_superuser %}<a href="{% url 'admin:index' %}">Django admin</a>{% endif %}
-                                    <form method="post" action="{% url 'logout' %}">
-                                        {% csrf_token %}
-                                        <button type="submit">Log out</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    </nav>
-                {% else %}
-                    <a class="jims-btn jims-btn-primary" href="{% url 'login' %}">Log in</a>
-                {% endif %}
+                <a class="jims-btn jims-btn-primary" href="{% url 'login' %}">Log in</a>
             </div>
+        </header>
+    {% endif %}
+
+    <main id="main" class="{% if user.is_authenticated %}jims-workspace{% else %}mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8{% endif %}">
+        <div class="{% if user.is_authenticated %}jims-workspace-inner{% endif %}">
+            {% include "includes/messages.html" %}
+            {% block content %}{% endblock %}
         </div>
-    </header>
-
-    <main id="main" class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
-        {% if messages %}
-            <div class="mb-6 space-y-2" role="status" aria-live="polite">
-                {% for message in messages %}
-                    {% if 'error' in message.tags %}
-                        <div class="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
-                    {% elif 'success' in message.tags %}
-                        <div class="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"><span class="font-bold" aria-hidden="true">✓</span><span>{{ message }}</span></div>
-                    {% elif 'warning' in message.tags %}
-                        <div class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
-                    {% else %}
-                        <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800">{{ message }}</div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-        {% endif %}
-
-        {% block content %}{% endblock %}
     </main>
 
-    <footer class="border-t border-slate-200 bg-white">
-        <div class="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-            <span>&copy; 2026 JS Business Management System</span>
-            <span>Secure operations for business management</span>
+    {% if user.is_authenticated %}
+                <footer class="shrink-0 border-t border-slate-200 bg-white px-4 py-4 text-xs text-slate-500 sm:px-6 lg:px-8">
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span>&copy; 2026 JS Business Management System</span>
+                        <span>Secure operations for business management</span>
+                    </div>
+                </footer>
+            </div>
         </div>
-    </footer>
+    {% else %}
+        <footer class="border-t border-slate-200 bg-white">
+            <div class="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+                <span>&copy; 2026 JS Business Management System</span>
+                <span>Secure operations for business management</span>
+            </div>
+        </footer>
+    {% endif %}
 
-    <div class="jims-dialog-backdrop" data-confirm-layer role="dialog" aria-modal="true" aria-labelledby="jims-confirm-title" hidden>
+    <div class="jims-dialog-backdrop" data-confirm-layer role="dialog" aria-modal="true" aria-labelledby="jims-confirm-title" aria-describedby="jims-confirm-message" hidden>
         <div class="jims-dialog">
-            <h2 id="jims-confirm-title" class="text-lg font-semibold text-slate-950" data-confirm-title>Confirm action</h2>
-            <p class="mt-2 text-sm leading-6 text-slate-600" data-confirm-message></p>
+            <h2 id="jims-confirm-title" class="text-lg font-semibold text-slate-950" data-confirm-dialog-title>Confirm action</h2>
+            <p id="jims-confirm-message" class="mt-2 text-sm leading-6 text-slate-600" data-confirm-dialog-message></p>
             <div class="mt-6 flex justify-end gap-3">
-                <button type="button" class="jims-btn jims-btn-secondary" data-confirm-cancel>Cancel</button>
-                <button type="button" class="jims-btn jims-btn-primary" data-confirm-accept>Confirm</button>
+                <button type="button" class="jims-btn jims-btn-secondary" data-confirm-dialog-cancel>Cancel</button>
+                <button type="button" class="jims-btn jims-btn-primary" data-confirm-dialog-accept>Confirm</button>
             </div>
         </div>
     </div>

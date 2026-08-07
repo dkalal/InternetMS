@@ -1,8 +1,10 @@
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from threading import Barrier, Lock, Thread
 
+from django.contrib.staticfiles import finders
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import close_old_connections, connection
@@ -13,10 +15,11 @@ from openpyxl import Workbook
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
+from audit.models import AuditLog
 from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
 from customers.models import Customer
-from products.models import Product
+from products.models import Product, ProductCategory
 from services.models import Package
 from integrations.models import IntegrationConsumer
 from users.models import Organization, UserAccessProfile
@@ -25,6 +28,7 @@ from .imports import commit_import, validate_workbook
 from .models import (
     Cart,
     CartLine,
+    CartSerialSelection,
     DocumentSerialSelection,
     InventoryBalance,
     InventorySale,
@@ -169,6 +173,40 @@ class InventoryAcceptanceTests(TestCase):
             self.pay(invoice, amount=Decimal('1.00'))
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('10.00'))
 
+    def test_07b_mixed_product_and_package_invoice_still_requires_full_payment(self):
+        self.receive(quantity=10)
+        package = Package.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            name='Business Internet',
+            package_type='indoor',
+            speed='20 Mbps',
+            monthly_fee=Decimal('100000.00'),
+            setup_fee=Decimal('0.00'),
+            description='Internet subscription',
+            is_active=True,
+        )
+        invoice = BillingService.create_document(
+            organization=self.org,
+            created_by=self.admin,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk,
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal('0.00'),
+            items=[
+                LineItemInput(product_id=self.product.pk, quantity=Decimal('1.00')),
+                LineItemInput(package_id=package.pk, quantity=Decimal('1.00')),
+            ],
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, 'require complete payment'):
+            self.pay(invoice, amount=Decimal('50000.00'), reference='mixed-partial')
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
+        self.assertFalse(invoice.receipts.exists())
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('10.00'))
+
     def test_08_draft_unpaid_and_void_invoice_do_not_deduct_stock(self):
         self.receive(quantity=10)
         draft = self.invoice(quantity=2, status=BillingDocument.Status.DRAFT)
@@ -244,10 +282,157 @@ class InventoryAcceptanceTests(TestCase):
 
     def test_start_sale_opens_an_editable_pos_draft_immediately(self):
         self.client.login(username='inventory-admin', password='pass')
-        response = self.client.get(reverse('inventory:cart_create'))
+        response = self.client.post(reverse('inventory:cart_create'))
         cart = Cart.objects.get(created_by=self.admin)
         self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
         self.assertEqual(cart.status, Cart.Status.DRAFT)
+        repeat_response = self.client.post(reverse('inventory:cart_create'))
+        self.assertRedirects(repeat_response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertEqual(Cart.objects.filter(created_by=self.admin, status=Cart.Status.DRAFT).count(), 1)
+        self.assertEqual(self.client.get(reverse('inventory:cart_create')).status_code, 404)
+
+    def test_discard_sale_is_soft_idempotent_audited_and_never_changes_stock(self):
+        self.receive(quantity=5)
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('2.00'), unit_price=Decimal('150.00')
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_abandon', args=[cart.pk])
+
+        response = self.client.post(url, follow=True)
+
+        self.assertRedirects(response, reverse('inventory:cart_list'))
+        self.assertContains(response, 'Sale discarded')
+        cart.refresh_from_db()
+        self.assertEqual(cart.status, Cart.Status.ABANDONED)
+        self.assertEqual(cart.lines.count(), 1)
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('5.00'))
+        log = AuditLog.objects.get(action='inventory.cart.abandoned', object_id=str(cart.pk))
+        self.assertEqual(log.old_value['status'], Cart.Status.DRAFT)
+        self.assertEqual(log.new_value['status'], Cart.Status.ABANDONED)
+        self.assertEqual(log.metadata['stock_changed'], False)
+        self.assertEqual(log.metadata['financial_document_created'], False)
+
+        repeat = self.client.post(url, follow=True)
+        self.assertContains(repeat, 'already discarded')
+        self.assertEqual(
+            AuditLog.objects.filter(action='inventory.cart.abandoned', object_id=str(cart.pk)).count(),
+            1,
+        )
+
+    def test_discard_sale_rejects_get_converted_and_cross_tenant_carts(self):
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(cart=cart, product=self.product, quantity=1, unit_price=Decimal('150.00'))
+        quotation = CartService.convert(
+            organization=self.org,
+            cart_id=cart.pk,
+            target=BillingDocument.DocumentType.QUOTATION,
+            actor=self.admin,
+        )
+        other_cart = Cart.objects.create(
+            organization=self.other_org, tenant=self.other_org, created_by=self.admin
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        self.assertEqual(self.client.get(reverse('inventory:cart_abandon', args=[cart.pk])).status_code, 404)
+        response = self.client.post(reverse('inventory:cart_abandon', args=[cart.pk]), follow=True)
+        self.assertContains(response, 'Only an unconverted draft sale can be discarded')
+        cart.refresh_from_db()
+        self.assertEqual(cart.status, Cart.Status.CONVERTED)
+        self.assertEqual(cart.quotation_id, quotation.pk)
+        self.assertEqual(
+            self.client.post(reverse('inventory:cart_abandon', args=[other_cart.pk])).status_code,
+            404,
+        )
+
+    def test_pos_large_customer_and_category_sets_use_searchable_controls_without_category_chips(self):
+        Customer.objects.bulk_create([
+            Customer(
+                organization=self.org,
+                tenant=self.org,
+                name=f'Customer {index:03d}',
+                customer_type='random',
+                status=Customer.Status.ACTIVE,
+                location='Moshi',
+            )
+            for index in range(120)
+        ])
+        ProductCategory.objects.bulk_create([
+            ProductCategory(
+                organization=self.org,
+                tenant=self.org,
+                name=f'Category {index:03d}',
+            )
+            for index in range(120)
+        ])
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="id_customer"', html=False)
+        self.assertContains(response, 'data-searchable-select="true"', count=2, html=False)
+        self.assertContains(response, 'Customer 119')
+        self.assertContains(response, 'Category 119')
+        self.assertNotContains(response, 'href="?category=', html=False)
+
+    def test_confirmation_dialog_uses_scoped_hooks_that_cannot_match_action_forms(self):
+        script_path = finders.find('inventory/js/jims-ui.js')
+        self.assertIsNotNone(script_path)
+        script = Path(script_path).read_text(encoding='utf-8')
+        self.assertIn('confirmLayer.querySelector("[data-confirm-dialog-title]")', script)
+        self.assertNotIn('document.querySelector("[data-confirm-title]")', script)
+
+    def test_serialized_cart_line_shows_searchable_available_serials_and_saves_selection(self):
+        serialized_product = self.make_product('Managed Router', 'SER-UI-001', serialized=True)
+        self.receive(product=serialized_product, quantity=2, serials='SN-UI-001\nSN-UI-002')
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_line_create', args=[cart.pk])
+
+        response = self.client.get(url, {'product': serialized_product.pk})
+
+        self.assertContains(response, 'SN-UI-001')
+        self.assertContains(response, 'data-serial-search')
+        serial = StockUnit.objects.get(product=serialized_product, serial_number='SN-UI-001')
+        response = self.client.post(url, {
+            'product': serialized_product.pk,
+            'quantity': '1.00',
+            'discount_amount': '0.00',
+            'serial_units': [serial.pk],
+        })
+        line = CartLine.objects.get(cart=cart, product=serialized_product)
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertTrue(CartSerialSelection.objects.filter(cart_line=line, stock_unit=serial).exists())
+
+    def test_serialized_walk_in_cart_uses_wholesale_price_at_product_threshold(self):
+        serialized_product = self.make_product('Bulk Router', 'BULK-SER-001', serialized=True)
+        serial_numbers = [f'BULK-SN-{number:03d}' for number in range(1, 6)]
+        self.receive(product=serialized_product, quantity=5, serials='\n'.join(serial_numbers))
+        serialized_product.allow_wholesale = True
+        serialized_product.wholesale_price = Decimal('120.00')
+        serialized_product.wholesale_min_quantity = Decimal('5.00')
+        serialized_product.save(update_fields=['allow_wholesale', 'wholesale_price', 'wholesale_min_quantity'])
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_line_create', args=[cart.pk]), {
+            'product': serialized_product.pk,
+            'quantity': '5.00',
+            'discount_amount': '0.00',
+            'serial_units': list(StockUnit.objects.filter(product=serialized_product).values_list('pk', flat=True)),
+        })
+
+        line = CartLine.objects.get(cart=cart, product=serialized_product)
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertEqual(line.unit_price, Decimal('120.00'))
+        invoice = CartService.convert(
+            organization=self.org, cart_id=cart.pk, target=BillingDocument.DocumentType.INVOICE, actor=self.admin,
+        )
+        self.assertEqual(invoice.items.get().unit_price, Decimal('120.00'))
+        self.assertEqual(invoice.items.get().pricing_mode, BillingLineItem.PricingMode.WHOLESALE)
 
     def test_pos_ajax_reprices_wholesale_customer_at_product_minimum(self):
         self.receive(quantity=5)
@@ -278,6 +463,58 @@ class InventoryAcceptanceTests(TestCase):
         )
         self.assertEqual(invoice.items.get().unit_price, Decimal('120.00'))
         self.assertEqual(invoice.items.get().pricing_mode, BillingLineItem.PricingMode.WHOLESALE)
+
+    def test_pos_ajax_saves_sale_details_and_returns_authoritative_checkout_total(self):
+        self.product.tax_eligible = False
+        self.product.save(update_fields=['tax_eligible'])
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, customer=self.customer, created_by=self.admin,
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('1.00'), unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_detail', args=[cart.pk]), {
+            'customer': self.customer.pk,
+            'walk_in_name': '',
+            'sale_pricing_category': Cart.SalePricingCategory.STANDARD,
+            'discount_amount': '10.00',
+            'tax_rate': '18.00',
+            'notes': '',
+        }, HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_ACCEPT='application/json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['taxable_subtotal'], '0.00')
+        self.assertEqual(response.json()['tax'], '0.00')
+        self.assertEqual(response.json()['grand_total'], '140.00')
+        self.assertIn('140.00', response.json()['checkout_html'])
+        cart.refresh_from_db()
+        self.assertEqual(cart.discount_amount, Decimal('10.00'))
+        self.assertEqual(cart.tax_rate, Decimal('18.00'))
+
+    def test_pos_ajax_rejects_cart_discount_above_repriced_subtotal_atomically(self):
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, customer=self.customer, created_by=self.admin,
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('1.00'), unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_detail', args=[cart.pk]), {
+            'customer': self.customer.pk,
+            'walk_in_name': '',
+            'sale_pricing_category': Cart.SalePricingCategory.STANDARD,
+            'discount_amount': '151.00',
+            'tax_rate': '18.00',
+            'notes': '',
+        }, HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_ACCEPT='application/json')
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('discount_amount', response.json()['errors'])
+        cart.refresh_from_db()
+        self.assertEqual(cart.discount_amount, Decimal('0.00'))
 
     def test_09_same_invoice_cannot_deduct_stock_twice(self):
         self.receive(quantity=10)
@@ -373,7 +610,7 @@ class InventoryAcceptanceTests(TestCase):
             commit_import(organization=self.org, actor=self.admin, job_id=job.pk)
         self.assertFalse(InventoryBalance.objects.filter(product=self.product).exists())
 
-    def test_17_existing_package_invoice_partial_payment_workflow_still_works(self):
+    def test_17_package_invoice_accepts_partial_payment_without_inventory_sale(self):
         package = Package.objects.create(
             organization=self.org, tenant=self.org, name='10 Mbps', package_type='indoor', speed='10 Mbps',
             monthly_fee=Decimal('100.00'), setup_fee=Decimal('0.00'), description='Internet package'
@@ -383,12 +620,14 @@ class InventoryAcceptanceTests(TestCase):
             customer_id=self.customer.pk, status=BillingDocument.Status.ISSUED, tax_rate=0,
             items=[LineItemInput(package_id=package.pk, quantity=Decimal('1.00'), unit_price=package.monthly_fee)],
         )
-        BillingService.create_receipt_from_invoice(
+        receipt = BillingService.create_receipt_from_invoice(
             organization=self.org, created_by=self.admin, invoice_id=invoice.pk, amount_paid=Decimal('50.00'),
-            payment_method='cash', payment_reference='legacy-partial',
+            payment_method='cash', payment_reference='package-partial',
         )
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, BillingDocument.Status.PARTIALLY_PAID)
+        self.assertEqual(receipt.total, Decimal('50.00'))
+        self.assertEqual(BillingService.invoice_remaining_balance(organization=self.org, invoice=invoice), Decimal('50.00'))
         self.assertFalse(InventorySale.objects.filter(invoice=invoice).exists())
 
     def test_cart_calculation_order_and_fixed_price(self):
@@ -421,6 +660,34 @@ class InventoryAcceptanceTests(TestCase):
         )
         self.assertEqual(direct.items.get().unit_price, Decimal('150.00'))
 
+    def test_cart_conversion_excludes_tax_exempt_product_from_vat(self):
+        self.product.tax_eligible = False
+        self.product.save(update_fields=['tax_eligible'])
+        self.receive(quantity=1)
+        cart = Cart.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            customer=self.customer,
+            created_by=self.admin,
+            tax_rate=Decimal('18.00'),
+        )
+        CartLine.objects.create(
+            cart=cart,
+            product=self.product,
+            quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+
+        invoice = CartService.convert(
+            organization=self.org,
+            cart_id=cart.pk,
+            target=BillingDocument.DocumentType.INVOICE,
+            actor=self.admin,
+        )
+
+        self.assertEqual(invoice.tax_amount, Decimal('0.00'))
+        self.assertEqual(invoice.total, Decimal('150.00'))
+
     def test_inventory_pages_and_excel_export_render_for_admin(self):
         self.client.login(username='inventory-admin', password='pass')
         for url in [
@@ -437,6 +704,28 @@ class InventoryAcceptanceTests(TestCase):
         export = self.client.get(reverse('inventory:report', args=['stock-valuation']), {'export': 'xlsx'})
         self.assertEqual(export.status_code, 200)
         self.assertEqual(export['Content-Type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    def test_category_editor_saves_icon_and_default_unit(self):
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+
+        response = self.client.get(create_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Category icon')
+        self.assertContains(response, 'Applied automatically to new products')
+
+        response = self.client.post(create_url, {
+            'name': 'Cables',
+            'description': 'Copper and fiber cabling.',
+            'measure_unit': 'Meter',
+            'icon': ProductCategory.Icon.CABLE,
+            'is_active': 'on',
+        })
+
+        self.assertRedirects(response, reverse('inventory:category_list'))
+        category = ProductCategory.objects.get(tenant=self.org, name='Cables')
+        self.assertEqual(category.measure_unit, 'Meter')
+        self.assertEqual(category.icon, ProductCategory.Icon.CABLE)
 
     def test_movement_list_renders_system_created_movements(self):
         StockMovement.objects.create(
@@ -493,14 +782,37 @@ class InventoryAcceptanceTests(TestCase):
         dashboard = self.client.get(reverse('inventory:dashboard'))
         self.assertEqual(dashboard.status_code, 200)
         self.assertContains(dashboard, 'Catalog items')
-        self.assertContains(dashboard, 'Stock units')
+        self.assertContains(dashboard, 'Low stock')
         self.assertNotContains(dashboard, 'Stock value')
+        self.assertNotContains(dashboard, 'Total wholesale')
 
         stock = self.client.get(reverse('inventory:stock_list'), {'state': 'low'})
         self.assertEqual(stock.status_code, 200)
         self.assertContains(stock, 'Low stock')
         self.assertContains(stock, self.product.sku)
         self.assertNotContains(stock, 'Average cost')
+
+    def test_inventory_dashboard_values_current_stock_at_each_sale_price_category(self):
+        self.product.technician_price = Decimal('135.00')
+        self.product.allow_wholesale = True
+        self.product.wholesale_price = Decimal('120.00')
+        self.product.wholesale_min_quantity = Decimal('2.00')
+        self.product.save(update_fields=[
+            'technician_price', 'allow_wholesale', 'wholesale_price', 'wholesale_min_quantity',
+        ])
+        self.receive(quantity=2)
+        self.client.login(username='inventory-admin', password='pass')
+
+        dashboard = self.client.get(reverse('inventory:dashboard'))
+
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(dashboard.context['total_stock_value'], Decimal('200.00'))
+        self.assertEqual(dashboard.context['total_technician_value'], Decimal('270.00'))
+        self.assertEqual(dashboard.context['total_wholesale_value'], Decimal('240.00'))
+        self.assertEqual(dashboard.context['total_selling_value'], Decimal('300.00'))
+        self.assertContains(dashboard, 'Technician sales value')
+        self.assertContains(dashboard, 'Wholesale sales value')
+        self.assertContains(dashboard, 'Standard sales value')
 
     def test_stock_adjustment_ui_previews_balance_and_requires_confirmation(self):
         self.receive(quantity=3)
@@ -528,6 +840,41 @@ class InventoryAcceptanceTests(TestCase):
         self.assertNotContains(response, 'you can register another payment later')
 
 
+class CartTechnicianPricingTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(name="POS Pricing", slug="pos-pricing")
+        self.user = User.objects.create_user(username="pos-pricing-user", password="pass")
+        self.product = Product.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name="Cable tester",
+            sku="TESTER-1",
+            item_type=Product.ItemType.SERVICE,
+            track_stock=False,
+            quantity=Decimal("0.00"),
+            buying_price=Decimal("100.00"),
+            selling_price=Decimal("150.00"),
+            technician_price=Decimal("125.00"),
+        )
+
+    def test_cart_category_controls_price_without_registered_technician(self):
+        cart = Cart.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            created_by=self.user,
+            walk_in_name="Independent installer",
+            sale_pricing_category=Cart.SalePricingCategory.TECHNICIAN,
+        )
+        unit_price, mode = CartService.line_pricing(
+            product=self.product,
+            quantity=Decimal("1.00"),
+            sale_pricing_category=cart.sale_pricing_category,
+        )
+        self.assertEqual(unit_price, Decimal("125.00"))
+        self.assertEqual(mode, BillingLineItem.PricingMode.TECHNICIAN)
+        self.assertIsNone(cart.customer)
+
+
 class InventoryAPITests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name='API Tenant', slug='api-inventory-tenant')
@@ -544,7 +891,7 @@ class InventoryAPITests(TestCase):
         self.product = Product.objects.create(
             organization=self.org, tenant=self.org, sku='API-RTR', name='API Router', item_type='physical',
             track_stock=True, quantity=0, stock=0, measure_unit='Unit', buying_price=100, selling_price=150,
-            retail_price=150,
+            retail_price=150, technician_price=130,
         )
         InventoryService.adjust_stock(
             organization=self.org, product_id=self.product.pk, quantity_delta=5,
@@ -562,6 +909,22 @@ class InventoryAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()['results']
         self.assertEqual([row['sku'] for row in payload], ['API-RTR'])
+        self.assertEqual(payload[0]['technician_price'], '130.00')
+
+    def test_restricted_api_user_cannot_see_buying_or_technician_configuration_prices(self):
+        sales_user = User.objects.create_user(username='inventory-api-sales', password='pass')
+        UserAccessProfile.objects.create(user=sales_user, tenant=self.org, role=UserAccessProfile.Role.TENANT_STAFF)
+        IntegrationConsumer.objects.create(user=sales_user, organization=self.org, name='Restricted Inventory API')
+        sales_token = Token.objects.create(user=sales_user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {sales_token.key}')
+
+        response = client.get('/api/inventory/products/')
+
+        self.assertEqual(response.status_code, 200)
+        product_data = response.json()['results'][0]
+        self.assertNotIn('buying_price', product_data)
+        self.assertNotIn('technician_price', product_data)
 
     def test_api_invoice_write_and_full_payment_use_inventory_service(self):
         invoice_response = self.client.post('/api/inventory/invoices/', {
@@ -584,9 +947,22 @@ class InventoryAPITests(TestCase):
         self.assertEqual(paid.status_code, 201, paid.data)
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('3.00'))
 
+    def test_api_requires_explicit_technician_category_and_snapshots_its_price(self):
+        response = self.client.post('/api/inventory/invoices/', {
+            'customer_id': self.customer.pk,
+            'sale_pricing_category': BillingDocument.SalePricingCategory.TECHNICIAN,
+            'status': BillingDocument.Status.DRAFT,
+            'tax_rate': '0.00',
+            'items': [{'product_id': self.product.pk, 'quantity': '1.00', 'discount_amount': '0.00'}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['sale_pricing_category'], BillingDocument.SalePricingCategory.TECHNICIAN)
+        self.assertEqual(Decimal(response.data['items'][0]['unit_price']), Decimal('130.00'))
+
 
 class InventoryConcurrencyTests(TransactionTestCase):
-    reset_sequences = True
+    reset_sequences = False
 
     def setUp(self):
         if not connection.features.has_select_for_update:

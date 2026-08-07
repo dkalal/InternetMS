@@ -3,11 +3,11 @@
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
 {{ stock_levels|json_script:"stock-level-data" }}
-<div class="mx-auto max-w-4xl space-y-5">
-  <header>
-    <p class="text-sm font-semibold text-brand-700">Sensitive stock operation</p>
-    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Adjust stock</h1>
-    <p class="mt-1 text-sm text-slate-600">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p>
+<div class="jims-workflow-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header">
+    <div><p class="jims-page-eyebrow">Sensitive stock operation</p>
+    <h1 class="jims-page-title">Adjust stock</h1>
+    <p class="jims-page-subtitle">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p></div>
   </header>
 
   <form method="post" class="grid gap-5 lg:grid-cols-3" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">

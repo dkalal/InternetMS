@@ -23,11 +23,6 @@ class CustomFieldTenantMixin(LoginRequiredMixin):
     permission_code = PermissionCode.CUSTOM_FIELD_MANAGE
 
     def get_organization(self):
-        if getattr(self.request.user, "is_superuser", False):
-            organization_id = self.request.GET.get("organization") or self.request.POST.get("organization")
-            if organization_id:
-                return get_object_or_404(Organization, pk=organization_id, is_active=True)
-            return None
         return require_organization(self.request)
 
     def dispatch(self, request, *args, **kwargs):
@@ -83,13 +78,6 @@ class CustomFieldDefinitionCreateView(CustomFieldTenantMixin, CreateView):
         kwargs["organization"] = self.organization
         return kwargs
 
-    def dispatch(self, request, *args, **kwargs):
-        if getattr(request.user, "is_superuser", False):
-            organization_id = request.GET.get("organization") or request.POST.get("organization")
-            if not organization_id:
-                return redirect("custom-field-org-select")
-        return super().dispatch(request, *args, **kwargs)
-
     def form_valid(self, form):
         form.instance.organization = self.organization
         form.instance.tenant = self.organization
@@ -98,10 +86,7 @@ class CustomFieldDefinitionCreateView(CustomFieldTenantMixin, CreateView):
         return super().form_valid(form)
 
     def get_success_url(self):
-        url = reverse_lazy("custom-field-list")
-        if getattr(self.request.user, "is_superuser", False):
-            return f"{url}?organization={self.organization.id}"
-        return url
+        return reverse_lazy("custom-field-list")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -117,10 +102,6 @@ class CustomFieldInlineCreateView(CustomFieldTenantMixin, CreateView):
     def dispatch(self, request, *args, **kwargs):
         if request.method != "POST":
             return redirect("custom-field-list")
-        if getattr(request.user, "is_superuser", False):
-            organization_id = request.GET.get("organization") or request.POST.get("organization")
-            if not organization_id:
-                return redirect("custom-field-org-select")
         return super().dispatch(request, *args, **kwargs)
 
     def get_form_kwargs(self):
@@ -201,13 +182,6 @@ class CustomFieldDefinitionUpdateView(CustomFieldTenantMixin, UpdateView):
         kwargs["organization"] = self.organization
         return kwargs
 
-    def dispatch(self, request, *args, **kwargs):
-        if getattr(request.user, "is_superuser", False):
-            organization_id = request.GET.get("organization") or request.POST.get("organization")
-            if not organization_id:
-                return redirect("custom-field-org-select")
-        return super().dispatch(request, *args, **kwargs)
-
     def form_valid(self, form):
         form.instance.organization = self.organization
         form.instance.tenant = self.organization
@@ -215,10 +189,7 @@ class CustomFieldDefinitionUpdateView(CustomFieldTenantMixin, UpdateView):
         return super().form_valid(form)
 
     def get_success_url(self):
-        url = reverse_lazy("custom-field-list")
-        if getattr(self.request.user, "is_superuser", False):
-            return f"{url}?organization={self.organization.id}"
-        return url
+        return reverse_lazy("custom-field-list")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -229,15 +200,8 @@ class CustomFieldDefinitionUpdateView(CustomFieldTenantMixin, UpdateView):
 
 class CustomFieldDefinitionDeactivateView(CustomFieldTenantMixin, View):
     def post(self, request, *args, **kwargs):
-        if getattr(request.user, "is_superuser", False):
-            organization_id = request.GET.get("organization") or request.POST.get("organization")
-            if not organization_id:
-                return redirect("custom-field-org-select")
         custom_field = get_object_or_404(CustomFieldDefinition, organization=self.organization, pk=kwargs["pk"])
         custom_field.is_active = False
         custom_field.save(update_fields=["is_active", "updated_at"])
         messages.success(request, f"Custom field {custom_field.label} deactivated.")
-        url = reverse_lazy("custom-field-list")
-        if getattr(request.user, "is_superuser", False):
-            return redirect(f"{url}?organization={self.organization.id}")
-        return redirect(url)
+        return redirect(reverse_lazy("custom-field-list"))

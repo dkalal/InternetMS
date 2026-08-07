@@ -3,17 +3,18 @@
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
 
-<div class="mx-auto max-w-6xl space-y-5">
-  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-form-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header">
     <div>
-      <nav class="text-sm text-slate-500" aria-label="Breadcrumb">
+      <nav class="jims-breadcrumb" aria-label="Breadcrumb">
         <a class="hover:text-brand-700" href="{% url 'product-list' %}">Catalog</a>
         <span class="px-1" aria-hidden="true">/</span>
         <span>{% if form.instance.pk %}Edit item{% else %}New item{% endif %}</span>
       </nav>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add product or service{% endif %}</h1>
-      <p class="mt-1 text-sm text-slate-600">Create one reusable catalog record for purchasing, sales, quotations, and invoices.</p>
+      <h1 class="jims-page-title mt-1">{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add product or service{% endif %}</h1>
+      <p class="jims-page-subtitle">Create one reusable catalog record for purchasing, sales, quotations, and invoices.</p>
     </div>
+    <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Back to catalog</a>
   </header>
 
   {% if has_movement_history %}
@@ -31,9 +32,20 @@
       </div>
     {% endif %}
 
-    <div class="grid gap-5 lg:grid-cols-3">
-      <div class="space-y-5 lg:col-span-2">
-        <section class="jims-panel">
+    <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_19rem] 2xl:grid-cols-[14rem_minmax(0,1fr)_19rem]">
+      <aside class="hidden 2xl:order-1 2xl:block">
+        <nav class="jims-panel sticky top-24 p-3" aria-label="Product form sections">
+          <p class="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">On this page</p>
+          <a class="jims-sidebar-link" href="#product-basics">Item foundation</a>
+          <a class="jims-sidebar-link" href="#product-identifiers">Classification</a>
+          {% if INVENTORY_CAN_VIEW_COSTS %}<a class="jims-sidebar-link" href="#product-pricing">Commercial settings</a>{% endif %}
+          <a class="jims-sidebar-link" href="#product-inventory">Inventory controls</a>
+          <a class="jims-sidebar-link" href="#product-association">Customer association</a>
+        </nav>
+      </aside>
+
+      <div class="space-y-5 2xl:order-2">
+        <section id="product-basics" class="jims-form-section">
           <div class="jims-panel-header">
             <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">1 · Basic information</p>
             <h2 class="mt-1 font-semibold text-slate-950">What are you selling?</h2>
@@ -46,16 +58,18 @@
           </div>
         </section>
 
-        <section class="jims-panel">
+        <section id="product-identifiers" class="jims-form-section">
           <div class="jims-panel-header">
             <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">2 · Classification and identifiers</p>
             <h2 class="mt-1 font-semibold text-slate-950">Make the item easy to find</h2>
           </div>
           <div class="grid gap-4 p-5 sm:grid-cols-2">
-            {% include "components/form_field.html" with field=form.item_type %}
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.item_type %}
+              <div class="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950" data-product-type-summary aria-live="polite">Choose an item type to see the relevant stock controls.</div>
+            </div>
             {% include "components/form_field.html" with field=form.catalog_category %}
+            {% include "components/form_field.html" with field=form.sales_unit %}
             {% include "components/form_field.html" with field=form.sku %}
-            {% include "components/form_field.html" with field=form.measure_unit %}
             <div data-physical-only>{% include "components/form_field.html" with field=form.brand %}</div>
             <div data-physical-only>{% include "components/form_field.html" with field=form.model_number %}</div>
             <div class="hidden">{{ form.category }}</div>
@@ -63,7 +77,7 @@
         </section>
 
         {% if INVENTORY_CAN_VIEW_COSTS %}
-          <section class="jims-panel">
+          <section id="product-pricing" class="jims-form-section">
             <div class="jims-panel-header">
               <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">3 · Pricing</p>
               <h2 class="mt-1 font-semibold text-slate-950">Set acquisition and selling prices</h2>
@@ -72,7 +86,7 @@
             <div class="grid gap-4 p-5 sm:grid-cols-2">
               {% include "components/form_field.html" with field=form.buying_price %}
               {% include "components/form_field.html" with field=form.selling_price %}
-              {% include "components/form_field.html" with field=form.retail_price %}
+              {% include "components/form_field.html" with field=form.technician_price %}
               <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.tax_eligible %}</div>
               <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.allow_wholesale %}</div>
               <div class="grid gap-4 sm:col-span-2 sm:grid-cols-2" data-wholesale-panel>
@@ -83,7 +97,7 @@
           </section>
         {% endif %}
 
-        <section class="jims-panel" data-physical-only>
+        <section id="product-inventory" class="jims-form-section" data-physical-only>
           <div class="jims-panel-header">
             <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">4 · Inventory settings</p>
             <h2 class="mt-1 font-semibold text-slate-950">Control how physical stock is tracked</h2>
@@ -100,7 +114,7 @@
           </div>
         </section>
 
-        <section class="jims-panel">
+        <section id="product-association" class="jims-form-section">
           <div class="jims-panel-header">
             <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">5 · Optional details</p>
             <h2 class="mt-1 font-semibold text-slate-950">Customer association</h2>
@@ -111,19 +125,20 @@
         {% include "includes/custom_fields_form.html" %}
       </div>
 
-      <aside class="space-y-5">
+      <aside class="space-y-4 2xl:order-3">
         {% if INVENTORY_CAN_VIEW_COSTS %}
-          <section class="jims-panel p-5 lg:sticky lg:top-24">
+          <section class="jims-panel p-5 2xl:sticky 2xl:top-24">
             <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
             <dl class="mt-4 space-y-3 text-sm">
-              <div class="flex justify-between gap-4"><dt class="text-slate-500">Effective retail</dt><dd class="font-semibold text-slate-950" data-product-effective-retail>—</dd></div>
+              <div class="flex justify-between gap-4"><dt class="text-slate-500">Standard selling</dt><dd class="font-semibold text-slate-950" data-product-standard-selling>—</dd></div>
+              <div class="flex justify-between gap-4"><dt class="text-slate-500">Effective technician</dt><dd class="font-semibold text-slate-950" data-product-effective-technician>—</dd></div>
               <div class="flex justify-between gap-4"><dt class="text-slate-500">Gross margin</dt><dd class="font-semibold text-slate-950" data-product-margin>—</dd></div>
               <div class="flex justify-between gap-4 border-t border-slate-200 pt-3"><dt class="text-slate-500">Margin rate</dt><dd class="font-semibold text-slate-950" data-product-margin-rate>—</dd></div>
             </dl>
             <p class="mt-4 text-xs leading-5 text-slate-500">Operational margin guidance only; it is not full accounting profit.</p>
           </section>
         {% else %}
-          <section class="jims-panel p-5">
+          <section class="jims-panel p-5 2xl:sticky 2xl:top-24">
             <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
             <p class="mt-2 text-sm leading-6 text-slate-600">Buying cost and margin details require cost-report permission. No sensitive values are shown for your role.</p>
           </section>
@@ -131,8 +146,8 @@
       </aside>
     </div>
 
-    <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div class="jims-form-actions">
+      <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-xs text-slate-500">Catalog changes affect future documents. Stock balances remain movement-controlled.</p>
         <div class="flex justify-end gap-2">
           <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
@@ -144,4 +159,33 @@
 
   {% include "includes/custom_field_definition_modal.html" %}
 </div>
+{{ unit_rules|json_script:"product-unit-rules" }}
+<script>
+  (() => {
+    const categoryField = document.getElementById('id_catalog_category');
+    const unitField = document.getElementById('id_sales_unit');
+    const rulesNode = document.getElementById('product-unit-rules');
+    if (!categoryField || !unitField || !rulesNode) return;
+    const rules = JSON.parse(rulesNode.textContent || '{}');
+    let previousCategory = categoryField.value;
+    const syncUnits = () => {
+      const rule = rules[categoryField.value] || { allowed: [], default: '' };
+      const allowed = new Set(rule.allowed.map(String));
+      Array.from(unitField.options).forEach((option) => {
+        if (!option.value) return;
+        const visible = !categoryField.value || allowed.has(option.value);
+        option.hidden = !visible;
+        option.disabled = !visible;
+      });
+      if (categoryField.value && !allowed.has(unitField.value)) {
+        unitField.value = String(rule.default || '');
+      } else if (categoryField.value !== previousCategory && rule.default) {
+        unitField.value = String(rule.default);
+      }
+      previousCategory = categoryField.value;
+    };
+    categoryField.addEventListener('change', syncUnits);
+    syncUnits();
+  })();
+</script>
 {% endblock %}

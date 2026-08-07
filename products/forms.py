@@ -4,7 +4,7 @@ from django.utils.text import slugify
 from internetservices.tailwind import apply_tailwind
 from custom_fields.forms import CustomFieldFormMixin
 
-from .models import Product, ProductCategory
+from .models import Product, ProductCategory, UnitOfMeasure
 from customers.models import Customer
 
 
@@ -18,12 +18,12 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'name',
             'item_type',
             'catalog_category',
+            'sales_unit',
             'brand',
             'model_number',
-            'measure_unit',
             'buying_price',
             'selling_price',
-            'retail_price',
+            'technician_price',
             'wholesale_price',
             'wholesale_min_quantity',
             'allow_wholesale',
@@ -41,10 +41,9 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'description': forms.Textarea(attrs={'rows': 4, 'placeholder': 'Important specifications, warranty notes, or supplier details'}),
         }
         help_texts = {
-            'measure_unit': 'Examples: Unit, Meter, Kg, Box.',
             'buying_price': 'Your acquisition cost. Used for margin guidance.',
-            'selling_price': 'Default selling price when no retail price is set.',
-            'retail_price': 'Customer-facing standard price. Leave blank to use selling price.',
+            'selling_price': 'Default price for ordinary and direct customers.',
+            'technician_price': 'Special selling price for walk-in technicians. Leave blank to use Selling Price.',
             'wholesale_price': 'Only used when wholesale pricing is enabled.',
             'wholesale_min_quantity': 'Minimum quantity required before wholesale price applies.',
             'customer': 'Optional. Link this product to a specific customer when it is assigned or reserved.',
@@ -53,6 +52,7 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'track_stock': 'Stock changes only through purchases and authorized adjustments.',
             'is_serialized': 'Each received unit must have a unique serial number.',
             'reorder_threshold': 'Low-stock alert threshold for this product.',
+            'tax_eligible': 'Include this product in VAT/tax when the sale has a tax rate. Untick only for exempt items.',
         }
 
     def __init__(self, *args, **kwargs):
@@ -63,13 +63,15 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             self.fields['catalog_category'].queryset = ProductCategory.objects.filter(
                 organization=self.organization, is_active=True
             )
+            self.fields['sales_unit'].queryset = UnitOfMeasure.objects.filter(
+                tenant=self.organization, is_active=True
+            ).order_by('name')
         self.fields['sku'].required = False
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
         self.fields['customer'].empty_label = 'No customer association'
         self.fields['category'].empty_label = None
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Router, radio, cable, software license...')
-        self.fields['measure_unit'].widget.attrs.setdefault('placeholder', 'Unit')
         self.has_movement_history = bool(
             self.instance.pk
             and self.instance.stock_movements.exists()
@@ -117,4 +119,28 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             cleaned['track_expiry'] = False
         if cleaned.get('is_serialized'):
             cleaned['track_stock'] = True
+        catalog_category = cleaned.get('catalog_category')
+        sales_unit = cleaned.get('sales_unit')
+        if catalog_category:
+            allowed_units = catalog_category.allowed_units.all()
+            if sales_unit is None:
+                sales_unit = catalog_category.default_unit
+                cleaned['sales_unit'] = sales_unit
+                self.instance.sales_unit = sales_unit
+            if sales_unit is None or not allowed_units.filter(pk=sales_unit.pk).exists():
+                self.add_error('sales_unit', 'Select a unit allowed by the chosen category.')
+            elif sales_unit.tenant_id != catalog_category.tenant_id:
+                self.add_error('sales_unit', 'Unit and category must belong to the same tenant.')
+            else:
+                self.instance.measure_unit = sales_unit.label
+        elif cleaned.get('item_type') == Product.ItemType.PHYSICAL and cleaned.get('track_stock') and sales_unit is None:
+            # Keep legacy form/API submissions working while callers migrate from
+            # the old free-text ``measure_unit`` field. Product.save() resolves
+            # this value to a tenant-scoped UnitOfMeasure only after the complete
+            # form is valid, avoiding database writes during validation.
+            legacy_measure_unit = (self.data.get('measure_unit') or '').strip()
+            if legacy_measure_unit:
+                self.instance.measure_unit = legacy_measure_unit
+            else:
+                self.add_error('sales_unit', 'Stockable products require a sales unit.')
         return cleaned

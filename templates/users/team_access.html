@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Team & Access{% endblock %}
+{% block body_class %}team-access-page{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'users/css/team-access.css' %}">{% endblock %}
+{% block content %}
+<div class="team-workspace space-y-6" data-team-workspace data-team-invite-opened="{% if invite_open %}true{% else %}false{% endif %}">
+  <header class="team-page-header">
+    <div><p class="jims-page-eyebrow">{{ ACTIVE_ORGANIZATION.name }} workspace</p><h1 class="jims-page-title">Team &amp; Access</h1><p class="jims-page-subtitle">Manage workspace members, roles, and access.</p></div>
+    {% if team_can_manage %}<button type="button" class="jims-btn jims-btn-primary" data-team-invite-open>Invite member</button>{% endif %}
+  </header>
+
+  <section class="team-overview" aria-label="Workspace member overview">
+    <div class="team-overview__metrics"><div><span>Total members</span><strong>{{ team_counts.total }}</strong></div><div><span>Active</span><strong>{{ team_counts.active }}</strong></div><div><span>Pending invitations</span><strong>{{ team_counts.invited }}</strong></div><div><span>Inactive</span><strong>{{ team_counts.inactive }}</strong></div></div>
+    <p class="team-overview__note"><span aria-hidden="true">ⓘ</span> Managers can manage access within this workspace. Financial controls and platform access remain protected.</p>
+  </section>
+
+  <form method="get" class="team-filter-bar" aria-label="Filter workspace members">
+    <label class="team-search"><span class="sr-only">Search team members</span><input type="search" name="q" value="{{ query }}" placeholder="Search name or email"></label>
+    <label><span class="sr-only">Filter by role</span><select name="role"><option value="">All roles</option><option value="ADMIN_MANAGER" {% if role_filter == "ADMIN_MANAGER" %}selected{% endif %}>Administrator / Manager</option><option value="SALES" {% if role_filter == "SALES" %}selected{% endif %}>Sales</option><option value="TECHNICIAN" {% if role_filter == "TECHNICIAN" %}selected{% endif %}>Technician</option></select></label>
+    <label><span class="sr-only">Filter by status</span><select name="status"><option value="">All statuses</option><option value="active" {% if status_filter == "active" %}selected{% endif %}>Active</option><option value="invited" {% if status_filter == "invited" %}selected{% endif %}>Invited</option><option value="inactive" {% if status_filter == "inactive" %}selected{% endif %}>Inactive</option></select></label>
+    <label><span class="sr-only">Sort members</span><select name="sort"><option value="name" {% if sort == "name" %}selected{% endif %}>Name</option><option value="recent" {% if sort == "recent" %}selected{% endif %}>Recently added</option><option value="role" {% if sort == "role" %}selected{% endif %}>Role</option></select></label>
+    <button type="submit" class="jims-btn jims-btn-secondary">Apply</button><a href="{% url 'team_access' %}" class="jims-btn jims-btn-quiet">Reset</a>
+  </form>
+
+  {% if members %}
+    <section class="team-directory" aria-label="Workspace members">
+      <div class="team-directory__caption"><span>{{ member_count }} member{{ member_count|pluralize }}</span><span>Access is enforced by workspace policy.</span></div>
+      <div class="team-directory__desktop"><table><thead><tr><th>Member</th><th>Role</th><th>Access summary</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>{% for member in members %}{% include "users/includes/team_member_row.html" with member=member %}{% endfor %}</tbody></table></div>
+      <div class="team-directory__mobile">{% for member in members %}{% include "users/includes/team_member_card.html" with member=member %}{% endfor %}</div>
+    </section>
+  {% else %}
+    {% include "users/includes/team_empty_state.html" %}
+  {% endif %}
+
+  {% for member in members %}{% if member.can_manage %}{% include "users/includes/access_drawer.html" with member=member %}{% endif %}{% endfor %}
+
+  {% if team_can_manage %}
+  <dialog class="team-invite-dialog" data-team-invite-dialog aria-labelledby="team-invite-title">
+    <form method="post" action="{% url 'invite_member' %}" class="team-invite-form" novalidate>{% csrf_token %}
+      <header><div><p class="jims-page-eyebrow">Workspace invitation</p><h2 id="team-invite-title">Invite member</h2><p>Create a workspace membership. New members receive a secure email link to set their password and activate their login.</p></div><button type="button" class="jims-btn jims-btn-quiet jims-btn-compact" data-team-invite-close aria-label="Close invitation form">×</button></header>
+      {% if invite_form.non_field_errors %}<div class="team-form-errors" role="alert">{{ invite_form.non_field_errors }}</div>{% endif %}
+      <div class="team-invite-form__fields"><label>Email address{{ invite_form.email }}{% for error in invite_form.email.errors %}<small class="team-field-error">{{ error }}</small>{% endfor %}</label><label>First name{{ invite_form.first_name }}</label><label>Last name{{ invite_form.last_name }}</label><label>Base role{{ invite_form.base_role }}<small>Select a role that matches the work this person will perform.</small></label></div>
+      <footer><button type="button" class="jims-btn jims-btn-secondary" data-team-invite-close>Cancel</button><button type="submit" class="jims-btn jims-btn-primary" data-submit-lock>Invite member</button></footer>
+    </form>
+  </dialog>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script defer src="{% static 'users/js/team-access.js' %}"></script>{% endblock %}

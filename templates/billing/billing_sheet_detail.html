@@ -4,10 +4,10 @@
 {% block title %}{{ sheet.reference_number }} — {{ sheet.title }}{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<div class="jims-detail-page space-y-5">
+  <header class="jims-detail-hero flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ sheet.reference_number }}</h1>
+      <h1 class="jims-page-title">{{ sheet.reference_number }}</h1>
       <p class="mt-1 text-sm text-slate-600">
         {{ sheet.customer.name }} &middot; {{ sheet.title }}
         &middot;
@@ -20,22 +20,22 @@
     </div>
     <div class="flex flex-wrap items-center gap-2">
       {% if sheet.is_open %}
-        <a href="{% url 'billing:billing_sheet_edit' pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit sheet</a>
-        <a href="{% url 'billing:billing_item_add' sheet_pk=sheet.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add item</a>
+        <a href="{% url 'billing:billing_sheet_edit' pk=sheet.id %}" class="jims-btn jims-btn-secondary">Edit sheet</a>
+        <a href="{% url 'billing:billing_item_add' sheet_pk=sheet.id %}" class="jims-btn jims-btn-secondary">Add item</a>
 
         <form method="post" action="{% url 'billing:billing_sheet_generate_invoice' pk=sheet.id %}" class="inline-flex items-center gap-2">
           {% csrf_token %}
           <label for="id_due_date_{{ sheet.id }}" class="sr-only">Due date</label>
           <input id="id_due_date_{{ sheet.id }}" type="date" name="due_date" class="block rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Due date">
-          <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">Generate invoice</button>
+          <button type="submit" class="jims-btn jims-btn-primary">Generate invoice</button>
         </form>
       {% endif %}
       {% if sheet.invoice %}
         <a href="{% url 'billing:document_detail' doc_type='invoice' pk=sheet.invoice.id %}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">View invoice</a>
       {% endif %}
-      <a href="{% url 'billing:billing_sheet_list' %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Back to list</a>
+      <a href="{% url 'billing:billing_sheet_list' %}" class="jims-btn jims-btn-secondary">Back to list</a>
     </div>
-  </div>
+  </header>
 
   {% if sheet.notes %}
     <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">

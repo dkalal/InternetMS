@@ -46,6 +46,10 @@ def apply_tailwind(form: forms.BaseForm) -> None:
 
         if isinstance(widget, (forms.Select, forms.SelectMultiple)):
             widget.attrs["class"] = _merge_class(widget.attrs.get("class"), SELECT_CLASSES)
+            if isinstance(field, forms.ModelChoiceField) and not isinstance(widget, forms.SelectMultiple):
+                widget.attrs.setdefault("data-searchable-select", "true")
+                widget.attrs.setdefault("data-search-label", str(field.label or bound_name).strip())
+                widget.attrs.setdefault("data-search-placeholder", f"Search {str(field.label or bound_name).lower()}...")
             continue
 
         if isinstance(widget, (forms.Textarea,)):

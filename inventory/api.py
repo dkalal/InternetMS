@@ -10,7 +10,7 @@ from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
 from integrations.services import resolve_integration_consumer
 from products.models import Product, ProductCategory
-from users.permissions import PermissionCode, user_has_permission
+from users.permissions import PermissionCode, has_tenant_permission, sales_document_queryset_for
 
 from .models import DocumentSerialSelection, InventoryBalance, StockMovement, StockUnit, Supplier
 from .services import CartService
@@ -21,10 +21,15 @@ class InventoryAPIPermission(BasePermission):
 
     def has_permission(self, request, view):
         consumer = resolve_integration_consumer(request)
-        if consumer is None or not user_has_permission(request.user, PermissionCode.INVENTORY_API):
+        if consumer is None or not has_tenant_permission(request.user, consumer.organization, PermissionCode.INVENTORY_API):
             return False
         required = getattr(view, 'required_permission', None)
-        return required is None or user_has_permission(request.user, required)
+        return required is None or has_tenant_permission(request.user, consumer.organization, required)
+
+
+def _api_allowed(request, code):
+    consumer = resolve_integration_consumer(request)
+    return consumer is not None and has_tenant_permission(request.user, consumer.organization, code)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -32,13 +37,15 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number', 'buying_price', 'selling_price', 'tax_eligible', 'track_stock', 'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
+        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number', 'buying_price', 'selling_price', 'technician_price', 'tax_eligible', 'track_stock', 'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
         read_only_fields = ['available_stock']
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
             fields.pop('buying_price', None)
+        if not _api_allowed(self.context['request'], PermissionCode.PRODUCT_MANAGE):
+            fields.pop('technician_price', None)
         return fields
 
     def validate(self, attrs):
@@ -91,7 +98,7 @@ class StockSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
             fields.pop('average_cost', None)
         return fields
 
@@ -106,7 +113,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
             fields.pop('unit_cost', None)
         return fields
 
@@ -129,7 +136,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BillingDocument
-        fields = ['id', 'number', 'customer_name', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
+        fields = ['id', 'number', 'customer_name', 'sale_pricing_category', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
 
 
 class InvoiceItemInputSerializer(serializers.Serializer):
@@ -142,6 +149,14 @@ class InvoiceItemInputSerializer(serializers.Serializer):
 class InvoiceCreateSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(required=False, allow_null=True)
     walk_in_name = serializers.CharField(required=False, allow_blank=True)
+    sale_pricing_category = serializers.ChoiceField(
+        choices=(
+            BillingDocument.SalePricingCategory.STANDARD,
+            BillingDocument.SalePricingCategory.TECHNICIAN,
+            BillingDocument.SalePricingCategory.WHOLESALE,
+        ),
+        default=BillingDocument.SalePricingCategory.STANDARD,
+    )
     tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     discount_amount = serializers.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     status = serializers.ChoiceField(choices=[BillingDocument.Status.DRAFT, BillingDocument.Status.ISSUED], default=BillingDocument.Status.DRAFT)
@@ -156,6 +171,7 @@ class InvoiceCreateSerializer(serializers.Serializer):
             customer_id = CartService._walk_in_customer(organization=organization, label=validated_data.get('walk_in_name', '')).pk
         inputs = []
         products = []
+        sale_pricing_category = validated_data['sale_pricing_category']
         for item in validated_data['items']:
             product = Product.objects.unscoped().filter(pk=item['product_id'], tenant=organization, is_active=True).first()
             if product is None:
@@ -164,8 +180,10 @@ class InvoiceCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({'items': 'Quantities must be positive.'})
             inputs.append(LineItemInput(
                 product_id=product.pk, description=product.name, quantity=item['quantity'],
-                unit_price=product.price_for(quantity=item['quantity']), discount_amount=item['discount_amount'],
-                pricing_mode=BillingLineItem.PricingMode.RETAIL,
+                unit_price=product.price_for_sale_category(
+                    sale_pricing_category=sale_pricing_category, quantity=item['quantity'],
+                ),
+                discount_amount=item['discount_amount'], pricing_mode=sale_pricing_category,
             ))
             products.append((product, item.get('serial_numbers', [])))
         try:
@@ -173,6 +191,7 @@ class InvoiceCreateSerializer(serializers.Serializer):
                 organization=organization, created_by=request.user, document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=customer_id, status=validated_data['status'], tax_rate=validated_data['tax_rate'],
                 discount_amount=validated_data['discount_amount'], notes=validated_data.get('notes', ''), items=inputs,
+                sale_pricing_category=sale_pricing_category,
             )
         except BillingServiceError as exc:
             raise serializers.ValidationError(str(exc)) from exc
@@ -199,7 +218,7 @@ class ProductListCreateAPI(generics.ListCreateAPIView):
         return Product.objects.unscoped().filter(tenant=resolve_integration_consumer(self.request).organization).order_by('name')
 
     def post(self, request, *args, **kwargs):
-        if not user_has_permission(request.user, PermissionCode.PRODUCT_MANAGE):
+        if not _api_allowed(request, PermissionCode.PRODUCT_MANAGE):
             return Response({'detail': 'Product management permission is required.'}, status=403)
         return super().post(request, *args, **kwargs)
 
@@ -213,7 +232,7 @@ class ProductDetailAPI(generics.RetrieveUpdateAPIView):
         return Product.objects.unscoped().filter(tenant=resolve_integration_consumer(self.request).organization)
 
     def update(self, request, *args, **kwargs):
-        if not user_has_permission(request.user, PermissionCode.PRODUCT_MANAGE):
+        if not _api_allowed(request, PermissionCode.PRODUCT_MANAGE):
             return Response({'detail': 'Product management permission is required.'}, status=403)
         return super().update(request, *args, **kwargs)
 
@@ -262,8 +281,8 @@ class InvoiceListCreateAPI(generics.ListCreateAPIView):
         return InvoiceCreateSerializer if self.request.method == 'POST' else InvoiceSerializer
 
     def get_queryset(self):
-        return BillingDocument.objects.unscoped().filter(
-            tenant=resolve_integration_consumer(self.request).organization,
+        organization = resolve_integration_consumer(self.request).organization
+        return sales_document_queryset_for(self.request.user, organization).filter(
             document_type=BillingDocument.DocumentType.INVOICE,
             inventory_sale__isnull=False,
         ).select_related('customer').prefetch_related('items__product')
@@ -281,6 +300,11 @@ class InvoicePaymentAPI(APIView):
 
     def post(self, request, pk):
         organization = resolve_integration_consumer(request).organization
+        invoice = sales_document_queryset_for(request.user, organization).filter(
+            pk=pk, document_type=BillingDocument.DocumentType.INVOICE
+        ).first()
+        if invoice is None:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         try:
             receipt = BillingService.create_receipt_from_invoice(
                 organization=organization, created_by=request.user, invoice_id=pk,

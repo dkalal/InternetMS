@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Tenant support access{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-2xl">
+  <div class="rounded-2xl border border-amber-300 bg-amber-50 p-6">
+    <h1 class="text-xl font-bold text-amber-950">Enter audited tenant support mode</h1>
+    <p class="mt-2 text-sm text-amber-900">Choose the company deliberately and explain why access is required. Every request in this context is recorded.</p>
+    <form method="post" class="mt-6 space-y-4">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button class="jims-btn jims-btn-primary" type="submit">Enter support mode</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

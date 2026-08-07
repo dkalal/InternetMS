@@ -2,8 +2,8 @@
 {% block title %}Serials for {{ invoice.number }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="mx-auto max-w-5xl space-y-5">
-  <header><p class="text-sm font-semibold text-brand-700">Invoice {{ invoice.number }}</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Select serial numbers</h1><p class="mt-1 text-sm text-slate-600">Selections do not reserve stock. Availability is checked again when the invoice is fully paid.</p></header>
+<div class="jims-workflow-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header"><div><p class="jims-page-eyebrow">Invoice {{ invoice.number }}</p><h1 class="jims-page-title">Select serial numbers</h1><p class="jims-page-subtitle">Selections do not reserve stock. Availability is checked again when the invoice is fully paid.</p></div></header>
 
   <form method="post" class="space-y-4" data-unsaved-form data-submit-lock>
     {% csrf_token %}
@@ -19,7 +19,7 @@
     {% empty %}
       <div class="jims-panel">{% include "components/empty_state.html" with title="No serialized lines" message="This invoice does not require serial-number selection." %}</div>
     {% endfor %}
-    <div class="flex justify-end gap-2"><a class="jims-btn jims-btn-secondary" href="{% url 'billing:document_detail' 'invoice' invoice.pk %}">Cancel</a><button class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save serial selections</button></div>
+    <div class="jims-form-actions"><a class="jims-btn jims-btn-secondary" href="{% url 'billing:document_detail' 'invoice' invoice.pk %}">Cancel</a><button class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save serial selections</button></div>
   </form>
 </div>
 {% endblock %}

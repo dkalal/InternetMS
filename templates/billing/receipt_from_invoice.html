@@ -4,7 +4,7 @@
 {% block title %}Register Payment{% endblock %}
 
 {% block content %}
-<div class="mx-auto max-w-xl space-y-6">
+<div class="jims-workflow-page jims-form-page--compact space-y-5">
   <div>
     <h1 class="text-xl font-semibold tracking-tight text-slate-900">Register payment</h1>
     <p class="mt-1 text-sm text-slate-600">
@@ -14,8 +14,8 @@
   </div>
 
   <div class="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
-    {% if has_inventory_items %}
-      This invoice contains catalog products or services and requires full payment. Stock-tracked products are deducted only after the complete payment is confirmed.
+    {% if requires_full_payment %}
+      This invoice contains cart/inventory products and requires full payment. Stock-tracked products are deducted only after the complete payment is confirmed.
     {% else %}
       Record the actual amount you received. If you only received part of the invoice, enter that payment amount here and the invoice will remain partially paid until the balance is covered.
     {% endif %}
@@ -49,7 +49,7 @@
       {% endfor %}
 
       <div class="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-        {% if has_inventory_items %}
+        {% if requires_full_payment %}
           Partial payments are not accepted for this inventory invoice. The transaction is revalidated before stock changes.
         {% else %}
           If the amount paid is less than the invoice total, the invoice will be marked <strong>Partially paid</strong> and you can register another payment later for the balance.

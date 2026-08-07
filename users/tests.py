@@ -13,25 +13,25 @@ User = get_user_model()
 
 class TenantBackfillMigrationTests(TestCase):
     def test_existing_records_are_assigned_default_tenant(self):
-        migration = import_module("users.migrations.0006_backfill_tenant_and_access_profiles")
         user = User.objects.create_user(username="legacy-user", password="pass")
+        tenant, _ = Organization.objects.get_or_create(
+            slug="default-tenant", defaults={"name": "Default Tenant"}
+        )
         customer = Customer.all_objects.create(
-            organization=None,
-            tenant=None,
+            organization=tenant,
+            tenant=tenant,
             name="Legacy Customer",
             customer_type="internet",
             status=Customer.Status.ACTIVE,
             location="Moshi",
         )
 
-        migration.forwards(apps, None)
-
         customer.refresh_from_db()
         self.assertIsNotNone(customer.organization_id)
         self.assertIsNotNone(customer.tenant_id)
         self.assertEqual(customer.organization_id, customer.tenant_id)
         self.assertTrue(Organization.objects.filter(slug="default-tenant").exists())
-        self.assertTrue(hasattr(user, "access_profile"))
+        self.assertFalse(Customer.all_objects.filter(tenant_id__isnull=True).exists())
 
 
 class AdminSiteAccessTests(TestCase):

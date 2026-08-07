@@ -1,0 +1,201 @@
+{% load humanize %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}Quotation{% endif %} {{ document.number }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 13mm 12mm 16mm;
+      @bottom-left { content: "{{ document.number }}"; color: #64748b; font-size: 8pt; }
+      @bottom-right { content: "Page " counter(page) " of " counter(pages); color: #64748b; font-size: 8pt; }
+    }
+    :root { --brand: #786EF9; --orange: #FF9A0D; --ink: #0f172a; --muted: #64748b; --line: #dbe2ea; --soft: #f8fafc; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; color: var(--ink); background: #fff; font-family: Arial, "Helvetica Neue", sans-serif; font-size: 9.2pt; line-height: 1.35; }
+    .document { width: 100%; }
+    .header { display: table; width: 100%; table-layout: fixed; padding-bottom: 7mm; border-bottom: 2px solid var(--ink); }
+    .company, .document-meta { display: table-cell; vertical-align: top; }
+    .company { width: 57%; padding-right: 8mm; }
+    .document-meta { width: 43%; text-align: right; }
+    .logo { display: block; width: auto; max-width: 52mm; height: auto; max-height: 19mm; margin: 0 0 3mm; object-fit: contain; object-position: left center; }
+    .company-name { margin: 0 0 1.5mm; font-size: 14pt; font-weight: 800; color: var(--ink); }
+    .company-lines { color: #334155; font-size: 8.5pt; }
+    .company-lines div { margin-top: .7mm; }
+    .doc-title { margin: 0 0 2mm; font-size: 20pt; line-height: 1; letter-spacing: .04em; color: var(--ink); text-transform: uppercase; }
+    .doc-title::after { content: ""; display: block; width: 18mm; height: 2px; margin: 2.5mm 0 0 auto; background: var(--brand); }
+    .meta { width: 100%; margin-left: auto; border-collapse: collapse; }
+    .meta td { padding: 1mm 0 1mm 3mm; vertical-align: top; }
+    .meta .label { color: var(--muted); font-size: 7.5pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .meta .value { font-weight: 700; white-space: nowrap; }
+    .parties { display: table; width: 100%; table-layout: fixed; margin: 6mm 0 5mm; }
+    .party { display: table-cell; width: 100%; vertical-align: top; }
+    .party + .party { padding-left: 8mm; border-left: 1px solid var(--line); }
+    .eyebrow { margin-bottom: 1.5mm; color: var(--brand); font-size: 7.5pt; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .party-name { margin: 0 0 1.5mm; font-size: 12pt; font-weight: 800; }
+    .party-line { margin-top: .7mm; color: #475569; }
+    table.items { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .items thead { display: table-header-group; }
+    .items th { padding: 2.2mm 1.5mm; border-bottom: 1.5px solid var(--ink); background: #f1f5f9; color: #334155; font-size: 7.2pt; font-weight: 800; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
+    .items td { padding: 2.3mm 1.5mm; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+    .items tbody tr { break-inside: avoid; page-break-inside: avoid; }
+    .items .index { width: 5%; color: var(--muted); }
+    .items .description { width: 32%; }
+    .items .unit { width: 9%; }
+    .items .quantity { width: 8%; }
+    .items .price { width: 14%; }
+    .items .discount { width: 11%; }
+    .items .tax { width: 9%; }
+    .items .amount { width: 16%; }
+    .right { text-align: right !important; }
+    .item-name { font-weight: 700; color: var(--ink); }
+    .item-secondary { margin-top: .7mm; color: var(--muted); font-size: 7.8pt; white-space: pre-wrap; }
+    .money { white-space: nowrap; }
+    .closing { display: table; width: 100%; table-layout: fixed; margin-top: 5mm; break-inside: avoid; page-break-inside: avoid; }
+    .closing.summary-only { display: block; }
+    .closing.summary-only .summaries { display: block; width: 52%; margin-left: auto; }
+    .supporting, .summaries { display: table-cell; vertical-align: top; }
+    .supporting { width: 48%; padding-right: 7mm; }
+    .summaries { width: 52%; }
+    .support-block { margin-bottom: 3mm; }
+    .support-title, .summary-title { margin: 0 0 1.5mm; color: #334155; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .support-copy { color: #475569; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .summary { width: 100%; border-collapse: collapse; }
+    .summary td { padding: 1.4mm 0 1.4mm 3mm; }
+    .summary td:first-child { padding-left: 0; color: #475569; }
+    .summary td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
+    .summary .current-total td { padding-top: 2mm; border-top: 1px solid var(--line); color: var(--ink); font-weight: 800; }
+    .account { margin-top: 4mm; padding-top: 3mm; border-top: 2px solid var(--ink); }
+    .account .due td { padding-top: 2mm; border-top: 1px solid var(--line); color: var(--ink); font-size: 11pt; font-weight: 800; }
+    .account.has-prior .due td { color: var(--brand); font-size: 12pt; }
+    .account .outstanding td { padding-top: 2mm; border-top: 1px solid var(--line); font-weight: 800; }
+    .account-note { margin: 2mm 0 0; color: var(--muted); font-size: 7.4pt; line-height: 1.35; }
+    .footer { margin-top: 7mm; padding-top: 3mm; border-top: 1px solid var(--line); color: var(--muted); font-size: 7.8pt; text-align: center; break-inside: avoid; }
+    @media screen {
+      body { padding: 18px; background: #e2e8f0; }
+      .document { max-width: 210mm; min-height: 297mm; margin: auto; padding: 13mm 12mm; background: #fff; box-shadow: 0 4px 18px rgba(15, 23, 42, .12); }
+    }
+    @media print { body { background: #fff; } }
+  </style>
+</head>
+<body>
+<main class="document">
+  <header class="header">
+    <div class="company">
+      {% if LOGO_DATA_URI %}
+        <img class="logo" src="{{ LOGO_DATA_URI }}" alt="{{ document.organization.name }} logo">
+      {% else %}
+        <h1 class="company-name">{% if ACTIVE_BRANDING and ACTIVE_BRANDING.legal_name %}{{ ACTIVE_BRANDING.legal_name }}{% else %}{{ document.organization.name }}{% endif %}</h1>
+      {% endif %}
+      <div class="company-lines">
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}<div>{{ ACTIVE_BRANDING.address_line1 }}</div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}<div>{{ ACTIVE_BRANDING.address_line2 }}</div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}<div>{{ ACTIVE_BRANDING.phone }}</div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.email %}<div>{{ ACTIVE_BRANDING.email }}</div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.tin_number %}<div>TIN: {{ ACTIVE_BRANDING.tin_number }}</div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.vrn_number %}<div>VRN: {{ ACTIVE_BRANDING.vrn_number }}</div>{% endif %}
+      </div>
+    </div>
+    <div class="document-meta">
+      <h2 class="doc-title">{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}Quotation{% endif %}</h2>
+      <table class="meta">
+        <tr><td class="label">Number</td><td class="value">{{ document.number }}</td></tr>
+        <tr><td class="label">Issue date</td><td class="value">{{ document.issue_date|date:"d M Y" }}</td></tr>
+        {% if document.due_date %}<tr><td class="label">{% if document.document_type == 'quotation' %}Valid until{% else %}Due date{% endif %}</td><td class="value">{{ document.due_date|date:"d M Y" }}</td></tr>{% endif %}
+        <tr><td class="label">Currency</td><td class="value">{{ document.currency|upper }}</td></tr>
+      </table>
+    </div>
+  </header>
+
+  <section class="parties">
+    <div class="party">
+      <div class="eyebrow">Prepared for</div>
+      <h3 class="party-name">{{ document.customer.name }}</h3>
+      {% if document.customer.address %}<div class="party-line">{{ document.customer.address }}</div>{% endif %}
+      {% if document.customer.phone %}<div class="party-line">{{ document.customer.phone }}</div>{% endif %}
+      {% if document.customer.email %}<div class="party-line">{{ document.customer.email }}</div>{% endif %}
+      {% if document.customer.tin_number %}<div class="party-line">TIN: {{ document.customer.tin_number }}</div>{% endif %}
+      {% if document.customer.vrn_number %}<div class="party-line">VRN: {{ document.customer.vrn_number }}</div>{% endif %}
+    </div>
+  </section>
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="index">#</th>
+        <th class="description">Description</th>
+        <th class="unit">Unit</th>
+        <th class="quantity right">Quantity</th>
+        <th class="price right">Unit price</th>
+        {% if show_discount_column %}<th class="discount right">Discount</th>{% endif %}
+        {% if show_tax_column %}<th class="tax right">Tax</th>{% endif %}
+        <th class="amount right">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td class="index">{{ forloop.counter }}</td>
+        <td class="description">
+          <div class="item-name">{% if item.product %}{{ item.product.name }}{% elif item.package %}{{ item.package.name }}{% else %}{{ item.description }}{% endif %}</div>
+          {% if item.product and item.product.sku %}<div class="item-secondary">SKU {{ item.product.sku }}</div>{% endif %}
+          {% if item.description and item.product or item.description and item.package %}<div class="item-secondary">{{ item.description }}</div>{% endif %}
+        </td>
+        <td class="unit">{{ item.unit_snapshot }}</td>
+        <td class="quantity right">{{ item.quantity|floatformat:"-2" }}</td>
+        <td class="price right money">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
+        {% if show_discount_column %}<td class="discount right money">{% if item.discount_amount %}{{ document.currency|upper }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
+        {% if show_tax_column %}<td class="tax right">{% if item.product and not item.product.tax_eligible %}Exempt{% else %}{{ document.tax_rate|floatformat:"-2" }}%{% endif %}</td>{% endif %}
+        <td class="amount right money"><strong>{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</strong></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8">No line items.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <section class="closing{% if not ACTIVE_BRANDING or not ACTIVE_BRANDING.bank_details %} summary-only{% endif %}">
+    {% if ACTIVE_BRANDING and ACTIVE_BRANDING.bank_details %}
+    <div class="supporting">
+      <div class="support-block"><div class="support-title">Payment instructions</div><div class="support-copy">{{ ACTIVE_BRANDING.bank_details }}</div></div>
+    </div>
+    {% endif %}
+    <div class="summaries">
+      <div class="summary-title">{% if document.document_type == 'quotation' %}Quotation summary{% else %}Invoice summary{% endif %}</div>
+      <table class="summary">
+        <tr><td>Subtotal</td><td>{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td></tr>
+        {% if document.discount_amount %}<tr><td>Discount</td><td>-{{ document.currency|upper }} {{ document.discount_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
+        {% if document.tax_amount %}<tr><td>Tax ({{ document.tax_rate|floatformat:"-2" }}%)</td><td>{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
+        <tr class="current-total"><td>{% if document.document_type == 'quotation' %}Quotation total{% else %}Current Invoice Total{% endif %}</td><td>{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td></tr>
+      </table>
+
+      {% if document.document_type == 'invoice' %}
+        {% if invoice_account_summary.has_previous_outstanding %}
+        <div class="account has-prior">
+          <div class="summary-title">Customer account summary</div>
+          <table class="summary">
+            <tr><td>Previous Outstanding Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</td></tr>
+            <tr><td>+ Current Invoice Total</td><td>{{ document.currency|upper }} {{ invoice_account_summary.current_invoice_total|floatformat:2|intcomma }}</td></tr>
+            <tr class="due"><td>Total Amount Due</td><td>{{ document.currency|upper }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</td></tr>
+            {% if invoice_account_summary.has_payment %}<tr><td>- Payment Received</td><td>{{ document.currency|upper }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</td></tr>{% endif %}
+            <tr class="outstanding"><td>Outstanding Account Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</td></tr>
+          </table>
+          <p class="account-note">Previous outstanding balance relates to earlier unpaid invoices and is not included in this invoice's item total.</p>
+        </div>
+        {% else %}
+        <div class="account">
+          <table class="summary">
+            {% if invoice_account_summary.has_payment %}<tr><td>Payment Received</td><td>-{{ document.currency|upper }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</td></tr>{% endif %}
+            <tr class="outstanding"><td>Current Invoice Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.current_invoice_balance|floatformat:2|intcomma }}</td></tr>
+          </table>
+        </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <footer class="footer"><b><i> DIGITAL RELIABLE SERVICES</i></b></footer>
+</main>
+</body>
+</html>

@@ -2,17 +2,71 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="mx-auto max-w-2xl space-y-5">
-  <header>
-    <p class="text-sm font-semibold text-brand-700">Cart #{{ cart.pk }}</p>
-    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ title }}</h1>
-    <p class="mt-1 text-sm text-slate-600">Availability is checked now for guidance and revalidated at full payment.</p>
+<div class="jims-form-page jims-form-page--compact space-y-5">
+  <header class="jims-page-header">
+    <div>
+      <p class="jims-page-eyebrow">Cart #{{ cart.pk }}</p>
+      <h1 class="jims-page-title">{{ title }}</h1>
+      <p class="jims-page-subtitle">Availability is checked now for guidance and revalidated at full payment.</p>
+    </div>
+    <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Back to sale</a>
   </header>
-  <form method="post" class="jims-panel space-y-5 p-5 sm:p-6" data-submit-lock>
+
+  <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form>
     {% csrf_token %}
-    {% include "components/form.html" with form=form %}
-    <div class="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs text-brand-900">Draft carts and quotations do not reserve or deduct stock. Serialized products require one currently available serial per unit.</div>
-    <div class="flex justify-end gap-2 border-t border-slate-200 pt-5">
+    {% if form.non_field_errors %}
+      <div class="jims-error-summary mx-5 mt-5" role="alert">{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>
+    {% endif %}
+    <div class="jims-form-section-body space-y-5">
+      <section class="space-y-4" aria-labelledby="item-details-title">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Line item</p>
+          <h2 id="item-details-title" class="mt-1 text-base font-semibold text-slate-950">Product and quantity</h2>
+        </div>
+        {% include "components/form_field.html" with field=form.product %}
+        <div class="grid gap-4 sm:grid-cols-2">
+          {% include "components/form_field.html" with field=form.quantity %}
+          {% include "components/form_field.html" with field=form.discount_amount %}
+        </div>
+
+        {% if selected_product and selected_product.is_serialized %}
+          <div class="jims-serial-picker" data-serial-picker data-serial-product="{{ selected_product.pk }}" aria-labelledby="serial-picker-title">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 id="serial-picker-title" class="text-sm font-semibold text-slate-950">Serial units</h3>
+                <p class="mt-1 text-xs leading-5 text-slate-500">Choose one available serial for every unit entered above.</p>
+              </div>
+              <span class="jims-serial-count" aria-live="polite"><span data-serial-selected>0</span> selected <span class="text-slate-400">/</span> <span data-serial-required>1</span> required</span>
+            </div>
+            <div class="jims-serial-search-wrap mt-3">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke-width="1.9"/><path d="m16 16 4 4" stroke-linecap="round" stroke-width="1.9"/></svg>
+              <label class="sr-only" for="serial-search">Search available serials</label>
+              <input id="serial-search" type="search" placeholder="Search serial number…" data-serial-search>
+            </div>
+            {% if form.serial_units.errors %}
+              <div class="jims-error-summary mt-3 py-3 text-sm" role="alert">{% for error in form.serial_units.errors %}<p>{{ error }}</p>{% endfor %}</div>
+            {% endif %}
+            <fieldset class="jims-serial-options mt-3" data-serial-options>
+              <legend class="sr-only">Available serial units</legend>
+              {% for unit in form.serial_units.field.queryset %}
+                {% with unit_id=unit.pk|stringformat:"s" %}
+                  <label class="jims-serial-option" data-serial-option>
+                    <input class="jims-serial-input" type="checkbox" name="{{ form.serial_units.html_name }}" value="{{ unit.pk }}" {% if unit_id in form.serial_units.value %}checked{% endif %}>
+                    <span class="min-w-0"><span class="block truncate text-sm font-semibold text-slate-950">{{ unit.serial_number }}</span><span class="block truncate text-xs text-slate-500">Available{% if unit.batch_reference %} · Batch {{ unit.batch_reference }}{% endif %}{% if unit.expiry_date %} · Expires {{ unit.expiry_date|date:"d M Y" }}{% endif %}</span></span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="jims-serial-check h-4 w-4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 12 4 4L19 6"/></svg>
+                  </label>
+                {% endwith %}
+              {% empty %}
+                <div class="jims-serial-empty sm:col-span-2">No available serial units were found for {{ selected_product.name }}.</div>
+              {% endfor %}
+            </fieldset>
+          </div>
+        {% endif %}
+      </section>
+
+      <div class="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs leading-5 text-brand-900">Draft carts and quotations do not reserve or deduct stock. Serialized products require one currently available serial per unit.</div>
+    </div>
+    <div class="jims-form-actions">
       <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
       <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save item</button>
     </div>

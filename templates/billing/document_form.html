@@ -3,22 +3,25 @@
 {% block title %}{{ doc_type_display }}{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+<div class="jims-document-builder space-y-6">
+  <header class="jims-page-header">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
-      <p class="mt-1 max-w-3xl text-sm text-slate-600">Build the document line by line and keep totals visible while you work.</p>
+      <p class="jims-page-eyebrow">Billing workspace</p>
+      <h1 class="jims-page-title">{{ doc_type_display }}</h1>
+      <p class="jims-page-subtitle">Build the document line by line and review the financial outcome before creating it.</p>
     </div>
-  </div>
+    <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="jims-btn jims-btn-secondary">Cancel</a>
+  </header>
 
   <form method="post" class="space-y-6" id="document-form">
     {% csrf_token %}
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
       <div class="space-y-6">
-        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div class="mb-4">
+        <section class="jims-form-section p-5">
+          <div class="mb-4 border-b border-slate-100 pb-4">
             <h2 class="text-base font-semibold text-slate-900">Document details</h2>
+            <p class="mt-1 text-sm text-slate-600">Choose the customer, dates, currency, and tax treatment. Internal notes remain staff-only.</p>
           </div>
 
           {% if form.non_field_errors %}
@@ -34,10 +37,11 @@
           </div>
         </section>
 
-        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <section class="jims-form-section p-5">
           <div class="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 class="text-base font-semibold text-slate-900">Line items</h2>
+              <p class="mt-1 text-sm text-slate-600">Add products, packages, or a custom charge.</p>
             </div>
             <div class="relative flex flex-wrap items-center justify-end gap-2">
               <button type="button" class="js-toggle-item-menu inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-lg leading-none text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-expanded="false" aria-label="Choose line item type" title="Add line item">
@@ -77,39 +81,39 @@
       </div>
 
       <aside class="space-y-6 xl:sticky xl:top-6 xl:self-start">
-        <section class="rounded-lg border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+        <section class="jims-document-summary p-5">
           <div class="flex items-center justify-between gap-3">
             <div>
               <h2 class="text-base font-semibold">Document summary</h2>
             </div>
-            <span class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200" id="summary-currency">{{ form.currency.value|default:"TZS"|upper }}</span>
+            <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-700" id="summary-currency">{{ form.currency.value|default:"TZS"|upper }}</span>
           </div>
 
           <dl class="mt-5 space-y-3 text-sm">
             <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Active items</dt>
-              <dd class="font-semibold text-white" id="summary-count">0</dd>
+              <dt class="text-slate-600">Active items</dt>
+              <dd class="font-semibold text-slate-950" id="summary-count">0</dd>
             </div>
             <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Subtotal</dt>
-              <dd class="font-semibold text-white" id="summary-subtotal">0.00</dd>
+              <dt class="text-slate-600">Subtotal</dt>
+              <dd class="font-semibold text-slate-950" id="summary-subtotal">0.00</dd>
             </div>
             <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0.00" }}%)</span></dt>
-              <dd class="font-semibold text-white" id="summary-tax">0.00</dd>
+              <dt class="text-slate-600">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0.00" }}%)</span></dt>
+              <dd class="font-semibold text-slate-950" id="summary-tax">0.00</dd>
             </div>
-            <div class="flex items-center justify-between border-t border-white/10 pt-3 text-base">
-              <dt class="font-medium text-white">Grand total</dt>
-              <dd class="font-semibold text-white" id="summary-total">0.00</dd>
+            <div class="flex items-center justify-between border-t border-slate-200 pt-4 text-base">
+              <dt class="font-semibold text-slate-950">Grand total</dt>
+              <dd class="text-xl font-bold text-brand-700" id="summary-total">0.00</dd>
             </div>
           </dl>
         </section>
       </aside>
     </div>
 
-    <div class="flex items-center justify-end gap-2">
-      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
-      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <button type="submit" class="jims-btn jims-btn-primary">
         {% if document %}Save changes{% else %}Create {{ doc_type_display|lower }}{% endif %}
       </button>
     </div>
@@ -125,7 +129,7 @@
 <script id="product-catalog-data" type="application/json">
 [
   {% for product in product_catalog %}
-    {"id":"{{ product.id }}","name":"{{ product.name|escapejs }}","description":"{{ product.description|default_if_none:''|escapejs }}","price":"{{ product.retail_price|default:product.selling_price }}","wholesale_price":"{{ product.wholesale_price|default_if_none:'' }}","wholesale_min_quantity":"{{ product.wholesale_min_quantity }}","allow_wholesale":{% if product.allow_wholesale %}true{% else %}false{% endif %}}{% if not forloop.last %},{% endif %}
+    {"id":"{{ product.id }}","name":"{{ product.name|escapejs }}","description":"{{ product.description|default_if_none:''|escapejs }}","unit":"{{ product.get_measure_unit_display|escapejs }}","allowed_units":[{% if product.catalog_category %}{% for unit in product.catalog_category.allowed_units.all %}"{{ unit.label|escapejs }}"{% if not forloop.last %},{% endif %}{% endfor %}{% else %}"{{ product.get_measure_unit_display|escapejs }}"{% endif %}],"selling_price":"{{ product.selling_price }}","retail_price":"{{ product.retail_price|default:product.selling_price }}","technician_price":"{{ product.technician_price|default:product.selling_price }}","wholesale_price":"{{ product.wholesale_price|default_if_none:'' }}","wholesale_min_quantity":"{{ product.wholesale_min_quantity }}","allow_wholesale":{% if product.allow_wholesale %}true{% else %}false{% endif %}}{% if not forloop.last %},{% endif %}
   {% endfor %}
 ]
 </script>
@@ -162,6 +166,7 @@
     const customerCatalog = new Map((JSON.parse(document.getElementById('customer-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
     const promotionCatalog = new Map((JSON.parse(document.getElementById('promotion-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
     const customerField = document.getElementById('id_customer');
+    const pricingCategoryField = document.getElementById('id_sale_pricing_category');
     const currencyField = document.getElementById('id_currency');
     const taxRateField = document.getElementById('id_tax_rate');
     const summaryCurrency = document.getElementById('summary-currency');
@@ -183,6 +188,18 @@
     const formatMoney = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const getSelectedCustomer = () => customerCatalog.get(customerField?.value || '');
+
+    const productPriceForCategory = (product, quantity) => {
+      const category = pricingCategoryField?.value || 'standard';
+      if (category === 'technician') return parseMoney(product.technician_price || product.selling_price);
+      const customerTierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(getSelectedCustomer()?.pricing_tier || '');
+      if (category === 'wholesale' || (category === 'standard' && customerTierWantsWholesale)) {
+        const qualifies = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
+        return qualifies ? parseMoney(product.wholesale_price) : parseMoney(product.selling_price);
+      }
+      if (category === 'retail') return parseMoney(product.retail_price || product.selling_price);
+      return parseMoney(product.selling_price);
+    };
 
     const promotionApplies = (promotion, productId, packageId, quantity, gross) => {
       if (!promotion) return false;
@@ -214,8 +231,9 @@
       promotionCatalog.forEach((promotion) => {
         if (!promotionApplies(promotion, productId, packageId, quantity, gross)) return;
         const product = productCatalog.get(productId);
-        const result = calculatePromotion(promotion, product, quantity, parseMoney(product?.price), gross);
-        const value = result.discount || Math.max(0, parseMoney(product?.price) - result.unitPrice) * quantity;
+        const catalogPrice = product ? productPriceForCategory(product, quantity) : 0;
+        const result = calculatePromotion(promotion, product, quantity, catalogPrice, gross);
+        const value = result.discount || Math.max(0, catalogPrice - result.unitPrice) * quantity;
         if (value > bestValue) {
           best = promotion;
           bestValue = value;
@@ -228,6 +246,7 @@
       product: row.querySelector('[name$="-product"]'),
       package: row.querySelector('[name$="-package"]'),
       description: row.querySelector('[name$="-description"]'),
+      unit: row.querySelector('[name$="-unit_snapshot"]'),
       quantity: row.querySelector('[name$="-quantity"]'),
       unitPrice: row.querySelector('[name$="-unit_price"]'),
       discount: row.querySelector('[name$="-discount_amount"]'),
@@ -313,7 +332,6 @@
       const activeType = productId ? 'product' : packageId ? 'package' : (row.dataset.itemType || 'custom');
       const product = productCatalog.get(productId);
       const packageItem = packageCatalog.get(packageId);
-      const customer = getSelectedCustomer();
       const quantity = parseMoney(controls.quantity?.value);
 
       const catalogCol = row.querySelector('.js-catalog-col');
@@ -326,24 +344,22 @@
       controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
 
       if (activeType === 'product' && product) {
-        const tierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(customer?.pricing_tier || '');
         const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
         if (controls.pricingMode?.value !== 'manual') {
-          if ((controls.pricingMode?.value === 'wholesale' || tierWantsWholesale) && qualifiesWholesale) {
-            controls.unitPrice.value = Number(parseMoney(product.wholesale_price)).toFixed(2);
-            if (controls.pricingMode) controls.pricingMode.value = 'wholesale';
-          } else {
-            controls.unitPrice.value = Number(parseMoney(product.price)).toFixed(2);
-            if (controls.pricingMode) controls.pricingMode.value = 'retail';
-          }
+          const category = pricingCategoryField?.value || 'standard';
+          const customerTierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(getSelectedCustomer()?.pricing_tier || '');
+          controls.unitPrice.value = Number(productPriceForCategory(product, quantity)).toFixed(2);
+          if (controls.pricingMode) controls.pricingMode.value = (category === 'wholesale' || customerTierWantsWholesale) && qualifiesWholesale ? 'wholesale' : category;
         }
         controls.summary.textContent = qualifiesWholesale ? `${product.name} selected - wholesale available` : `${product.name} selected`;
+        if (controls.unit && (!controls.unit.value || !product.allowed_units.includes(controls.unit.value))) controls.unit.value = product.unit;
       } else if (activeType === 'package' && packageItem) {
         if (controls.pricingMode?.value !== 'manual') {
           const packagePrice = controls.billingBehavior?.value === 'recurring_monthly' ? packageItem.monthly_fee : packageItem.price;
           controls.unitPrice.value = Number(parseMoney(packagePrice)).toFixed(2);
         }
         controls.summary.textContent = `${packageItem.name} selected`;
+        if (controls.unit) controls.unit.value = controls.billingBehavior?.value === 'recurring_monthly' ? 'Month' : 'Installation';
       } else {
         controls.summary.textContent = activeType === 'product' ? 'Select a product.' : activeType === 'package' ? 'Select a package.' : 'Custom line';
       }
@@ -398,8 +414,8 @@
         }
         const product = productCatalog.get(String(itemId));
         if (product) {
-          controls.unitPrice.value = product.price;
-          if (controls.pricingMode) controls.pricingMode.value = 'retail';
+          controls.unitPrice.value = Number(productPriceForCategory(product, parseMoney(controls.quantity?.value))).toFixed(2);
+          if (controls.pricingMode) controls.pricingMode.value = pricingCategoryField?.value || 'standard';
           setDescriptionIfSuggested(controls.description, product.description || product.name);
         }
       }
@@ -473,7 +489,7 @@
           controls.discountReason.dataset.autofilled = '0';
         });
       }
-      [controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
+      [controls.unit, controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
         if (field) {
           field.addEventListener('input', () => syncRow(row));
           field.addEventListener('change', () => syncRow(row));
@@ -586,6 +602,12 @@
     }
     if (taxRateField) {
       taxRateField.addEventListener('input', refreshSummary);
+    }
+    if (pricingCategoryField) {
+      pricingCategoryField.addEventListener('change', () => {
+        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row));
+        refreshSummary();
+      });
     }
 
     container.querySelectorAll('.js-line-item').forEach((row) => bindRow(row));

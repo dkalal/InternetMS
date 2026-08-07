@@ -24,13 +24,200 @@
       if (!header.hasAttribute("scope")) header.setAttribute("scope", "col");
     });
 
+    function initSearchableSelect(select) {
+      if (!select || select.dataset.searchableReady === "true" || select.multiple || select.disabled) return;
+      select.dataset.searchableReady = "true";
+
+      var options = Array.prototype.slice.call(select.options);
+      var selected = select.options[select.selectedIndex] || null;
+      var wrapper = document.createElement("div");
+      wrapper.className = "jims-combobox";
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "jims-combobox-input";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.setAttribute("role", "combobox");
+      input.setAttribute("aria-autocomplete", "list");
+      input.setAttribute("aria-expanded", "false");
+      input.setAttribute("aria-label", select.dataset.searchLabel || "Search options");
+      input.placeholder = select.dataset.searchPlaceholder || "Search options...";
+      input.value = selected ? selected.text.trim() : "";
+
+      var menu = document.createElement("div");
+      menu.className = "jims-combobox-menu";
+      menu.hidden = true;
+      menu.setAttribute("role", "listbox");
+      menu.id = (select.id || "searchable-select") + "-options";
+      input.setAttribute("aria-controls", menu.id);
+      var activeIndex = -1;
+      var visibleButtons = [];
+
+      function closeMenu() {
+        menu.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+        activeIndex = -1;
+        input.removeAttribute("aria-activedescendant");
+      }
+
+      function setActive(index) {
+        if (!visibleButtons.length) return;
+        activeIndex = Math.max(0, Math.min(index, visibleButtons.length - 1));
+        visibleButtons.forEach(function (button, buttonIndex) {
+          var active = buttonIndex === activeIndex;
+          button.classList.toggle("is-active", active);
+        });
+        var activeButton = visibleButtons[activeIndex];
+        input.setAttribute("aria-activedescendant", activeButton.id);
+        activeButton.scrollIntoView({ block: "nearest" });
+      }
+
+      function choose(option) {
+        select.value = option.value;
+        input.value = option.text.trim();
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        closeMenu();
+        input.focus();
+      }
+
+      function renderOptions(query) {
+        var normalized = (query || "").trim().toLocaleLowerCase();
+        var matches = options.filter(function (option) {
+          return !normalized || option.text.toLocaleLowerCase().indexOf(normalized) !== -1;
+        });
+        menu.replaceChildren();
+        visibleButtons = [];
+        matches.slice(0, 50).forEach(function (option, index) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "jims-combobox-option";
+          button.id = menu.id + "-" + index;
+          button.setAttribute("role", "option");
+          button.setAttribute("aria-selected", String(option.value === select.value));
+          button.textContent = option.text.trim();
+          button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+          button.addEventListener("click", function () { choose(option); });
+          menu.appendChild(button);
+          visibleButtons.push(button);
+        });
+        if (!matches.length) {
+          var empty = document.createElement("div");
+          empty.className = "jims-combobox-empty";
+          empty.textContent = "No matching options";
+          menu.appendChild(empty);
+        } else if (matches.length > 50) {
+          var hint = document.createElement("div");
+          hint.className = "jims-combobox-hint";
+          hint.textContent = "Keep typing to narrow " + matches.length + " results";
+          menu.appendChild(hint);
+        }
+        menu.hidden = false;
+        input.setAttribute("aria-expanded", "true");
+        var selectedIndex = visibleButtons.findIndex(function (_button, index) {
+          return matches[index] && matches[index].value === select.value;
+        });
+        if (visibleButtons.length) setActive(selectedIndex >= 0 ? selectedIndex : 0);
+      }
+
+      select.parentNode.insertBefore(wrapper, select);
+      wrapper.appendChild(select);
+      wrapper.appendChild(input);
+      wrapper.appendChild(menu);
+      select.classList.add("jims-searchable-native");
+
+      input.addEventListener("focus", function () {
+        var current = select.options[select.selectedIndex];
+        input.value = current ? current.text.trim() : "";
+        renderOptions("");
+      });
+      input.addEventListener("input", function () { renderOptions(input.value); });
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          if (menu.hidden) renderOptions(input.value);
+          else setActive(activeIndex + 1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          if (menu.hidden) renderOptions(input.value);
+          else setActive(activeIndex - 1);
+        } else if (event.key === "Enter" && !menu.hidden && visibleButtons[activeIndex]) {
+          event.preventDefault();
+          visibleButtons[activeIndex].click();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          closeMenu();
+        }
+      });
+      select.addEventListener("focus", function () { input.focus(); });
+      select.addEventListener("change", function () {
+        var current = select.options[select.selectedIndex];
+        input.value = current ? current.text.trim() : "";
+      });
+      select.addEventListener("invalid", function () { input.focus(); });
+      document.addEventListener("click", function (event) {
+        if (!wrapper.contains(event.target)) {
+          closeMenu();
+          var current = select.options[select.selectedIndex];
+          input.value = current ? current.text.trim() : "";
+        }
+      });
+    }
+
+    function initSearchableSelects(root) {
+      if (root.matches && root.matches("select[data-searchable-select]")) initSearchableSelect(root);
+      if (root.querySelectorAll) root.querySelectorAll("select[data-searchable-select]").forEach(initSearchableSelect);
+    }
+
+    initSearchableSelects(document);
+    new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        mutation.addedNodes.forEach(function (node) {
+          if (node.nodeType === 1) initSearchableSelects(node);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+
     var navButton = document.querySelector("[data-nav-toggle]");
     var navPanel = document.querySelector("[data-nav-panel]");
+    var navBackdrop = document.querySelector("[data-nav-backdrop]");
     if (navButton && navPanel) {
+      function setNavigationOpen(open) {
+        navButton.setAttribute("aria-expanded", String(open));
+        navPanel.classList.toggle("hidden", !open);
+        if (navBackdrop) navBackdrop.hidden = !open;
+        document.body.classList.toggle("overflow-hidden", open && window.innerWidth < 1024);
+        if (open) {
+          var firstLink = navPanel.querySelector("a");
+          if (firstLink) firstLink.focus();
+        } else {
+          navButton.focus();
+        }
+      }
+
       navButton.addEventListener("click", function () {
-        var expanded = navButton.getAttribute("aria-expanded") === "true";
-        navButton.setAttribute("aria-expanded", String(!expanded));
-        navPanel.classList.toggle("hidden", expanded);
+        setNavigationOpen(navButton.getAttribute("aria-expanded") !== "true");
+      });
+      document.querySelectorAll("[data-nav-dismiss]").forEach(function (button) {
+        button.addEventListener("click", function () { setNavigationOpen(false); });
+      });
+      if (navBackdrop) navBackdrop.addEventListener("click", function () { setNavigationOpen(false); });
+      navPanel.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && window.innerWidth < 1024) setNavigationOpen(false);
+      });
+      navPanel.querySelectorAll("a").forEach(function (link) {
+        link.addEventListener("click", function () {
+          if (window.innerWidth < 1024) setNavigationOpen(false);
+        });
+      });
+      window.addEventListener("resize", function () {
+        if (window.innerWidth >= 1024) {
+          navPanel.classList.remove("hidden");
+          if (navBackdrop) navBackdrop.hidden = true;
+          document.body.classList.remove("overflow-hidden");
+          navButton.setAttribute("aria-expanded", "false");
+        } else if (navButton.getAttribute("aria-expanded") !== "true") {
+          navPanel.classList.add("hidden");
+        }
       });
     }
 
@@ -61,11 +248,12 @@
     });
 
     var confirmLayer = document.querySelector("[data-confirm-layer]");
-    var confirmTitle = document.querySelector("[data-confirm-title]");
-    var confirmMessage = document.querySelector("[data-confirm-message]");
-    var confirmAccept = document.querySelector("[data-confirm-accept]");
-    var confirmCancel = document.querySelector("[data-confirm-cancel]");
+    var confirmTitle = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-title]");
+    var confirmMessage = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-message]");
+    var confirmAccept = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-accept]");
+    var confirmCancel = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-cancel]");
     var pendingForm = null;
+    var confirmReturnFocus = null;
 
     function getCsrfToken() {
       var prefix = "csrftoken=";
@@ -97,14 +285,17 @@
       confirmLayer.hidden = true;
       document.body.classList.remove("overflow-hidden");
       pendingForm = null;
+      if (confirmReturnFocus && document.contains(confirmReturnFocus)) confirmReturnFocus.focus();
+      confirmReturnFocus = null;
     }
 
     document.querySelectorAll("form[data-confirm]").forEach(function (form) {
       form.addEventListener("submit", function (event) {
-        if (form.dataset.confirmed === "true" || !confirmLayer) return;
+        if (form.dataset.confirmed === "true" || !confirmLayer || !confirmTitle || !confirmMessage || !confirmAccept || !confirmCancel) return;
         event.preventDefault();
         ensureCsrfToken(form);
         pendingForm = form;
+        confirmReturnFocus = document.activeElement;
         confirmTitle.textContent = form.dataset.confirmTitle || "Confirm action";
         confirmMessage.textContent = form.dataset.confirm || "Are you sure you want to continue?";
         confirmAccept.textContent = form.dataset.confirmAction || "Confirm";
@@ -130,6 +321,20 @@
       });
       confirmLayer.addEventListener("keydown", function (event) {
         if (event.key === "Escape") closeConfirm();
+        if (event.key !== "Tab") return;
+        var focusable = Array.prototype.slice.call(
+          confirmLayer.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+        );
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       });
     }
 

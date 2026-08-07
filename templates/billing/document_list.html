@@ -7,15 +7,16 @@
 
 {% block content %}
 <div class="jims-list-page space-y-6">
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <header class="jims-page-header">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
-      <p class="mt-1 text-sm text-slate-600">Manage and export PDFs.</p>
+      <p class="jims-page-eyebrow">Billing operations</p>
+      <h1 class="jims-page-title">{{ doc_type_display }}</h1>
+      <p class="jims-page-subtitle">Create, review, and export customer documents from one workspace.</p>
     </div>
-    <a href="{% url 'billing:document_create' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+    <a href="{% url 'billing:document_create' doc_type=doc_type %}" class="jims-btn jims-btn-primary">
       Create {{ doc_type_display|lower }}
     </a>
-  </div>
+  </header>
 
   {% if doc_type == "invoice" %}
     <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -29,7 +30,7 @@
     </section>
   {% endif %}
 
-  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+  <section class="jims-toolbar">
     <form method="get" class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
       {% if request.GET.worklist %}<input type="hidden" name="worklist" value="{{ request.GET.worklist }}">{% endif %}
       <input type="hidden" name="sort" value="{{ active_sort }}">
@@ -41,7 +42,7 @@
       </div>
       <div class="lg:col-span-2">
         <label for="customer" class="block text-sm font-medium text-slate-700">Customer</label>
-        <select id="customer" name="customer" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
+        <select id="customer" name="customer" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" data-searchable-select="true" data-search-label="Customer" data-search-placeholder="Search customers...">
           <option value="">All customers</option>
           {% for customer in customer_catalog %}
             <option value="{{ customer.id }}" {% if request.GET.customer == customer.id|stringformat:"s" %}selected{% endif %}>{{ customer.name }}</option>
@@ -135,9 +136,7 @@
               <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ document.number }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ document.customer.name }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ document.issue_date|date:"d M Y" }}</td>
-              <td class="px-4 py-3 text-sm text-slate-700">
-                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ document.get_status_display }}</span>
-              </td>
+              <td class="px-4 py-3 text-sm text-slate-700">{% include "components/status_badge.html" with value=document.status label=document.get_status_display %}</td>
               {% if doc_type == "invoice" %}
                 <td class="px-4 py-3 text-sm text-slate-700">{{ document.due_date|date:"d M Y"|default:"-" }}</td>
               {% elif doc_type == "receipt" %}

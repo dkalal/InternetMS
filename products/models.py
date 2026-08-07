@@ -9,7 +9,68 @@ from users.tenant_models import TenantScopedManager
 
 # Create your models here.
 
+class UnitOfMeasure(models.Model):
+    """Tenant-owned sales unit used by product categories and products."""
+
+    organization = models.ForeignKey(
+        'users.Organization', on_delete=models.PROTECT, related_name='units_of_measure', db_index=True
+    )
+    tenant = models.ForeignKey(
+        'users.Organization', on_delete=models.PROTECT, related_name='tenant_units_of_measure', db_index=True
+    )
+    name = models.CharField(max_length=50)
+    symbol = models.CharField(max_length=16, blank=True, default='')
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'name'], name='uniq_uom_tenant_name'),
+        ]
+        indexes = [models.Index(fields=['tenant', 'is_active', 'name'])]
+
+    def __str__(self):
+        return f'{self.name} ({self.symbol})' if self.symbol else self.name
+
+    @property
+    def label(self):
+        return self.symbol or self.name
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.organization_id is not None:
+            self.tenant_id = self.organization_id
+        if self.organization_id is None and self.tenant_id is not None:
+            self.organization_id = self.tenant_id
+        if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
+            self.organization_id = self.tenant_id
+        self.name = (self.name or '').strip()
+        self.symbol = (self.symbol or '').strip()
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        if not (self.name or '').strip():
+            raise ValidationError({'name': 'Unit name is required.'})
+        if self.tenant_id and type(self).objects.unscoped().filter(
+            tenant_id=self.tenant_id, name__iexact=(self.name or '').strip()
+        ).exclude(pk=self.pk).exists():
+            raise ValidationError({'name': 'A unit with this name already exists for the tenant.'})
+
+
 class ProductCategory(models.Model):
+    class Icon(models.TextChoices):
+        GENERIC = 'layers', 'General catalog'
+        CAMERA = 'camera', 'Camera & security'
+        TOOLS = 'tools', 'Installation & tools'
+        LAPTOP = 'laptop', 'Computing'
+        ROUTER = 'router', 'Networking'
+        SWITCH = 'switch', 'Network switching'
+        CABLE = 'cable', 'Cables & accessories'
+
     organization = models.ForeignKey(
         'users.Organization', on_delete=models.PROTECT, related_name='product_categories', db_index=True
     )
@@ -18,6 +79,26 @@ class ProductCategory(models.Model):
     )
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, default='')
+    measure_unit = models.CharField(
+        max_length=50,
+        default='Unit',
+        help_text='Default unit for new products assigned to this category, for example Unit, Pc, Meter, Kg, or Box.',
+    )
+    allowed_units = models.ManyToManyField(
+        UnitOfMeasure,
+        related_name='product_categories',
+        blank=True,
+        help_text='Units that products in this category may use for sales.',
+    )
+    default_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.PROTECT,
+        related_name='default_for_product_categories',
+        null=True,
+        blank=True,
+        help_text='Preselected sales unit for new products in this category.',
+    )
+    icon = models.CharField(max_length=20, choices=Icon.choices, default=Icon.GENERIC)
     is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -41,7 +122,29 @@ class ProductCategory(models.Model):
         if self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
         self.name = self.name.strip()
+        if self.default_unit_id:
+            self.measure_unit = self.default_unit.label
+        else:
+            self.measure_unit = (self.measure_unit or 'Unit').strip()
+        self.full_clean(exclude=['allowed_units', 'default_unit'])
         super().save(*args, **kwargs)
+        if not self.default_unit_id:
+            unit, _ = UnitOfMeasure.objects.unscoped().get_or_create(
+                tenant_id=self.tenant_id,
+                name__iexact=self.measure_unit,
+                defaults={'organization_id': self.tenant_id, 'name': self.measure_unit},
+            )
+            type(self).objects.unscoped().filter(pk=self.pk).update(default_unit=unit)
+            self.default_unit = unit
+        if not self.allowed_units.filter(pk=self.default_unit_id).exists():
+            self.allowed_units.add(self.default_unit)
+
+    def clean(self):
+        super().clean()
+        if self.default_unit_id and self.tenant_id and self.default_unit.tenant_id != self.tenant_id:
+            raise ValidationError({'default_unit': 'Default unit must belong to the active tenant.'})
+        if self.pk and self.default_unit_id and not self.allowed_units.filter(pk=self.default_unit_id).exists():
+            raise ValidationError({'default_unit': 'Default unit must be one of the category allowed units.'})
 
 
 class Product(models.Model):
@@ -53,6 +156,8 @@ class Product(models.Model):
     )
 
     class PricingMode(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        TECHNICIAN = "technician", "Technician"
         RETAIL = "retail", "Retail"
         WHOLESALE = "wholesale", "Wholesale"
 
@@ -92,8 +197,6 @@ class Product(models.Model):
         'users.Organization',
         on_delete=models.PROTECT,
         related_name='tenant_products',
-        null=True,
-        blank=True,
         db_index=True,
     )
     name = models.CharField(max_length=200)
@@ -117,9 +220,18 @@ class Product(models.Model):
     reorder_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     measure_unit = models.CharField(max_length=50, default='Kg')
+    sales_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.PROTECT,
+        related_name='products',
+        null=True,
+        blank=True,
+        help_text='Unit shown on quotations and invoices for this product.',
+    )
     buying_price = models.DecimalField(max_digits=10, decimal_places=2)
     selling_price = models.DecimalField(max_digits=10, decimal_places=2)
     retail_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    technician_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     wholesale_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     wholesale_min_quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     allow_wholesale = models.BooleanField(default=False)
@@ -144,6 +256,7 @@ class Product(models.Model):
             models.Index(fields=["organization", "name"], name="products_org_name_idx"),
             models.Index(fields=["organization", "quantity"], name="products_org_quantity_idx"),
             models.Index(fields=["organization", "retail_price"], name="products_org_retail_idx"),
+            models.Index(fields=["organization", "technician_price"], name="products_org_tech_idx"),
             models.Index(fields=["organization", "wholesale_price"], name="products_org_wholesale_idx"),
             models.Index(fields=["tenant", "item_type", "is_active"], name="products_ten_type_active_idx"),
             models.Index(fields=["tenant", "sku"], name="products_ten_sku_idx"),
@@ -174,7 +287,9 @@ class Product(models.Model):
         return dict(self.CATEGORY_CHOICES).get(self.category, 'Unknown')
     
     def get_measure_unit_display(self):
-        return self.measure_unit if self.measure_unit else 'Kg'
+        if self.sales_unit_id:
+            return self.sales_unit.label
+        return self.measure_unit if self.measure_unit else 'Unit'
     
     def get_buying_price_display(self):
         return f"Tshs{self.buying_price:.2f}"  
@@ -245,6 +360,26 @@ class Product(models.Model):
             'is_active': self.get_is_active_display()
         }
 
+    @property
+    def effective_technician_price(self):
+        return self.technician_price if self.technician_price is not None else self.selling_price
+
+    def price_for_sale_category(self, *, sale_pricing_category: str, quantity=1):
+        """Resolve a future transaction price from one centralized catalog rule.
+
+        ``retail`` is retained only for pre-existing workflows and draft carts.
+        New transactions explicitly select standard, technician, or wholesale.
+        """
+        if sale_pricing_category == self.PricingMode.TECHNICIAN:
+            return self.effective_technician_price
+        if sale_pricing_category == self.PricingMode.WHOLESALE:
+            if self.allow_wholesale and self.wholesale_price is not None and quantity >= self.wholesale_min_quantity:
+                return self.wholesale_price
+            return self.selling_price
+        if sale_pricing_category == self.PricingMode.STANDARD:
+            return self.selling_price
+        return self.price_for(quantity=quantity, pricing_mode=self.PricingMode.RETAIL)
+
     def price_for(self, *, quantity=1, pricing_mode: str = PricingMode.RETAIL):
         if (
             pricing_mode == self.PricingMode.WHOLESALE
@@ -262,6 +397,28 @@ class Product(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.catalog_category_id:
+            previous_category_id = None
+            if not self._state.adding and self.pk:
+                previous_category_id = type(self).objects.unscoped().filter(pk=self.pk).values_list(
+                    'catalog_category_id', flat=True
+                ).first()
+            if self._state.adding or previous_category_id != self.catalog_category_id:
+                selected_is_allowed = self.sales_unit_id and self.catalog_category.allowed_units.filter(
+                    pk=self.sales_unit_id
+                ).exists()
+                if self.catalog_category.default_unit_id and not selected_is_allowed:
+                    self.sales_unit = self.catalog_category.default_unit
+                self.measure_unit = self.catalog_category.measure_unit
+        if not self.sales_unit_id and self.tenant_id:
+            legacy_name = (self.measure_unit or 'Unit').strip() or 'Unit'
+            self.sales_unit, _ = UnitOfMeasure.objects.unscoped().get_or_create(
+                tenant_id=self.tenant_id,
+                name__iexact=legacy_name,
+                defaults={'organization_id': self.tenant_id, 'name': legacy_name},
+            )
+        if self.sales_unit_id:
+            self.measure_unit = self.sales_unit.label
         self.sku = (self.sku or '').strip().upper()
         if self.item_type == self.ItemType.SERVICE:
             self.track_stock = False
@@ -278,10 +435,32 @@ class Product(models.Model):
             category_tenant_id = getattr(self.catalog_category, 'tenant_id', None)
             if category_tenant_id != self.tenant_id:
                 raise ValidationError({'catalog_category': 'Category must belong to the active tenant.'})
+        if self.sales_unit_id and self.tenant_id and self.sales_unit.tenant_id != self.tenant_id:
+            raise ValidationError({'sales_unit': 'Unit must belong to the active tenant.'})
+        if self.catalog_category_id and self.sales_unit_id and self.catalog_category.pk:
+            if not self.catalog_category.allowed_units.filter(pk=self.sales_unit_id).exists():
+                raise ValidationError({'sales_unit': 'Select a unit allowed by the product category.'})
         if self.buying_price is not None and self.buying_price < 0:
             raise ValidationError({'buying_price': 'Buying price cannot be negative.'})
         if self.selling_price is not None and self.selling_price < 0:
             raise ValidationError({'selling_price': 'Selling price cannot be negative.'})
+        if self.selling_price is not None and self.buying_price is not None and self.selling_price <= self.buying_price:
+            raise ValidationError({'selling_price': 'Selling price must be greater than buying cost.'})
+        for field_name, label in (
+            ('retail_price', 'Retail price'),
+            ('wholesale_price', 'Wholesale price'),
+            ('technician_price', 'Technician price'),
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValidationError({field_name: f'{label} cannot be negative.'})
+        for field_name, label in (
+            ('wholesale_price', 'Wholesale price'),
+            ('technician_price', 'Technician price'),
+        ):
+            value = getattr(self, field_name)
+            if value is not None and self.buying_price is not None and value <= self.buying_price:
+                raise ValidationError({field_name: f'{label} must be greater than buying cost.'})
         if self.reorder_threshold is not None and self.reorder_threshold < 0:
             raise ValidationError({'reorder_threshold': 'Reorder threshold cannot be negative.'})
 

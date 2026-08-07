@@ -243,7 +243,7 @@ class CustomFieldIntegrationTests(TestCase):
         self.customer_field.refresh_from_db()
         self.assertFalse(self.customer_field.is_active)
 
-    def test_super_admin_uses_in_app_tenant_selector(self):
+    def test_super_admin_must_enter_explicit_audited_support_context(self):
         super_admin = User.objects.create_superuser(username="root", password="pass")
         UserAccessProfile.objects.create(
             user=super_admin,
@@ -254,13 +254,19 @@ class CustomFieldIntegrationTests(TestCase):
         self.client.login(username="root", password="pass")
         response = self.client.get(reverse("custom-field-list"))
 
-        self.assertEqual(response.status_code, 302)
-        self.assertRedirects(response, reverse("custom-field-org-select"), fetch_redirect_response=False)
+        self.assertEqual(response.status_code, 403)
 
-        selector_response = self.client.get(reverse("custom-field-org-select"))
+        selector_response = self.client.get(reverse("start_support_access"))
         self.assertEqual(selector_response.status_code, 200)
-        self.assertContains(selector_response, "Choose a tenant")
+        self.assertContains(selector_response, "audited tenant support mode")
         self.assertContains(selector_response, self.organization.name)
+
+        enter_response = self.client.post(
+            reverse("start_support_access"),
+            {"tenant_id": self.organization.pk, "reason": "Investigate customer configuration"},
+        )
+        self.assertEqual(enter_response.status_code, 302)
+        self.assertEqual(self.client.get(reverse("custom-field-list")).status_code, 200)
 
     def test_inactive_and_other_tenant_fields_do_not_appear_on_forms(self):
         self.client.login(username="admin", password="pass")

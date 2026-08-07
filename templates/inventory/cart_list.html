@@ -6,7 +6,7 @@
 <div class="jims-list-page space-y-5">
   <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div><p class="text-sm font-semibold text-brand-700">Selling</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Sales carts</h1><p class="mt-1 text-sm text-slate-600">Draft carts and quotations never reserve or deduct stock.</p></div>
-    <a class="jims-btn jims-btn-primary" href="{% url 'inventory:cart_create' %}">Start sale</a>
+    <form method="post" action="{% url 'inventory:cart_create' %}">{% csrf_token %}<button class="jims-btn jims-btn-primary" type="submit">Start sale</button></form>
   </header>
 
   <form method="get" class="jims-panel grid gap-3 p-4 sm:grid-cols-[1fr_12rem_auto_auto] sm:items-end">
@@ -26,8 +26,9 @@
       {% endfor %}
     </div>
   {% else %}
-    {% url 'inventory:cart_create' as cart_create_url %}
-    <div class="jims-panel">{% include "components/empty_state.html" with title="No carts found" message="Clear the filters or start a new customer or walk-in sale." action_url=cart_create_url action_label="Start sale" %}</div>
+    <div class="jims-panel">
+      <div class="px-5 py-12 text-center"><h2 class="text-sm font-semibold text-slate-900">No carts found</h2><p class="mx-auto mt-1 max-w-md text-sm text-slate-600">Clear the filters or start a new customer or walk-in sale.</p>{% if INVENTORY_CAN_MANAGE_CARTS %}<form method="post" action="{% url 'inventory:cart_create' %}" class="mt-4">{% csrf_token %}<button class="jims-btn jims-btn-primary" type="submit">Start sale</button></form>{% endif %}</div>
+    </div>
   {% endif %}
 </div>
 {% endblock %}

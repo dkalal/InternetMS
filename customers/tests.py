@@ -342,6 +342,65 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertEqual(len(customers), 1)
         self.assertEqual(customers[0].id, self.customer_a.id)
 
+    def test_sales_sees_customer_identity_and_non_monetary_health_for_owned_invoice(self):
+        package = Package.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Sales Visibility Fiber",
+            package_type="indoor",
+            speed="20 Mbps",
+            monthly_fee=Decimal("50000.00"),
+            setup_fee=Decimal("0.00"),
+            description="Test package",
+        )
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_a,
+            package=package,
+            start_date=timezone.localdate(),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.staff,
+            subscription_id=subscription.id,
+            period_start=timezone.localdate().replace(day=1),
+            months=1,
+        )
+        SubscriptionPeriod.objects.filter(pk=period.pk).update(status=SubscriptionPeriod.Status.INVOICED)
+        owned_invoice = BillingDocument.objects.get(pk=period.invoice_id)
+
+        product = Product.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Manager-only invoice item",
+            category="hardware",
+            quantity=Decimal("1.00"),
+            measure_unit="Unit",
+            buying_price=Decimal("100.00"),
+            selling_price=Decimal("150.00"),
+            stock=1,
+            is_active=True,
+        )
+        manager_invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.admin,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer_a.id,
+            issue_date=timezone.localdate(),
+            items=[LineItemInput(product_id=product.id, quantity=Decimal("1.00"), unit_price=Decimal("150.00"))],
+        )
+
+        self.client.login(username="staff", password="pass")
+        response = self.client.get(reverse("customer-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.customer_a.name)
+        self.assertContains(response, "Billing health")
+        self.assertContains(response, "Invoice requires attention")
+        self.assertContains(response, f"Latest invoice: {owned_invoice.number}")
+        self.assertNotContains(response, manager_invoice.number)
+        self.assertNotContains(response, f"{owned_invoice.total:,.2f} TZS")
+
     def test_customer_list_today_worklist_shows_only_customers_worked_on_today(self):
         worked_today = Customer.all_objects.create(
             organization=self.org1,
@@ -454,14 +513,14 @@ class CustomerRBACIsolationTests(TestCase):
         )
         SubscriptionPeriod.objects.filter(pk=period.pk).update(status=SubscriptionPeriod.Status.INVOICED)
 
-        self.client.login(username="staff", password="pass")
+        self.client.login(username="admin", password="pass")
         response = self.client.get(reverse("customer-list"), {"worklist": "due"})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([customer.id for customer in response.context["customers"]], [self.customer_a.id])
         self.assertEqual(response.context["due_soon_customers"], 1)
 
-    def test_due_soon_worklist_excludes_customer_with_another_office_paid_into_next_month(self):
+    def test_due_soon_worklist_excludes_customer_with_legacy_two_month_paid_invoice(self):
         package = Package.objects.create(
             organization=self.org1,
             tenant=self.org1,
@@ -474,8 +533,6 @@ class CustomerRBACIsolationTests(TestCase):
         )
         today = timezone.localdate()
         month_end = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-        next_month_start = month_end + timedelta(days=1)
-        next_month_end = (next_month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         main_site = CustomerService.ensure_primary_site(organization=self.org1, customer=self.customer_a)
         sub_site = CustomerSite.objects.create(
             organization=self.org1,
@@ -499,9 +556,35 @@ class CustomerRBACIsolationTests(TestCase):
             start_date=today,
         )
         CustomerSubscription.objects.filter(pk=main_subscription.pk).update(paid_through_date=month_end)
-        CustomerSubscription.objects.filter(pk=sub_subscription.pk).update(paid_through_date=next_month_end)
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.staff,
+            subscription_id=sub_subscription.pk,
+            period_start=today.replace(day=1),
+            months=2,
+        )
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.staff,
+            invoice_id=period.invoice_id,
+            amount_paid=period.invoice.total,
+            payment_method="cash",
+        )
 
-        self.client.login(username="staff", password="pass")
+        # Preserve the legacy inconsistency seen in production: the paid
+        # recurring invoice covers two months, but its denormalized dates still
+        # say one month. The worklist must honor the paid invoice term.
+        CustomerSubscription.objects.filter(pk=sub_subscription.pk).update(paid_through_date=month_end)
+        SubscriptionPeriod.objects.filter(pk=period.pk).update(
+            months=1,
+            period_end=month_end,
+        )
+        period.refresh_from_db()
+        self.assertEqual(period.status, SubscriptionPeriod.Status.PAID)
+        self.assertEqual(period.invoice.status, BillingDocument.Status.PAID)
+        self.assertEqual(period.invoice.total, package.monthly_fee * 2)
+
+        self.client.login(username="admin", password="pass")
         response = self.client.get(reverse("customer-list"), {"worklist": "due"})
 
         self.assertEqual(response.status_code, 200)
@@ -535,6 +618,63 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(list(response.context["customers"]), [self.customer_a])
         self.assertContains(response, "page_size=25")
+
+    def test_finance_can_count_and_filter_paid_and_unpaid_customers_by_billing_month(self):
+        package = Package.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Monthly Billing Filter",
+            package_type="indoor",
+            speed="20 Mbps",
+            monthly_fee=Decimal("50000.00"),
+            setup_fee=Decimal("0.00"),
+            description="Billing period filter test",
+        )
+        unpaid_customer = Customer.all_objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="May Unpaid Customer",
+            customer_type="internet",
+            status=Customer.Status.ACTIVE,
+            location="Moshi",
+        )
+        paid_subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1, customer=self.customer_a, package=package, start_date=date(2026, 5, 1),
+        )
+        unpaid_subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1, customer=unpaid_customer, package=package, start_date=date(2026, 5, 1),
+        )
+        SubscriptionPeriod.objects.create(
+            organization=self.org1, tenant=self.org1, subscription=paid_subscription,
+            period_start=date(2026, 5, 1), period_end=date(2026, 5, 31),
+            final_amount=Decimal("50000.00"), status=SubscriptionPeriod.Status.PAID,
+        )
+        SubscriptionPeriod.objects.create(
+            organization=self.org1, tenant=self.org1, subscription=unpaid_subscription,
+            period_start=date(2026, 5, 1), period_end=date(2026, 5, 31),
+            final_amount=Decimal("50000.00"), status=SubscriptionPeriod.Status.OVERDUE,
+        )
+        self.client.login(username="admin", password="pass")
+
+        overview = self.client.get(reverse("customer-list"), {"month": "2026-05"})
+        paid = self.client.get(reverse("customer-list"), {"worklist": "paid", "month": "2026-05"})
+        unpaid = self.client.get(reverse("customer-list"), {"worklist": "unpaid", "month": "2026-05"})
+
+        self.assertEqual(overview.context["selected_paid_customers"], 1)
+        self.assertEqual(overview.context["selected_unpaid_customers"], 1)
+        self.assertContains(overview, "May 2026")
+        self.assertEqual([customer.id for customer in paid.context["customers"]], [self.customer_a.id])
+        self.assertEqual([customer.id for customer in unpaid.context["customers"]], [unpaid_customer.id])
+        self.assertNotContains(paid, self.customer_b.name)
+
+    def test_sales_user_does_not_receive_finance_monthly_payment_counts(self):
+        self.client.login(username="staff", password="pass")
+
+        response = self.client.get(reverse("customer-list"), {"month": "2026-05", "worklist": "paid"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("selected_paid_customers", response.context)
+        self.assertNotContains(response, "Paid customers")
 
     def test_customer_pages_show_latest_reissued_subscription_invoice_amount(self):
         package = Package.objects.create(
@@ -602,7 +742,7 @@ class CustomerRBACIsolationTests(TestCase):
             payment_method="cash",
         )
 
-        self.client.login(username="staff", password="pass")
+        self.client.login(username="admin", password="pass")
         session = self.client.session
         session["active_org_id"] = self.org1.id
         session.save()
@@ -612,7 +752,7 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Latest invoice for Aug 2026: 50,000.00 TZS")
 
-        list_response = self.client.get(reverse("customer-list"), {"worklist": "today"})
+        list_response = self.client.get(reverse("customer-list"))
         self.assertEqual(list_response.status_code, 200)
         self.assertNotContains(list_response, "Expired")
         self.assertContains(list_response, "Paid through Aug 31, 2026")
@@ -676,13 +816,13 @@ class CustomerRBACIsolationTests(TestCase):
             payment_method="cash",
         )
 
-        self.client.login(username="staff", password="pass")
+        self.client.login(username="admin", password="pass")
         session = self.client.session
         session["active_org_id"] = self.org1.id
         session.save()
 
         detail_response = self.client.get(reverse("customer-detail", args=[self.customer_a.id]))
-        list_response = self.client.get(reverse("customer-list"), {"worklist": "today"})
+        list_response = self.client.get(reverse("customer-list"))
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Latest invoice for Jul 2026 - Aug 2026: 100,000.00 TZS")
@@ -732,7 +872,7 @@ class CustomerRBACIsolationTests(TestCase):
             package_type="indoor",
         )
 
-        self.client.login(username="staff", password="pass")
+        self.client.login(username="admin", password="pass")
         session = self.client.session
         session["active_org_id"] = self.org1.id
         session.save()

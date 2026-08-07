@@ -5,7 +5,7 @@ from django.forms import BaseInlineFormSet, inlineformset_factory
 
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
-from products.models import Product, ProductCategory
+from products.models import Product, ProductCategory, UnitOfMeasure
 
 from .models import Cart, CartLine, InventorySettings, Purchase, PurchaseLine, StockAdjustment, StockUnit, Supplier, SupplierPaymentRecord
 
@@ -20,8 +20,32 @@ class TenantFormMixin:
 class ProductCategoryForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = ProductCategory
-        fields = ['name', 'description', 'is_active']
-        widgets = {'description': forms.Textarea(attrs={'rows': 3})}
+        fields = ['name', 'description', 'allowed_units', 'default_unit', 'measure_unit', 'icon', 'is_active']
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 3, 'placeholder': 'What belongs in this category?'}),
+            'allowed_units': forms.CheckboxSelectMultiple,
+            'measure_unit': forms.HiddenInput,
+            'icon': forms.RadioSelect,
+        }
+        help_texts = {
+            'allowed_units': 'Products in this category may use any selected sales unit.',
+            'default_unit': 'Applied automatically to new products assigned to this category.',
+            'is_active': 'Inactive categories stay in history but cannot be used for new catalog items.',
+        }
+
+    def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD, **kwargs):
+        self.sale_pricing_category = sale_pricing_category
+        super().__init__(*args, organization=organization, **kwargs)
+        self.fields['name'].widget.attrs.setdefault('placeholder', 'e.g. Network switches')
+        unit_queryset = UnitOfMeasure.objects.filter(tenant=organization)
+        if not self.instance.pk:
+            unit_queryset = unit_queryset.filter(is_active=True)
+        self.fields['allowed_units'].queryset = unit_queryset.order_by('name')
+        self.fields['default_unit'].queryset = unit_queryset.order_by('name')
+        self.fields['allowed_units'].required = False
+        self.fields['default_unit'].required = False
+        self.fields['measure_unit'].required = False
+        self.fields['icon'].widget.attrs['class'] = 'jims-category-icon-input'
 
     def clean_name(self):
         name = (self.cleaned_data.get('name') or '').strip()
@@ -31,6 +55,41 @@ class ProductCategoryForm(TenantFormMixin, forms.ModelForm):
         if query.exists():
             raise forms.ValidationError('A category with this name already exists.')
         return name
+
+    def clean(self):
+        cleaned = super().clean()
+        allowed_units = cleaned.get('allowed_units')
+        default_unit = cleaned.get('default_unit')
+        legacy_unit = (cleaned.get('measure_unit') or '').strip()
+        if default_unit and allowed_units is not None and default_unit not in allowed_units:
+            self.add_error('default_unit', 'Default unit must be selected in Allowed units.')
+        if allowed_units is not None and not allowed_units.exists() and not legacy_unit:
+            self.add_error('allowed_units', 'Select at least one allowed unit.')
+        if allowed_units is not None and allowed_units.exists() and not default_unit:
+            self.add_error('default_unit', 'Select a default unit.')
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        legacy_unit = (self.cleaned_data.get('measure_unit') or '').strip()
+        allowed_units = self.cleaned_data.get('allowed_units')
+        default_unit = self.cleaned_data.get('default_unit')
+        if not default_unit and legacy_unit and self.organization:
+            default_unit, _ = UnitOfMeasure.objects.unscoped().get_or_create(
+                tenant=self.organization,
+                name__iexact=legacy_unit,
+                defaults={'organization': self.organization, 'name': legacy_unit},
+            )
+            instance.default_unit = default_unit
+            instance.measure_unit = default_unit.label
+        if commit:
+            instance.save()
+            self.save_m2m()
+            if allowed_units is not None and allowed_units.exists():
+                instance.allowed_units.set(allowed_units)
+            elif default_unit:
+                instance.allowed_units.set([default_unit])
+        return instance
 
 
 class SupplierForm(TenantFormMixin, forms.ModelForm):
@@ -194,11 +253,12 @@ class StockAdjustmentForm(TenantFormMixin, forms.Form):
 class CartForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = Cart
-        fields = ['customer', 'walk_in_name', 'discount_amount', 'tax_rate', 'notes']
+        fields = ['customer', 'walk_in_name', 'sale_pricing_category', 'discount_amount', 'tax_rate', 'notes']
         widgets = {'notes': forms.Textarea(attrs={'rows': 3})}
         help_texts = {
             'customer': 'Leave blank for a walk-in customer.',
             'walk_in_name': 'Optional name to print when no customer record is selected.',
+            'sale_pricing_category': 'Choose Standard, Technician, or Wholesale pricing for this sale.',
             'discount_amount': 'Cart-wide discount applied after line discounts.',
             'tax_rate': 'VAT percentage applied after discounts.',
         }
@@ -207,6 +267,11 @@ class CartForm(TenantFormMixin, forms.ModelForm):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['customer'].queryset = Customer.objects.filter(tenant=organization, status=Customer.Status.ACTIVE)
         self.fields['customer'].required = False
+        if self.instance.sale_pricing_category != Cart.SalePricingCategory.LEGACY_RETAIL:
+            self.fields['sale_pricing_category'].choices = [
+                choice for choice in Cart.SalePricingCategory.choices
+                if choice[0] != Cart.SalePricingCategory.LEGACY_RETAIL
+            ]
 
     def clean(self):
         cleaned = super().clean()
@@ -227,16 +292,21 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         model = CartLine
         fields = ['product', 'quantity', 'discount_amount']
 
-    def __init__(self, *args, organization=None, **kwargs):
+    def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD, **kwargs):
+        self.sale_pricing_category = sale_pricing_category
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['product'].queryset = Product.objects.filter(tenant=organization, is_active=True).order_by('name')
-        product_id = self.data.get('product') if self.is_bound else self.instance.product_id
+        product_id = self.data.get('product') if self.is_bound else (
+            self.instance.product_id or self.initial.get('product')
+        )
         if product_id:
             self.fields['serial_units'].queryset = StockUnit.objects.filter(
                 tenant=organization, product_id=product_id, status=StockUnit.Status.AVAILABLE
-            )
+            ).order_by('serial_number')
         if self.instance.pk:
-            self.fields['serial_units'].initial = self.instance.serial_selections.values_list('stock_unit_id', flat=True)
+            self.fields['serial_units'].initial = [
+                str(value) for value in self.instance.serial_selections.values_list('stock_unit_id', flat=True)
+            ]
 
     def clean(self):
         cleaned = super().clean()
@@ -256,7 +326,9 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
                 self.add_error('product', 'This product is currently out of stock.')
             elif quantity > available:
                 self.add_error('quantity', f'Only {available} units are currently available.')
-        if product and discount > product.price_for(quantity=quantity) * quantity:
+        if product and discount > product.price_for_sale_category(
+            sale_pricing_category=self.sale_pricing_category, quantity=quantity,
+        ) * quantity:
             self.add_error('discount_amount', 'Discount cannot exceed the line amount.')
         return cleaned
 

@@ -2,8 +2,8 @@
 {% block title %}Inventory import{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="mx-auto max-w-5xl space-y-5">
-  <header><p class="text-sm font-semibold text-brand-700">Data tools</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Validate and import Excel data</h1><p class="mt-1 max-w-3xl text-sm text-slate-600">Validation never writes business records. Historical purchases and sales are reference-only and never alter live stock.</p></header>
+<div class="jims-workflow-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header"><div><p class="jims-page-eyebrow">Data tools</p><h1 class="jims-page-title">Validate and import Excel data</h1><p class="jims-page-subtitle">Validation never writes business records. Historical purchases and sales are reference-only and never alter live stock.</p></div></header>
 
   <section class="jims-panel p-5">
     <h2 class="text-sm font-semibold text-slate-950">Download a clean template</h2>
@@ -16,9 +16,9 @@
     </div>
   </section>
 
-  <form method="post" enctype="multipart/form-data" class="jims-panel p-5" data-submit-lock>
-    {% csrf_token %}{% include 'components/form.html' with form=form %}
-    <div class="mt-5 flex justify-end"><button class="jims-btn jims-btn-primary" data-loading-label="Validating…">Validate workbook</button></div>
+  <form method="post" enctype="multipart/form-data" class="jims-form-section" data-submit-lock>
+    <div class="jims-form-section-body">{% csrf_token %}{% include 'components/form.html' with form=form %}</div>
+    <div class="jims-form-actions"><button class="jims-btn jims-btn-primary" data-loading-label="Validating…">Validate workbook</button></div>
   </form>
 
   {% if job %}

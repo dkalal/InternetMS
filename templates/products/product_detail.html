@@ -64,8 +64,12 @@
                 </div>
                 {% endif %}
                 <div>
-                    <dt class="text-xs text-slate-500">Retail price</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.retail_price|default:product.selling_price|intcomma }} TZS</dd>
+                    <dt class="text-xs text-slate-500">Standard selling price</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.selling_price|intcomma }} TZS</dd>
+                    {% if INVENTORY_CAN_MANAGE_PRODUCTS %}
+                    <dt class="mt-3 text-xs text-slate-500">Technician price</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.effective_technician_price|intcomma }} TZS</dd>
+                    {% endif %}
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Wholesale price</dt>
@@ -77,10 +81,13 @@
                         {% endif %}
                     </dd>
                 </div>
+                {% if product.retail_price is not None and product.retail_price != product.selling_price %}
                 <div>
-                    <dt class="text-xs text-slate-500">Legacy selling price</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.selling_price|intcomma }} TZS</dd>
+                    <dt class="text-xs text-slate-500">Legacy retail override</dt>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.retail_price|intcomma }} TZS</dd>
+                    <p class="mt-1 text-xs text-slate-500">Retained for historical retail workflows; new standard sales use the standard price.</p>
                 </div>
+                {% endif %}
             </dl>
         </section>
 
