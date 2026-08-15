@@ -10,7 +10,7 @@
   <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight text-slate-900">Service packages</h1>
-      <p class="mt-1 text-sm text-slate-600">Manage indoor/outdoor offerings, subscribers, pricing, and unpaid periods.</p>
+      <p class="mt-1 text-sm text-slate-600">Manage package definitions, connected services, pricing, and unpaid periods. Indoor/Outdoor classifies the package—not the customer.</p>
     </div>
     <a href="{% url 'package-create' %}" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
       Add package
@@ -78,7 +78,7 @@
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Type" sort_key="type" desc_sort_key="-type" %}</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Speed</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Monthly" sort_key="monthly_fee" desc_sort_key="-monthly_fee" %}</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Subscribers" sort_key="-subscribers" desc_sort_key="subscribers" %}</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Active services" sort_key="-subscribers" desc_sort_key="subscribers" %}</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Unpaid" sort_key="-unpaid" desc_sort_key="unpaid" %}</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
           </tr>

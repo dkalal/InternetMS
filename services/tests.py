@@ -66,7 +66,11 @@ class PackageListViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Save package")
-        self.assertContains(response, "Price summary")
+        self.assertContains(response, "Package preview")
+        self.assertContains(response, 'max-w-[1180px]')
+        self.assertContains(response, 'data-unsaved-form')
+        self.assertContains(response, "Active and assignable")
+        self.assertEqual(response.content.decode().count("Save package"), 1)
 
     def test_package_collected_kpi_includes_partial_subscription_receipts(self):
         UserAccessProfile.objects.filter(user=self.user).update(

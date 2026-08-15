@@ -27,8 +27,10 @@ from billing.services import (
     LineItemInput,
     QuotationLifecycleService,
     SubscriptionBillingService,
+    paid_service_coverage,
 )
 from customers.models import Customer
+from inventory.models import Cart
 from products.models import Product, UnitOfMeasure
 from services.models import Package
 from users.models import Membership, Organization, OrganizationBranding, UserAccessProfile
@@ -284,6 +286,92 @@ class BillingServiceTests(TestCase):
         self.assertEqual(period.status, SubscriptionPeriod.Status.PAID)
         self.assertEqual(period.receipt_id, receipt.id)
         self.assertEqual(subscription.paid_through_date, period.period_end)
+        coverage = paid_service_coverage(subscription)
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0].start, date(2026, 4, 1))
+        self.assertEqual(coverage[0].end, date(2026, 9, 30))
+
+    def test_paid_coverage_merges_contiguous_periods_and_preserves_gaps(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 1, 1),
+        )
+        first = SubscriptionBillingService.create_period(
+            organization=self.org1, subscription=subscription,
+            period_start=date(2026, 1, 1), months=2,
+        )
+        later = SubscriptionBillingService.create_period(
+            organization=self.org1, subscription=subscription,
+            period_start=date(2026, 4, 1), months=1,
+        )
+        SubscriptionPeriod.objects.filter(pk__in=[first.pk, later.pk]).update(
+            status=SubscriptionPeriod.Status.PAID,
+        )
+        subscription = CustomerSubscription.objects.prefetch_related("periods").get(pk=subscription.pk)
+
+        coverage = paid_service_coverage(subscription)
+
+        self.assertEqual(
+            [(window.start, window.end) for window in coverage],
+            [
+                (date(2026, 1, 1), date(2026, 2, 28)),
+                (date(2026, 4, 1), date(2026, 4, 30)),
+            ],
+        )
+
+    def test_paid_coverage_does_not_precede_mid_month_agreement_start(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 4, 15),
+        )
+        period = SubscriptionBillingService.create_period(
+            organization=self.org1,
+            subscription=subscription,
+            period_start=date(2026, 4, 1),
+            months=3,
+        )
+        SubscriptionPeriod.objects.filter(pk=period.pk).update(status=SubscriptionPeriod.Status.PAID)
+        subscription = CustomerSubscription.objects.prefetch_related("periods").get(pk=subscription.pk)
+
+        coverage = paid_service_coverage(subscription)
+
+        self.assertEqual(coverage[0].start, date(2026, 4, 15))
+        self.assertEqual(coverage[0].end, date(2026, 6, 30))
+
+    def test_partial_subscription_payment_does_not_confirm_coverage(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 10, 1),
+            months=3,
+        )
+        half = (period.invoice.total / Decimal("2.00")).quantize(Decimal("0.01"))
+
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=period.invoice_id,
+            amount_paid=half,
+            payment_method="cash",
+            payment_reference="subscription-partial",
+        )
+
+        period.refresh_from_db()
+        subscription.refresh_from_db()
+        self.assertEqual(period.status, SubscriptionPeriod.Status.INVOICED)
+        self.assertEqual(paid_service_coverage(subscription), ())
+        self.assertIsNone(subscription.paid_through_date)
 
     def test_subscription_invoice_description_uses_speed_and_month_range_without_office_name(self):
         subscription = SubscriptionBillingService.get_or_create_subscription(
@@ -302,7 +390,14 @@ class BillingServiceTests(TestCase):
         )
 
         description = period.invoice.items.get().description
-        self.assertEqual(description, "Billing for the 10 Mbps (10 Mbps) - April 2026 - May 2026")
+        self.assertEqual(
+            description,
+            "10 Mbps (10 Mbps) subscription - service period: 01 Apr 2026 - 31 May 2026",
+        )
+        self.assertEqual(
+            period.invoice.notes,
+            "Subscription renewal for service period 01 Apr 2026 - 31 May 2026.",
+        )
         self.assertNotIn("Office", description)
 
     def test_new_invoice_captures_prior_open_balance_without_rebilling_it(self):
@@ -388,6 +483,7 @@ class BillingServiceTests(TestCase):
             items=[
                 LineItemInput(
                     package_id=self.package_org1.id,
+                    subscription_id=subscription.id,
                     description="April subscription",
                     quantity=Decimal("1.00"),
                     unit_price=Decimal("50000.00"),
@@ -506,6 +602,28 @@ class BillingServiceTests(TestCase):
 
         self.assertEqual(first.id, second.id)
         self.assertEqual(SubscriptionPeriod.objects.filter(subscription=subscription).count(), 1)
+
+    def test_subscription_period_rejects_overlapping_coverage(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 4, 1),
+        )
+        SubscriptionBillingService.create_period(
+            organization=self.org1,
+            subscription=subscription,
+            period_start=date(2026, 4, 1),
+            months=3,
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "Coverage overlaps"):
+            SubscriptionBillingService.create_period(
+                organization=self.org1,
+                subscription=subscription,
+                period_start=date(2026, 6, 1),
+                months=2,
+            )
 
     def test_quotation_history_retrieval_returns_all_versions_and_current(self):
         quotation_v1 = self._create_quotation()
@@ -1670,7 +1788,7 @@ class BillingServiceTests(TestCase):
             reason="Discount approved.",
         )
 
-        with self.assertRaisesMessage(BillingServiceError, "remaining credit capacity"):
+        with self.assertRaisesMessage(BillingServiceError, "unpaid invoice balance"):
             BillingService.create_credit_note(
                 organization=self.org1,
                 performed_by=self.user,
@@ -1678,6 +1796,139 @@ class BillingServiceTests(TestCase):
                 amount=invoice.total,
                 reason="Second full credit should be blocked.",
             )
+
+    def test_credit_note_cannot_over_settle_a_partially_paid_invoice(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.id,
+            amount_paid=Decimal("50.00"),
+            payment_method="cash",
+            payment_reference="partial-before-credit",
+        )
+
+        state = BillingService.get_invoice_action_state(organization=self.org1, invoice=invoice)
+        self.assertEqual(state["remaining_balance"], invoice.total - Decimal("50.00"))
+        self.assertEqual(state["credit_capacity"], state["remaining_balance"])
+        with self.assertRaisesMessage(BillingServiceError, "cannot exceed the unpaid invoice balance"):
+            BillingService.create_credit_note(
+                organization=self.org1,
+                performed_by=self.user,
+                invoice_id=invoice.id,
+                amount=invoice.total,
+                reason="Incorrect attempt to add customer debt.",
+            )
+
+    def test_void_credit_note_restores_invoice_balance_with_audit_history(self):
+        invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
+        credit_note = BillingService.create_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=invoice.id,
+            amount=Decimal("50.00"),
+            reason="Temporary approved adjustment.",
+        )
+        self.assertEqual(
+            BillingService.invoice_remaining_balance(organization=self.org1, invoice=invoice),
+            invoice.total - Decimal("50.00"),
+        )
+
+        BillingService.void_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            credit_note_id=credit_note.id,
+            reason="Adjustment was entered against the wrong invoice.",
+        )
+
+        credit_note.refresh_from_db()
+        invoice.refresh_from_db()
+        self.assertEqual(credit_note.status, BillingDocument.Status.VOID)
+        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
+        self.assertEqual(
+            BillingService.invoice_remaining_balance(organization=self.org1, invoice=invoice),
+            invoice.total,
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                organization=self.org1,
+                action_type="credit_note_voided",
+                object_id=str(credit_note.id),
+            ).exists()
+        )
+
+    def test_credit_settlement_updates_linked_subscription_coverage(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 8, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 8, 1),
+            months=1,
+        )
+        half = (period.invoice.total / Decimal("2.00")).quantize(Decimal("0.01"))
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=period.invoice_id,
+            amount_paid=half,
+            payment_method="cash",
+            payment_reference="subscription-partial-before-credit",
+        )
+
+        BillingService.create_credit_note(
+            organization=self.org1,
+            performed_by=self.user,
+            invoice_id=period.invoice_id,
+            amount=period.invoice.total - half,
+            reason="Approved service adjustment.",
+        )
+
+        period.refresh_from_db()
+        period.invoice.refresh_from_db()
+        subscription.refresh_from_db()
+        self.assertEqual(period.invoice.status, BillingDocument.Status.PAID)
+        self.assertEqual(period.status, SubscriptionPeriod.Status.PAID)
+        self.assertEqual(subscription.paid_through_date, period.period_end)
+
+    def test_manual_recurring_invoice_is_blocked_for_an_active_subscription(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 8, 1),
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "Use Renew from the customer account"):
+            BillingService.create_document(
+                organization=self.org1,
+                created_by=self.user,
+                document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer_org1.id,
+                status=BillingDocument.Status.ISSUED,
+                tax_rate=Decimal("0.00"),
+                items=[
+                    LineItemInput(
+                        package_id=self.package_org1.id,
+                        quantity=Decimal("1.00"),
+                        unit_price=subscription.monthly_fee_at_signup,
+                        billing_behavior=BillingLineItem.BillingBehavior.RECURRING_MONTHLY,
+                    )
+                ],
+            )
+
+        self.assertFalse(
+            BillingDocument.objects.filter(
+                organization=self.org1,
+                customer=self.customer_org1,
+                document_type=BillingDocument.DocumentType.INVOICE,
+            ).exists()
+        )
 
     def test_receipt_cannot_exceed_remaining_balance_after_credit_note(self):
         invoice = self._create_invoice(status=BillingDocument.Status.ISSUED)
@@ -1833,6 +2084,24 @@ class TechnicianSalePricingTests(TestCase):
         self.assertEqual(technician.items.get().unit_price, Decimal("130.00"))
         self.assertEqual(technician.items.get().pricing_mode, BillingLineItem.PricingMode.TECHNICIAN)
 
+    def test_customer_tier_automatically_applies_technician_pricing(self):
+        self.customer.pricing_tier = Customer.PricingTier.TECHNICIAN
+        self.customer.save(update_fields=["pricing_tier"])
+
+        document = self.create_document(BillingDocument.SalePricingCategory.CUSTOMER_TIER)
+
+        self.assertEqual(document.items.get().unit_price, Decimal("130.00"))
+        self.assertEqual(document.items.get().pricing_mode, BillingLineItem.PricingMode.TECHNICIAN)
+
+    def test_explicit_standard_overrides_customer_tier(self):
+        self.customer.pricing_tier = Customer.PricingTier.TECHNICIAN
+        self.customer.save(update_fields=["pricing_tier"])
+
+        document = self.create_document(BillingDocument.SalePricingCategory.STANDARD)
+
+        self.assertEqual(document.items.get().unit_price, Decimal("150.00"))
+        self.assertEqual(document.items.get().pricing_mode, BillingLineItem.PricingMode.STANDARD)
+
     def test_technician_fallback_and_historical_snapshots_survive_catalog_and_customer_changes(self):
         quotation = self.create_document(BillingDocument.SalePricingCategory.TECHNICIAN)
         original_price = quotation.items.get().unit_price
@@ -1861,7 +2130,7 @@ class TechnicianSalePricingTests(TestCase):
         migration = importlib.import_module("billing.migrations.0023_sale_pricing_category")
         add_field = migration.Migration.operations[0]
         self.assertEqual(add_field.field.default, BillingDocument.SalePricingCategory.LEGACY_RETAIL)
-        self.assertEqual(BillingDocument._meta.get_field("sale_pricing_category").default, BillingDocument.SalePricingCategory.STANDARD)
+        self.assertEqual(BillingDocument._meta.get_field("sale_pricing_category").default, BillingDocument.SalePricingCategory.CUSTOMER_TIER)
 
 
 class BillingNumberConcurrencyTests(TransactionTestCase):
@@ -2033,6 +2302,120 @@ class BillingListViewTests(TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertContains(response, invoice.number)
 
+    def test_registered_customer_receipt_print_uses_source_items_and_thermal_layout(self):
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk,
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    description="Home Fiber 50 Mbps monthly package",
+                    quantity=Decimal("1.00"),
+                    unit_price=Decimal("50000.00"),
+                    unit_snapshot="Month",
+                )
+            ],
+        )
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.pk,
+            amount_paid=invoice.total,
+            payment_method="mobile_money",
+            payment_reference="MPESA-12345",
+        )
+
+        response = self.client.get(reverse("billing:receipt_print", kwargs={"pk": receipt.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "@page")
+        self.assertContains(response, "size: 80mm auto")
+        self.assertContains(response, "Home Fiber 50 Mbps monthly package")
+        self.assertContains(response, "1 Month")
+        self.assertContains(response, "Mobile money")
+        self.assertContains(response, "MPESA-12345")
+        self.assertContains(response, self.customer.name)
+        self.assertContains(response, "Print Receipt")
+        self.assertContains(response, ".print-controls { display: none !important; }", html=False)
+        self.assertNotContains(response, "Payment for invoice")
+        self.assertNotContains(response, "N/A")
+
+        pdf_response = self.client.get(
+            reverse(
+                "billing:document_pdf",
+                kwargs={"doc_type": BillingDocument.DocumentType.RECEIPT, "pk": receipt.pk},
+            )
+        )
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertIn(pdf_response["Content-Type"], {"application/pdf", "text/html; charset=utf-8"})
+
+    def test_walk_in_receipt_print_uses_cart_name_and_product_unit_snapshot(self):
+        walk_in_record = Customer.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Walk-in Customer",
+            customer_type="random",
+            status=Customer.Status.ACTIVE,
+            location="Walk-in",
+        )
+        invoice = BillingService.create_document(
+            organization=self.org1,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=walk_in_record.pk,
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[
+                LineItemInput(
+                    description="Outdoor network cable with a very long product name",
+                    quantity=Decimal("12.00"),
+                    unit_price=Decimal("2500.00"),
+                    unit_snapshot="Metre",
+                )
+            ],
+        )
+        Cart.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            customer=None,
+            walk_in_name="Mteja wa dukani",
+            status=Cart.Status.CONVERTED,
+            invoice=invoice,
+            created_by=self.user,
+        )
+        receipt = BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=invoice.pk,
+            amount_paid=invoice.total,
+            payment_method="cash",
+        )
+
+        response = self.client.get(reverse("billing:receipt_print", kwargs={"pk": receipt.pk}))
+
+        self.assertContains(response, "Mteja wa dukani")
+        self.assertContains(response, "12 Metre")
+        self.assertContains(response, "Outdoor network cable with a very long product name")
+        self.assertContains(response, "Cash")
+        self.assertNotContains(response, "Account ID:")
+        self.assertNotContains(response, "Reference / Txn ID")
+
+    def test_receipt_print_keeps_tenant_isolation(self):
+        other_receipt = self.make_document(
+            BillingDocument.DocumentType.RECEIPT,
+            "RCT-OTHER-2026-0001",
+            org=self.org2,
+            customer=self.other_customer,
+            status=BillingDocument.Status.PAID,
+        )
+
+        response = self.client.get(reverse("billing:receipt_print", kwargs={"pk": other_receipt.pk}))
+
+        self.assertEqual(response.status_code, 404)
+
     def test_invoice_print_is_compact_multipage_safe_and_hides_blank_tax_ids(self):
         invoice = BillingService.create_document(
             organization=self.org1,
@@ -2173,10 +2556,10 @@ class BillingListViewTests(TestCase):
             'invoice_account_summary': summary,
             'show_discount_column': False, 'show_tax_column': False,
         })
-        self.assertIn('Previous Outstanding Balance', html)
-        self.assertIn('Total Amount Due', html)
+        self.assertIn('Prior Balance at Issue', html)
+        self.assertIn('Amount Due at Issue', html)
         self.assertIn('Payment Received', html)
-        self.assertIn('Outstanding Account Balance', html)
+        self.assertIn('Current Account Outstanding', html)
         self.assertEqual(summary['current_invoice_total'], Decimal('50.00'))
         self.assertEqual(summary['previous_outstanding_balance'], Decimal('80.00'))
 

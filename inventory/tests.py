@@ -39,6 +39,7 @@ from .models import (
     StockUnit,
     Supplier,
 )
+from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService
 
 
@@ -234,6 +235,92 @@ class InventoryAcceptanceTests(TestCase):
         with self.assertRaisesMessage(InventoryError, 'Only draft purchases can be confirmed'):
             InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
 
+    def test_purchase_create_reuses_an_uncommitted_reference_preview(self):
+        self.client.login(username='inventory-admin', password='pass')
+
+        first = self.client.get(reverse('inventory:purchase_create'))
+        second = self.client.get(reverse('inventory:purchase_create'))
+
+        first_reference = first.context['form'].initial['reference_number']
+        second_reference = second.context['form'].initial['reference_number']
+        self.assertRegex(first_reference, r'^PUR-\d{4}-\d{5}$')
+        self.assertEqual(first_reference, second_reference)
+        self.assertNotIn('readonly', first.context['form'].fields['reference_number'].widget.attrs)
+        self.assertContains(first, 'Generated automatically')
+
+    def test_purchase_create_allocates_the_preview_only_when_the_draft_is_saved(self):
+        self.client.login(username='inventory-admin', password='pass')
+        response = self.client.get(reverse('inventory:purchase_create'))
+        preview = response.context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'supplier': self.supplier.pk,
+            'reference_number': preview,
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': self.product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Purchase.objects.get().reference_number, preview)
+        self.assertEqual(
+            PurchaseReferenceNumberService.preview_next_number(organization=self.org),
+            f'PUR-{date.today():%Y}-00002',
+        )
+
+    def test_purchase_create_preserves_an_edited_supplier_reference(self):
+        self.client.login(username='inventory-admin', password='pass')
+        preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'supplier': self.supplier.pk,
+            'reference_number': 'DELIVERY-INV-2048',
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': self.product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Purchase.objects.get().reference_number, 'DELIVERY-INV-2048')
+        self.assertEqual(
+            PurchaseReferenceNumberService.preview_next_number(organization=self.org),
+            f'PUR-{date.today():%Y}-00001',
+        )
+
+    def test_generated_purchase_reference_skips_existing_manual_reference(self):
+        Purchase.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            supplier=self.supplier,
+            reference_number=f'PUR-{date.today():%Y}-00001',
+            purchase_date=date.today(),
+            created_by=self.admin,
+        )
+
+        reference = PurchaseReferenceNumberService.next_number(organization=self.org)
+
+        self.assertEqual(reference, f'PUR-{date.today():%Y}-00002')
+
     def test_draft_purchase_detail_uses_line_total_when_stored_total_is_stale(self):
         purchase = Purchase.objects.create(
             organization=self.org, tenant=self.org, supplier=self.supplier,
@@ -415,7 +502,12 @@ class InventoryAcceptanceTests(TestCase):
         serialized_product.wholesale_price = Decimal('120.00')
         serialized_product.wholesale_min_quantity = Decimal('5.00')
         serialized_product.save(update_fields=['allow_wholesale', 'wholesale_price', 'wholesale_min_quantity'])
-        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        cart = Cart.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            created_by=self.admin,
+            sale_pricing_category=Cart.SalePricingCategory.WHOLESALE,
+        )
         self.client.login(username='inventory-admin', password='pass')
 
         response = self.client.post(reverse('inventory:cart_line_create', args=[cart.pk]), {
@@ -873,6 +965,25 @@ class CartTechnicianPricingTests(TestCase):
         self.assertEqual(unit_price, Decimal("125.00"))
         self.assertEqual(mode, BillingLineItem.PricingMode.TECHNICIAN)
         self.assertIsNone(cart.customer)
+
+    def test_customer_tier_mode_uses_registered_technician_price(self):
+        customer = Customer.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name="Registered installer",
+            customer_type="random",
+            pricing_tier=Customer.PricingTier.TECHNICIAN,
+        )
+
+        unit_price, mode = CartService.line_pricing(
+            product=self.product,
+            quantity=Decimal("1.00"),
+            customer=customer,
+            sale_pricing_category=Cart.SalePricingCategory.CUSTOMER_TIER,
+        )
+
+        self.assertEqual(unit_price, Decimal("125.00"))
+        self.assertEqual(mode, BillingLineItem.PricingMode.TECHNICIAN)
 
 
 class InventoryAPITests(TestCase):

@@ -119,6 +119,23 @@ class Purchase(TenantModel):
         super().save(*args, **kwargs)
 
 
+class PurchaseReferenceSequence(TenantModel):
+    """One locked counter per tenant for generated purchase references."""
+
+    last_number = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant'], name='uniq_purchase_reference_sequence_tenant'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        super().save(*args, **kwargs)
+
+
 class PurchaseLine(models.Model):
     tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_purchase_lines', db_index=True)
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='lines')
@@ -279,9 +296,10 @@ class StockUnit(TenantModel):
 
 class Cart(TenantModel):
     class SalePricingCategory(models.TextChoices):
-        STANDARD = 'standard', 'Standard Customer'
-        TECHNICIAN = 'technician', 'Technician Customer'
-        WHOLESALE = 'wholesale', 'Wholesale Customer'
+        CUSTOMER_TIER = 'customer_tier', 'Customer category (automatic)'
+        STANDARD = 'standard', 'Standard'
+        TECHNICIAN = 'technician', 'Technician'
+        WHOLESALE = 'wholesale', 'Wholesale'
         LEGACY_RETAIL = 'retail', 'Legacy Retail'
 
     class Status(models.TextChoices):
@@ -294,7 +312,7 @@ class Cart(TenantModel):
     sale_pricing_category = models.CharField(
         max_length=20,
         choices=SalePricingCategory.choices,
-        default=SalePricingCategory.STANDARD,
+        default=SalePricingCategory.CUSTOMER_TIER,
         db_index=True,
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)

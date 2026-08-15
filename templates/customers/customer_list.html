@@ -3,280 +3,311 @@
 {% load listing_tags %}
 
 {% block title %}Customers{% endblock %}
-{% block body_class %}jims-list-shell{% endblock %}
+{% block body_class %}jims-customers-list{% endblock %}
 
 {% block content %}
-<div class="jims-list-page space-y-6">
-  <header class="jims-page-header">
-    <div>
-      <p class="jims-page-eyebrow">Customer operations</p>
-      <h1 class="jims-page-title">Customers needing action</h1>
-      <p class="jims-page-subtitle">
-        Work through renewals, unpaid accounts, missing contact details, and customer follow-ups from one place.
-      </p>
+<div class="jims-customer-list-page space-y-2">
+  <header class="flex items-center justify-between gap-4">
+    <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h1 class="text-2xl font-bold tracking-tight text-slate-950">Customers</h1>
+      <span class="text-sm font-medium text-slate-500">{{ customer_record_count|intcomma }} total</span>
+      <p class="w-full text-sm text-slate-600 xl:w-auto">Internet and walk-in customer accounts.</p>
     </div>
   </header>
 
-  <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-    <div class="flex flex-wrap gap-2">
-      <a href="{% url 'customer-list' %}?worklist=today" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'today' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
-        Today {{ today_customers }}
+  <nav class="jims-customer-queues -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1" aria-label="Customer action queues">
+    <a href="{% url 'customer-list' %}?worklist=today" {% if active_worklist == 'today' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'today' %}border-slate-900 bg-slate-900 text-white{% else %}border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50{% endif %}">
+      Today <span class="tabular-nums {% if active_worklist == 'today' %}text-slate-200{% else %}text-slate-500{% endif %}">{{ today_customers }}</span>
+    </a>
+    {% if FINANCE_CAN_VIEW_ALL %}
+      <a href="{% url 'customer-list' %}?worklist=unpaid" {% if active_worklist == 'unpaid' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'unpaid' %}border-rose-700 bg-rose-700 text-white{% else %}border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100{% endif %}">
+        Unpaid <span class="tabular-nums">{{ overdue_customers }}</span>
       </a>
-      {% if FINANCE_CAN_VIEW_ALL %}<a href="{% url 'customer-list' %}?worklist=unpaid" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'unpaid' %}bg-rose-700 text-white{% else %}bg-rose-50 text-rose-700 hover:bg-rose-100{% endif %}">
-        Unpaid {{ overdue_customers }}
+      <a href="{% url 'customer-list' %}?worklist=paid&amp;month={{ selected_billing_month_value }}" {% if active_worklist == 'paid' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'paid' %}border-emerald-700 bg-emerald-700 text-white{% else %}border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100{% endif %}">
+        Paid <span class="tabular-nums">{{ selected_paid_customers }}</span>
       </a>
-      <a href="{% url 'customer-list' %}?worklist=paid&amp;month={{ selected_billing_month_value }}" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'paid' %}bg-emerald-700 text-white{% else %}bg-emerald-50 text-emerald-700 hover:bg-emerald-100{% endif %}">
-        Paid {{ selected_paid_customers }}
+      <a href="{% url 'customer-list' %}?worklist=due" {% if active_worklist == 'due' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'due' %}border-amber-700 bg-amber-700 text-white{% else %}border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100{% endif %}">
+        Due soon <span class="tabular-nums">{{ due_soon_customers }}</span>
       </a>
-      <a href="{% url 'customer-list' %}?worklist=due" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'due' %}bg-amber-700 text-white{% else %}bg-amber-50 text-amber-800 hover:bg-amber-100{% endif %}">
-        Due soon {{ due_soon_customers }}
-      </a>{% endif %}
-      <a href="{% url 'customer-list' %}?worklist=no_contact" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'no_contact' %}bg-indigo-700 text-white{% else %}bg-indigo-50 text-indigo-700 hover:bg-indigo-100{% endif %}">
-        No contact {{ no_contact_customers }}
-      </a>
-      <a href="{% url 'customer-list' %}?worklist=inactive" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'inactive' %}bg-slate-700 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
-        Inactive {{ inactive_customers }}
-      </a>
-      <a href="{% url 'customer-list' %}?worklist=suspended" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'suspended' %}bg-rose-900 text-white{% else %}bg-rose-50 text-rose-900 hover:bg-rose-100{% endif %}">
-        Suspended {{ suspended_customers }}
-      </a>
-      <a href="{% url 'customer-list' %}?worklist=active" class="inline-flex items-center rounded-full px-3 py-2 text-sm font-semibold {% if active_worklist == 'active' %}bg-emerald-700 text-white{% else %}bg-emerald-50 text-emerald-700 hover:bg-emerald-100{% endif %}">
-        Active {{ active_customers }}
-      </a>
-      <a href="{% url 'customer-list' %}" class="inline-flex items-center rounded-full bg-white px-3 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
-        All {{ total_customers }}
-      </a>
-    </div>
-    <p class="mt-3 text-xs text-slate-500">Use these queues to start with customers who need action before scanning every record.</p>
-  </section>
+    {% endif %}
+    <a href="{% url 'customer-list' %}?worklist=no_contact" {% if active_worklist == 'no_contact' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'no_contact' %}border-indigo-700 bg-indigo-700 text-white{% else %}border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100{% endif %}">
+      No contact <span class="tabular-nums">{{ no_contact_customers }}</span>
+    </a>
+    <a href="{% url 'customer-list' %}?worklist=inactive" {% if active_worklist == 'inactive' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'inactive' %}border-slate-700 bg-slate-700 text-white{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+      Inactive <span class="tabular-nums">{{ inactive_customers }}</span>
+    </a>
+    <a href="{% url 'customer-list' %}?worklist=suspended" {% if active_worklist == 'suspended' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'suspended' %}border-rose-900 bg-rose-900 text-white{% else %}border-rose-200 bg-white text-rose-900 hover:bg-rose-50{% endif %}">
+      Suspended <span class="tabular-nums">{{ suspended_customers }}</span>
+    </a>
+    <a href="{% url 'customer-list' %}?worklist=active" {% if active_worklist == 'active' %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if active_worklist == 'active' %}border-emerald-700 bg-emerald-700 text-white{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+      Active <span class="tabular-nums">{{ active_customers }}</span>
+    </a>
+    <a href="{% url 'customer-list' %}" {% if not active_worklist %}aria-current="page"{% endif %} class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold {% if not active_worklist %}border-slate-900 bg-slate-900 text-white{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+      All <span class="tabular-nums {% if not active_worklist %}text-slate-200{% else %}text-slate-500{% endif %}">{{ total_customers }}</span>
+    </a>
+  </nav>
 
   {% if FINANCE_CAN_VIEW_ALL %}
-    <section class="overflow-hidden rounded-xl border border-brand-200 bg-gradient-to-r from-brand-50 via-white to-sky-50 shadow-sm" aria-labelledby="billing-month-title">
-      <div class="grid gap-4 p-4 lg:grid-cols-[minmax(15rem,1fr)_auto_auto] lg:items-center">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Billing period</p>
-          <h2 id="billing-month-title" class="mt-1 text-base font-semibold text-slate-950">{{ selected_billing_month_label }}</h2>
-          <form method="get" class="mt-3 flex max-w-sm items-end gap-2">
-            <div class="min-w-0 flex-1">
-              <label for="billing-month" class="block text-xs font-medium text-slate-600">Choose month</label>
-              <input id="billing-month" name="month" type="month" value="{{ selected_billing_month_value }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-            </div>
-            <button type="submit" class="jims-btn jims-btn-secondary">View</button>
-          </form>
+    <details class="jims-customer-billing rounded-lg border border-slate-200 bg-white" data-customer-billing>
+      <summary class="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-50" aria-label="Expand or collapse billing overview">
+        <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <strong class="text-slate-900">Subscription billing</strong>
+          <span class="text-slate-300" aria-hidden="true">·</span>
+          <span class="text-slate-600">{{ selected_billing_month_label }}</span>
+          <span class="hidden text-slate-300 sm:inline" aria-hidden="true">·</span>
+          <span class="hidden text-slate-600 sm:inline">Open for selected month: <span class="tabular-nums font-semibold text-slate-800">TZS {{ selected_month_open_receivables|floatformat:0|intcomma }}</span></span>
+          <span class="hidden text-slate-300 md:inline" aria-hidden="true">·</span>
+          <span class="hidden text-slate-600 md:inline"><span class="tabular-nums font-semibold text-slate-800">{{ due_soon_customers }}</span> renewals due</span>
+        </span>
+        <svg class="jims-customer-billing-chevron h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+      </summary>
+      <div class="grid gap-3 border-t border-slate-200 p-3 sm:grid-cols-2 xl:grid-cols-6">
+        <form method="get" class="flex items-end gap-2 sm:col-span-2 xl:col-span-2">
+          <div class="min-w-0 flex-1">
+            <label for="billing-month" class="block text-xs font-semibold text-slate-600">Billing month</label>
+            <input id="billing-month" name="month" type="month" value="{{ selected_billing_month_value }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+          </div>
+          <button type="submit" class="jims-btn jims-btn-secondary jims-btn-compact">View</button>
+        </form>
+        <a href="{% url 'customer-list' %}?worklist=paid&amp;month={{ selected_billing_month_value }}" class="rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2 hover:bg-emerald-50">
+          <span class="block text-xs font-semibold text-emerald-800">Paid customers</span>
+          <strong class="mt-0.5 block tabular-nums text-lg text-slate-950">{{ selected_paid_customers|intcomma }}</strong>
+        </a>
+        <a href="{% url 'customer-list' %}?worklist=unpaid&amp;month={{ selected_billing_month_value }}" class="rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2 hover:bg-rose-50">
+          <span class="block text-xs font-semibold text-rose-800">Unpaid customers</span>
+          <strong class="mt-0.5 block tabular-nums text-lg text-slate-950">{{ selected_unpaid_customers|intcomma }}</strong>
+        </a>
+        <div class="rounded-md bg-slate-50 px-3 py-2">
+          <span class="block text-xs font-medium text-slate-500">Total open · all months</span>
+          <strong class="mt-0.5 block tabular-nums text-sm text-slate-900">TZS {{ total_open_receivables|floatformat:0|intcomma }}</strong>
+          <span class="mt-0.5 block text-[11px] leading-4 text-slate-500">Invoiced or overdue subscription periods across every billing month.</span>
         </div>
-        <a href="{% url 'customer-list' %}?worklist=paid&amp;month={{ selected_billing_month_value }}" class="min-w-44 rounded-lg border border-emerald-200 bg-white p-4 transition hover:border-emerald-300 hover:shadow-sm">
-          <span class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Paid customers</span>
-          <strong class="mt-2 block text-2xl font-bold text-slate-950">{{ selected_paid_customers|intcomma }}</strong>
-          <span class="mt-1 block text-xs text-slate-500">Open filtered list</span>
-        </a>
-        <a href="{% url 'customer-list' %}?worklist=unpaid&amp;month={{ selected_billing_month_value }}" class="min-w-44 rounded-lg border border-rose-200 bg-white p-4 transition hover:border-rose-300 hover:shadow-sm">
-          <span class="text-xs font-semibold uppercase tracking-wide text-rose-700">Unpaid customers</span>
-          <strong class="mt-2 block text-2xl font-bold text-slate-950">{{ selected_unpaid_customers|intcomma }}</strong>
-          <span class="mt-1 block text-xs text-slate-500">Open filtered list</span>
-        </a>
+        <div class="rounded-md bg-slate-50 px-3 py-2">
+          <span class="block text-xs font-medium text-slate-500">Renewals / profile gaps</span>
+          <strong class="mt-0.5 block tabular-nums text-sm text-slate-900">{{ due_soon_customers }} / {{ no_contact_customers }}</strong>
+        </div>
       </div>
-    </section>
+    </details>
   {% endif %}
 
-  <details class="jims-filter-drawer rounded-lg border border-slate-200 bg-white shadow-sm" {% if request.GET.type or request.GET.status or request.GET.search %}open{% endif %}>
-    <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50">
-      <span class="flex items-center gap-2"><span class="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-600" aria-hidden="true">⌕</span>Search and filters</span>
-      <span class="text-xs font-semibold text-brand-700">{% if request.GET.type or request.GET.status or request.GET.search %}Filters active{% else %}Show filters{% endif %}</span>
-    </summary>
-    <form method="get" class="grid grid-cols-1 gap-4 border-t border-slate-200 p-4 sm:grid-cols-12 sm:items-end">
-      {% if active_worklist %}
-        <input type="hidden" name="worklist" value="{{ active_worklist }}">
-      {% endif %}
-      {% if active_sort %}
-        <input type="hidden" name="sort" value="{{ active_sort }}">
-      {% endif %}
-      {% if request.GET.month %}<input type="hidden" name="month" value="{{ selected_billing_month_value }}">{% endif %}
-      <input type="hidden" name="page_size" value="{{ page_size|default:25 }}">
-      <div class="sm:col-span-3">
-        <label for="type" class="block text-sm font-medium text-slate-700">Customer type</label>
-        <select name="type" id="type" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-          <option value="">All customer types</option>
-          <option value="internet" {% if request.GET.type == 'internet' %}selected{% endif %}>Internet</option>
-          <option value="random" {% if request.GET.type == 'random' %}selected{% endif %}>Random</option>
-        </select>
-      </div>
+  <section class="rounded-lg border border-slate-200 bg-white shadow-sm" aria-labelledby="customer-results-title">
+    <h2 id="customer-results-title" class="sr-only">Customer results</h2>
+    <div class="jims-customer-toolbar rounded-t-lg border-b border-slate-200 bg-white/95 px-3 py-1.5 backdrop-blur">
+      <div class="flex flex-wrap items-center gap-2">
+        <form method="get" role="search" class="flex min-w-[15rem] flex-1 items-center gap-2">
+          {% if active_worklist %}<input type="hidden" name="worklist" value="{{ active_worklist }}">{% endif %}
+          {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+          {% if request.GET.month %}<input type="hidden" name="month" value="{{ selected_billing_month_value }}">{% endif %}
+          {% if request.GET.type %}<input type="hidden" name="type" value="{{ request.GET.type }}">{% endif %}
+          {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+          <input type="hidden" name="page_size" value="{{ page_size|default:25 }}">
+          <label for="customer-search" class="sr-only">Search customers</label>
+          <div class="relative min-w-0 flex-1 sm:max-w-md">
+            <svg class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 104.473 8.7l3.163 3.164a.75.75 0 101.061-1.061l-3.164-3.163A5.5 5.5 0 009 3.5zM5 9a4 4 0 118 0 4 4 0 01-8 0z" clip-rule="evenodd"/></svg>
+            <input id="customer-search" type="search" name="search" value="{{ request.GET.search }}" placeholder="Search customers…" class="block h-9 w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+          </div>
+          <button type="submit" class="jims-btn jims-btn-secondary jims-btn-compact">Search</button>
+        </form>
 
-      <div class="sm:col-span-3">
-        <label for="status" class="block text-sm font-medium text-slate-700">Status</label>
-        <select name="status" id="status" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-          <option value="">Any status</option>
-          <option value="active" {% if request.GET.status == 'active' %}selected{% endif %}>Active</option>
-          <option value="inactive" {% if request.GET.status == 'inactive' %}selected{% endif %}>Inactive</option>
-          <option value="suspended" {% if request.GET.status == 'suspended' %}selected{% endif %}>Suspended</option>
-        </select>
-      </div>
+        <details class="jims-customer-filters relative">
+          <summary class="inline-flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            Filters{% if active_filter_count %} <span class="rounded-full bg-brand-100 px-1.5 py-0.5 text-xs tabular-nums text-brand-800">{{ active_filter_count }}</span>{% endif %}
+          </summary>
+          <form method="get" class="jims-customer-filter-panel grid gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-xl sm:grid-cols-2">
+            {% if active_worklist %}<input type="hidden" name="worklist" value="{{ active_worklist }}">{% endif %}
+            {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+            {% if request.GET.month %}<input type="hidden" name="month" value="{{ selected_billing_month_value }}">{% endif %}
+            {% if request.GET.search %}<input type="hidden" name="search" value="{{ request.GET.search }}">{% endif %}
+            <input type="hidden" name="page_size" value="{{ page_size|default:25 }}">
+            <div>
+              <label for="type" class="block text-xs font-semibold text-slate-600">Customer type</label>
+              <select name="type" id="type" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                <option value="">All customer types</option>
+                <option value="internet" {% if request.GET.type == 'internet' %}selected{% endif %}>Internet</option>
+                <option value="random" {% if request.GET.type == 'random' %}selected{% endif %}>Walk-in / random</option>
+              </select>
+            </div>
+            <div>
+              <label for="status" class="block text-xs font-semibold text-slate-600">Status</label>
+              <select name="status" id="status" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+                <option value="">Any status</option>
+                <option value="active" {% if request.GET.status == 'active' %}selected{% endif %}>Active</option>
+                <option value="inactive" {% if request.GET.status == 'inactive' %}selected{% endif %}>Inactive</option>
+                <option value="suspended" {% if request.GET.status == 'suspended' %}selected{% endif %}>Suspended</option>
+              </select>
+            </div>
+            <div class="flex justify-end gap-2 sm:col-span-2">
+              {% if request.GET.type or request.GET.status %}
+                <a href="{% url 'customer-list' %}?{% if active_worklist %}worklist={{ active_worklist }}&amp;{% endif %}{% if active_sort %}sort={{ active_sort }}&amp;{% endif %}{% if request.GET.month %}month={{ selected_billing_month_value }}&amp;{% endif %}{% if request.GET.search %}search={{ request.GET.search|urlencode }}&amp;{% endif %}page_size={{ page_size|default:25 }}" class="jims-btn jims-btn-quiet jims-btn-compact">Clear filters</a>
+              {% endif %}
+              <button type="submit" class="jims-btn jims-btn-primary jims-btn-compact">Apply filters</button>
+            </div>
+          </form>
+        </details>
 
-      <div class="sm:col-span-4">
-        <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
-        <input type="text" name="search" id="search" value="{{ request.GET.search }}" placeholder="Name, email, phone, location, TIN, VRN..." class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+        <div class="ml-auto whitespace-nowrap text-xs text-slate-600" aria-live="polite">
+          <span class="font-semibold tabular-nums text-slate-900">{{ start_index }}–{{ end_index }}</span> of <span class="font-semibold tabular-nums text-slate-900">{{ result_count }}</span>
+        </div>
+        {% if request.GET.search or request.GET.type or request.GET.status %}
+          <a href="{% url 'customer-list' %}?{% if active_worklist %}worklist={{ active_worklist }}&amp;{% endif %}{% if request.GET.month %}month={{ selected_billing_month_value }}&amp;{% endif %}page_size={{ page_size|default:25 }}" class="text-xs font-semibold text-brand-700 hover:underline">Clear search &amp; filters</a>
+        {% endif %}
       </div>
+    </div>
 
-      <div class="flex gap-2 sm:col-span-2">
-        <button type="submit" class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
-          Apply
-        </button>
-        <a href="{% url 'customer-list' %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          Reset
-        </a>
-      </div>
-    </form>
-  </details>
-
-  {% if FINANCE_CAN_VIEW_ALL %}<section class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-    <div class="jims-kpi jims-kpi-brand">
-      <div class="text-xs font-medium uppercase tracking-wide text-slate-500">{{ selected_billing_month_label }}</div>
-      <div class="mt-2 text-lg font-semibold text-teal-700">{{ monthly_receivable|floatformat:0|intcomma }} TZS</div>
-      <div class="mt-1 text-sm text-slate-500">receivable for selected month</div>
-    </div>
-    <div class="jims-kpi jims-kpi-sky">
-      <div class="text-xs font-medium uppercase tracking-wide text-slate-500">Receivable</div>
-      <div class="mt-2 text-lg font-semibold text-teal-700">{{ estimated_receivable|floatformat:0|intcomma }} TZS</div>
-      <div class="mt-1 text-sm text-slate-500">total from all open periods</div>
-    </div>
-    <div class="jims-kpi">
-      <div class="text-xs font-medium uppercase tracking-wide text-slate-500">Renewals</div>
-      <div class="mt-2 text-lg font-semibold text-slate-900">{{ due_soon_customers }}</div>
-      <div class="mt-1 text-sm text-slate-500">due before the month closes</div>
-    </div>
-    <div class="jims-kpi jims-kpi-accent">
-      <div class="text-xs font-medium uppercase tracking-wide text-slate-500">Profile gaps</div>
-      <div class="mt-2 text-lg font-semibold text-slate-900">{{ no_contact_customers }}</div>
-      <div class="mt-1 text-sm text-slate-500">missing phone and email</div>
-    </div>
-  </section>{% endif %}
-
-  <div class="jims-list-results overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-    <div class="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        Showing <span class="font-semibold text-slate-900">{{ start_index }}</span>-<span class="font-semibold text-slate-900">{{ end_index }}</span>
-        of <span class="font-semibold text-slate-900">{{ result_count }}</span> customers
-      </div>
-      <div class="text-xs text-slate-500">Search includes name, contact, location, TIN, VRN, IP, VLAN, and package.</div>
-    </div>
-    <div class="js-table-wrap">
-      <table class="min-w-full divide-y divide-slate-200">
+    <div class="jims-customer-table-wrap" role="region" aria-label="Customer records">
+      <table class="jims-customer-table text-left">
         <thead class="bg-slate-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Customer" sort_key="name" desc_sort_key="-name" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Contact</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Service" sort_key="type" desc_sort_key="-type" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% if FINANCE_CAN_VIEW_ALL %}{% include "components/table_sort_link.html" with label="Billing health" sort_key="-billing" desc_sort_key="billing" %}{% else %}Billing health{% endif %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Next action</th>
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">More</th>
+            <th scope="col" class="w-[27%] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Customer" sort_key="name" desc_sort_key="-name" %}</th>
+            <th scope="col" class="jims-customer-service-column w-[19%] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Service / package</th>
+            <th scope="col" class="w-[25%] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">{% if FINANCE_CAN_VIEW_ALL %}{% include "components/table_sort_link.html" with label="Billing health" sort_key="-billing" desc_sort_key="billing" %}{% else %}Billing health{% endif %}</th>
+            <th scope="col" class="w-[17%] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Next action</th>
+            <th scope="col" class="w-[12%] px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
           {% for customer in customers %}
-            <tr class="hover:bg-slate-50">
-              <td class="px-4 py-4 text-sm">
-                <div class="font-semibold text-slate-900">{{ customer.name }}</div>
-                <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span>{{ customer.location }}</span>
-                  {% if customer.status == 'active' %}
-                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">Active</span>
-                  {% elif customer.status == 'inactive' %}
-                    <span class="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-800">Inactive</span>
-                  {% else %}
-                    <span class="rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-700">Suspended</span>
-                  {% endif %}
+            <tr class="hover:bg-slate-50/80">
+              <td class="px-3 py-1.5 text-sm">
+                <a href="{% url 'customer-detail' customer.id %}" class="block truncate font-semibold text-slate-950 hover:text-brand-700 hover:underline">{{ customer.name }}</a>
+                <div class="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                  <span class="truncate">{{ customer.location }}{% if customer.phone %} · {{ customer.phone }}{% endif %}</span>
+                  {% if customer.status == 'active' %}<span class="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-800">Active</span>
+                  {% elif customer.status == 'inactive' %}<span class="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-900">Inactive</span>
+                  {% else %}<span class="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 font-semibold text-rose-800">Suspended</span>{% endif %}
+                </div>
+                {% if customer.site_count %}<button type="button" class="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/30" data-customer-sites-toggle data-closed-label="View {{ customer.site_count }} site{{ customer.site_count|pluralize }}" aria-expanded="false" aria-controls="customer-sites-{{ customer.id }}"><span data-customer-sites-toggle-label>View {{ customer.site_count }} site{{ customer.site_count|pluralize }}</span><span class="font-normal text-slate-500">· {{ customer.primary_site_summary.name }}{% if customer.site_count > 1 %} +{{ customer.site_count|add:"-1" }}{% endif %}</span><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-3.5 w-3.5" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>{% endif %}
+                {% if not customer.email and not customer.phone %}{% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="mt-1 inline-flex text-xs font-semibold text-indigo-700 hover:underline">Missing contact</a>{% else %}<span class="mt-1 inline-flex text-xs font-semibold text-indigo-700">Missing contact</span>{% endif %}{% endif %}
+              </td>
+              <td class="jims-customer-service-column px-3 py-1.5 text-sm text-slate-700">
+                {% if customer.customer_type == 'random' %}
+                  <div class="font-medium text-slate-900">Walk-in customer</div>
+                  <div class="mt-1 text-xs text-slate-500">No recurring service required</div>
+                {% elif customer.primary_subscription %}
+                  <div class="truncate font-medium text-slate-900">{{ customer.primary_subscription.package.name }}</div>
+                  <div class="mt-1 truncate text-xs text-slate-500">{% if customer.primary_service %}{{ customer.primary_service.service_code }} · {{ customer.primary_service.get_operational_status_display }}{% else %}Legacy subscription{% endif %}</div>
+                {% else %}
+                  <div class="font-medium text-slate-900">Internet customer</div>
+                  <div class="mt-1 text-xs text-amber-800">No active package</div>
+                {% endif %}
+              </td>
+              <td class="px-3 py-1.5 text-sm">
+                {% if customer.customer_type == 'random' and customer.billing_state == 'neutral' %}
+                  <span class="inline-flex rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">Walk-in</span>
+                  <div class="mt-1 truncate text-xs text-slate-500">No recurring service billing</div>
+                {% else %}
+                  {% if customer.billing_state == 'unpaid' %}<span class="inline-flex rounded-full bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-800">{{ customer.billing_label }}</span>
+                  {% elif customer.billing_state == 'due' %}<span class="inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-900">{{ customer.billing_label }}</span>
+                  {% elif customer.billing_state == 'paid' %}<span class="inline-flex rounded-full bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-800">{{ customer.billing_label }}</span>
+                  {% elif customer.billing_state == 'incomplete' %}<span class="inline-flex rounded-full bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-800">Incomplete profile</span>
+                  {% else %}<span class="inline-flex rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">{{ customer.billing_label }}</span>{% endif %}
+                  <div class="mt-1 truncate text-xs tabular-nums text-slate-500" title="{{ customer.billing_note }}">{{ customer.billing_note }}</div>
+                {% endif %}
+                {% if customer.latest_visible_invoice %}<a href="{% url 'billing:document_detail' 'invoice' customer.latest_visible_invoice.id %}" class="mt-1 block truncate text-xs font-medium text-brand-700 hover:underline">Latest invoice: {{ customer.latest_visible_invoice.number }} · {{ customer.latest_visible_invoice_status }}</a>{% endif %}
+              </td>
+              <td class="px-3 py-1.5 text-sm">
+                {% if customer.primary_action == 'Register receipt' and customer.latest_unpaid_invoice_id and "payments.record_own" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:create_receipt_from_invoice' customer.latest_unpaid_invoice_id %}" class="jims-btn jims-btn-primary jims-btn-compact">Register receipt</a>
+                {% elif customer.primary_action == 'Renew' and customer.primary_subscription and "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:renew_subscription' customer.primary_subscription.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Review renewal</a>
+                {% elif customer.primary_action == 'Complete profile' and "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Complete profile</a>
+                {% else %}<a href="{% url 'customer-detail' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">View account</a>{% endif %}
+              </td>
+              <td class="px-3 py-1.5 text-right text-sm">
+                <div class="flex items-center justify-end gap-1.5">
+                  {% if customer.status == 'active' and "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="jims-btn jims-btn-secondary jims-btn-compact hidden xl:inline-flex">Invoice</a>{% endif %}
+                  <details class="jims-customer-actions inline-block text-left" data-customer-actions>
+                    <summary class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" aria-label="More actions for {{ customer.name }}"><span aria-hidden="true">•••</span></summary>
+                    <div class="jims-customer-actions-panel rounded-md border border-slate-200 bg-white p-1 shadow-xl">
+                      <a href="{% url 'customer-detail' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">View account</a>
+                      {% if customer.status == 'active' and "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="block rounded px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 xl:hidden">Create invoice</a>{% endif %}
+                      {% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit customer</a>{% endif %}
+                      {% if "customers.archive" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-delete' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-50">Archive customer</a>{% endif %}
+                    </div>
+                  </details>
                 </div>
               </td>
-              <td class="px-4 py-4 text-sm text-slate-700">
-                {% if customer.email %}<div>{{ customer.email }}</div>{% endif %}
-                {% if customer.phone %}
-                  <div class="mt-1 text-slate-500">{{ customer.phone }}</div>
-                  {% if customer.whatsapp_url %}
-                    <a href="{{ customer.whatsapp_url }}" target="_blank" rel="noopener" class="mt-1 inline-flex text-xs font-medium text-emerald-700 hover:underline">WhatsApp</a>
-                  {% endif %}
-                {% endif %}
-                {% if not customer.email and not customer.phone %}
-                  <span class="text-slate-400">No contact saved</span>
-                {% endif %}
-              </td>
-              <td class="px-4 py-4 text-sm text-slate-700">
-                {% if customer.primary_subscription %}
-                  <div class="font-medium text-slate-900">{{ customer.primary_subscription.package.name }}</div>
-                  <div class="mt-1 text-xs text-slate-500">{{ customer.get_customer_type_display }}</div>
-                {% else %}
-                  <div>{{ customer.get_customer_type_display }}</div>
-                  <div class="mt-1 text-xs text-slate-500">No active subscription</div>
-                {% endif %}
-              </td>
-              <td class="px-4 py-4 text-sm">
-                {% if customer.billing_state == 'unpaid' %}
-                  <span class="inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">{{ customer.billing_label }}</span>
-                {% elif customer.billing_state == 'due' %}
-                  <span class="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ customer.billing_label }}</span>
-                {% elif customer.billing_state == 'paid' %}
-                  <span class="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">{{ customer.billing_label }}</span>
-                {% elif customer.billing_state == 'incomplete' %}
-                  <span class="inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">{{ customer.billing_label }}</span>
-                {% else %}
-                  <span class="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{{ customer.billing_label }}</span>
-                {% endif %}
-                <div class="mt-1 text-xs text-slate-500">{{ customer.billing_note }}</div>
-                {% if customer.latest_visible_invoice %}
-                  <a href="{% url 'billing:document_detail' 'invoice' customer.latest_visible_invoice.id %}" class="mt-1 inline-flex text-xs font-medium text-brand-700 hover:underline">
-                    Latest invoice: {{ customer.latest_visible_invoice.number }} · {{ customer.latest_visible_invoice_status }}
-                  </a>
-                {% endif %}
-              </td>
-              <td class="px-4 py-4 text-sm">
-                <div class="flex flex-wrap items-center gap-2">
-                  {% if customer.primary_action == 'Register receipt' and customer.latest_unpaid_invoice_id %}
-                    <a href="{% url 'billing:create_receipt_from_invoice' customer.latest_unpaid_invoice_id %}" class="rounded-md bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700">
-                      Register receipt
-                    </a>
-                  {% elif customer.primary_action == 'Renew' and customer.primary_subscription %}
-                    <a href="{% url 'billing:renew_subscription' customer.primary_subscription.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700">
-                      Renew
-                    </a>
-                  {% elif customer.primary_action == 'Complete profile' %}
-                    <a href="{% url 'customer-update' customer.id %}" class="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
-                      Complete profile
-                    </a>
-                  {% else %}
-                    <a href="{% url 'customer-detail' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                      View
-                    </a>
-                  {% endif %}
-                  {% if customer.status == 'active' %}
-                    <a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                      Invoice
-                    </a>
-                  {% endif %}
-                </div>
-              </td>
-              <td class="px-4 py-4 text-right text-sm">
-                <details class="relative inline-block text-left">
-                  <summary class="cursor-pointer list-none rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                    More
-                  </summary>
-                  <div class="absolute right-0 z-20 mt-2 w-36 rounded-md border border-slate-200 bg-white p-1 text-left shadow-lg">
-                    <a href="{% url 'customer-detail' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
-                    <a href="{% url 'customer-update' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Edit</a>
-                    <a href="{% url 'customer-delete' customer.id %}" class="block rounded px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-50">Archive</a>
+            </tr>
+            {% if customer.site_count %}
+              <tr id="customer-sites-{{ customer.id }}" class="jims-customer-sites-row" hidden>
+                <td colspan="5" class="bg-slate-50 px-3 py-3">
+                  <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3" role="region" aria-label="Sites for {{ customer.name }}">
+                    {% for site in customer.list_sites %}
+                      <div class="rounded-md border border-slate-200 bg-white p-3">
+                        <div class="flex items-start justify-between gap-2">
+                          <div class="min-w-0"><div class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-semibold text-slate-900">{{ site.name }}</span>{% if site.is_primary %}<span class="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700">Primary</span>{% endif %}{% if not site.is_active %}<span class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Inactive</span>{% endif %}</div><div class="mt-1 truncate text-xs text-slate-500">{{ site.location }}{% if site.address %} · {{ site.address }}{% endif %}</div></div>
+                          {% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-site-update' site.id %}" class="shrink-0 text-xs font-semibold text-brand-700 hover:underline">Manage</a>{% endif %}
+                        </div>
+                        <div class="mt-2 flex flex-wrap gap-1.5">{% for package in site.list_packages %}<span class="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">{{ package.name }}{% if package.speed %} · {{ package.speed }}{% endif %}</span>{% empty %}<span class="text-xs text-slate-500">No active package</span>{% endfor %}</div>
+                        <div class="mt-2 flex items-start justify-between gap-3 border-t border-slate-100 pt-2">
+                          <div><div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Billing health</div><div class="mt-1 text-xs text-slate-500">{{ site.billing_note }}</div></div>
+                          {% if site.billing_state == 'unpaid' %}<span class="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-800">{{ site.billing_label }}</span>{% elif site.billing_state == 'due' %}<span class="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">{{ site.billing_label }}</span>{% elif site.billing_state == 'paid' %}<span class="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">{{ site.billing_label }}</span>{% else %}<span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{{ site.billing_label }}</span>{% endif %}
+                        </div>
+                        {% if site.list_services %}<div class="mt-2 text-xs text-slate-500">{{ site.list_services|length }} Internet service{{ site.list_services|length|pluralize }} · {{ site.active_service_count }} verified active</div>{% endif %}
+                      </div>
+                    {% endfor %}
                   </div>
-                </details>
-              </td>
-            </tr>
+                </td>
+              </tr>
+            {% endif %}
           {% empty %}
-            <tr>
-              <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-500">
-                No customers match this work queue.
-              </td>
-            </tr>
+            <tr><td colspan="5" class="px-4 py-12 text-center text-sm text-slate-600"><strong class="block text-slate-900">No customers found</strong><span class="mt-1 block">Try another queue or clear the current search and filters.</span></td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </div>
 
-  {% include "components/list_pagination.html" %}
+    <div class="jims-customer-mobile-list divide-y divide-slate-200" role="list" aria-label="Customer records">
+      {% for customer in customers %}
+        <article class="p-3" role="listitem">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <a href="{% url 'customer-detail' customer.id %}" class="block truncate text-sm font-semibold text-slate-950 hover:text-brand-700 hover:underline">{{ customer.name }}</a>
+              <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"><span>{{ customer.location }}</span>{% if customer.status == 'active' %}<span class="rounded-full bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-800">Active</span>{% elif customer.status == 'inactive' %}<span class="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-900">Inactive</span>{% else %}<span class="rounded-full bg-rose-50 px-1.5 py-0.5 font-semibold text-rose-800">Suspended</span>{% endif %}</div>
+            </div>
+            {% if customer.customer_type == 'random' %}<span class="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Walk-in</span>{% else %}<span class="shrink-0 rounded-full bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-800">Internet</span>{% endif %}
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-3 text-xs">
+            <div class="min-w-0"><span class="block font-medium text-slate-500">Service</span><span class="mt-0.5 block truncate text-slate-800">{% if customer.customer_type == 'random' %}Walk-in customer{% elif customer.primary_subscription %}{{ customer.primary_subscription.package.name }}{% if customer.primary_service %} · {{ customer.primary_service.service_code }}{% endif %}{% else %}No active package{% endif %}</span></div>
+            <div class="min-w-0"><span class="block font-medium text-slate-500">Billing health</span><span class="mt-0.5 block truncate text-slate-800">{% if customer.customer_type == 'random' and customer.billing_state == 'neutral' %}No recurring billing{% elif customer.billing_state == 'incomplete' %}Incomplete profile{% else %}{{ customer.billing_label }}{% endif %}</span></div>
+          </div>
+          {% if not customer.email and not customer.phone %}{% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="mt-2 inline-flex text-xs font-semibold text-indigo-700 hover:underline">Missing contact · Complete profile</a>{% else %}<span class="mt-2 inline-flex text-xs font-semibold text-indigo-700">Missing contact</span>{% endif %}{% endif %}
+          {% if customer.site_count %}
+            <details class="mt-3 rounded-md border border-slate-200 bg-slate-50">
+              <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-semibold text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600/30"><span>{{ customer.site_count }} site{{ customer.site_count|pluralize }} · {{ customer.primary_site_summary.name }}{% if customer.site_count > 1 %} +{{ customer.site_count|add:"-1" }}{% endif %}</span><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+              <div class="space-y-2 border-t border-slate-200 p-2">
+                {% for site in customer.list_sites %}
+                  <div class="rounded-md bg-white p-2.5">
+                    <div class="flex items-start justify-between gap-2"><div><div class="text-xs font-semibold text-slate-900">{{ site.name }}{% if site.is_primary %} <span class="text-brand-700">· Primary</span>{% endif %}</div><div class="mt-0.5 text-xs text-slate-500">{{ site.location }}</div></div>{% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-site-update' site.id %}" class="text-xs font-semibold text-brand-700">Manage</a>{% endif %}</div>
+                    <div class="mt-1.5 flex flex-wrap gap-1">{% for package in site.list_packages %}<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">{{ package.name }}</span>{% empty %}<span class="text-[11px] text-slate-500">No active package</span>{% endfor %}</div>
+                    <div class="mt-2 flex items-start justify-between gap-2 border-t border-slate-100 pt-2"><div><div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Billing health</div><div class="mt-0.5 text-[11px] text-slate-500">{{ site.billing_note }}</div></div>{% if site.billing_state == 'unpaid' %}<span class="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-800">{{ site.billing_label }}</span>{% elif site.billing_state == 'due' %}<span class="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">{{ site.billing_label }}</span>{% elif site.billing_state == 'paid' %}<span class="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800">{{ site.billing_label }}</span>{% else %}<span class="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">{{ site.billing_label }}</span>{% endif %}</div>
+                  </div>
+                {% endfor %}
+              </div>
+            </details>
+          {% endif %}
+          <div class="mt-3 flex items-center gap-2">
+            {% if customer.primary_action == 'Register receipt' and customer.latest_unpaid_invoice_id and "payments.record_own" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:create_receipt_from_invoice' customer.latest_unpaid_invoice_id %}" class="jims-btn jims-btn-primary jims-btn-compact">Register receipt</a>{% elif customer.primary_action == 'Renew' and customer.primary_subscription and "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:renew_subscription' customer.primary_subscription.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Review renewal</a>{% elif customer.primary_action == 'Complete profile' and "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Complete profile</a>{% else %}<a href="{% url 'customer-detail' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">View account</a>{% endif %}
+            {% if customer.status == 'active' and "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="jims-btn jims-btn-secondary jims-btn-compact">Invoice</a>{% endif %}
+            <details class="jims-customer-actions ml-auto" data-customer-actions><summary class="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700" aria-label="More actions for {{ customer.name }}"><span aria-hidden="true">•••</span></summary><div class="jims-customer-actions-panel rounded-md border border-slate-200 bg-white p-1 shadow-xl"><a href="{% url 'customer-detail' customer.id %}" class="block rounded px-3 py-2 text-sm text-slate-700">View account</a>{% if "customers.update" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-update' customer.id %}" class="block rounded px-3 py-2 text-sm text-slate-700">Edit customer</a>{% endif %}{% if "customers.archive" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-delete' customer.id %}" class="block rounded px-3 py-2 text-sm text-rose-700">Archive customer</a>{% endif %}</div></details>
+          </div>
+        </article>
+      {% empty %}
+        <div class="px-4 py-12 text-center text-sm text-slate-600"><strong class="block text-slate-900">No customers found</strong><span class="mt-1 block">Try another queue or clear the current search and filters.</span></div>
+      {% endfor %}
+    </div>
+
+    <div class="flex flex-col gap-3 rounded-b-lg border-t border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-2" aria-label="Rows per page">
+        <span class="text-xs font-medium text-slate-500">Rows</span>
+        {% for option in page_size_options %}{% if option.selected %}<span class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white">{{ option.value }}<span class="sr-only"> selected</span></span>{% else %}<a href="{{ option.url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{{ option.value }}</a>{% endif %}{% endfor %}
+      </div>
+      {% if is_paginated %}
+        <nav class="flex flex-wrap items-center gap-1" aria-label="Customer pagination">
+          {% if page_obj.has_previous %}{% page_url page_obj.previous_page_number as previous_url %}<a href="{{ previous_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50" rel="prev">Previous</a>{% endif %}
+          {% for page_number in page_range %}{% if page_number == page_obj.paginator.ELLIPSIS %}<span class="px-2 py-1 text-xs text-slate-400">{{ page_number }}</span>{% elif page_number == page_obj.number %}<span class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white" aria-current="page">{{ page_number }}</span>{% else %}{% page_url page_number as numbered_url %}<a href="{{ numbered_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{{ page_number }}</a>{% endif %}{% endfor %}
+          {% if page_obj.has_next %}{% page_url page_obj.next_page_number as next_url %}<a href="{{ next_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50" rel="next">Next</a>{% endif %}
+        </nav>
+      {% endif %}
+    </div>
+  </section>
 </div>
 {% endblock %}

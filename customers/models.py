@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.urls import reverse
 from django.conf import settings
 from django.core.validators import RegexValidator
+from users.tenant_models import TenantScopedManager
 from .managers import CustomerManager, AllCustomerManager
 
 
@@ -23,8 +24,15 @@ class Customer(models.Model):
         RETAIL = 'retail', 'Standard'
         TECHNICIAN = 'technician', 'Technician'
         WHOLESALE = 'wholesale', 'Wholesale'
-        CORPORATE = 'corporate', 'Corporate'
-        VIP = 'vip', 'VIP'
+
+    @property
+    def default_sale_pricing_category(self):
+        """Canonical catalog category implied by this customer's pricing tier."""
+        if self.pricing_tier == self.PricingTier.TECHNICIAN:
+            return 'technician'
+        if self.pricing_tier == self.PricingTier.WHOLESALE:
+            return 'wholesale'
+        return 'standard'
     
     # Basic Information
     organization = models.ForeignKey(
@@ -95,6 +103,12 @@ class Customer(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(pricing_tier__in=['retail', 'technician', 'wholesale']),
+                name='customer_valid_pricing_tier',
+            ),
+        ]
         indexes = [
             models.Index(fields=['organization', 'customer_type']),
             models.Index(fields=['organization', 'status']),
@@ -147,6 +161,15 @@ class Customer(models.Model):
         if primary is not None:
             return primary
         return self.sites.filter(is_primary=True).order_by("id").first() or self.sites.order_by("id").first()
+
+    @property
+    def primary_internet_service(self):
+        site = self.primary_site
+        if site is None:
+            return None
+        return site.internet_services.exclude(
+            operational_status="disconnected"
+        ).order_by("id").first()
 
 
 class CustomerSite(models.Model):
@@ -218,6 +241,100 @@ class CustomerSite(models.Model):
         if self.address:
             parts.append(self.address)
         return " · ".join(parts)
+
+
+class InternetService(models.Model):
+    """Installed Internet connection at one customer site.
+
+    This is operational identity only. Package, agreed price, and commercial
+    dates remain owned by CustomerSubscription.
+    """
+
+    class OperationalStatus(models.TextChoices):
+        UNKNOWN = "unknown", "Status unknown"
+        ACTIVE = "active", "Active"
+        BLOCKED = "blocked", "Blocked"
+        DISCONNECTED = "disconnected", "Disconnected"
+
+    organization = models.ForeignKey(
+        'users.Organization',
+        on_delete=models.PROTECT,
+        related_name='internet_services',
+        db_index=True,
+    )
+    tenant = models.ForeignKey(
+        'users.Organization',
+        on_delete=models.PROTECT,
+        related_name='tenant_internet_services',
+        db_index=True,
+    )
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.PROTECT,
+        related_name='internet_services',
+    )
+    site = models.ForeignKey(
+        CustomerSite,
+        on_delete=models.PROTECT,
+        related_name='internet_services',
+    )
+    service_code = models.CharField(max_length=64)
+    name = models.CharField(max_length=120, default='Primary Internet Service')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    vlan_id = models.CharField(max_length=50, blank=True, null=True)
+    operational_status = models.CharField(
+        max_length=20,
+        choices=OperationalStatus.choices,
+        default=OperationalStatus.UNKNOWN,
+        db_index=True,
+    )
+    installed_at = models.DateTimeField(null=True, blank=True)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
+    technical_notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = TenantScopedManager()
+
+    class Meta:
+        ordering = ['site_id', 'service_code', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'service_code'],
+                name='uniq_internet_service_code_per_tenant',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['tenant', 'customer', 'operational_status'], name='cust_is_t_cust_stat_idx'),
+            models.Index(fields=['tenant', 'site', 'operational_status'], name='cust_is_t_site_stat_idx'),
+            models.Index(fields=['tenant', 'ip_address'], name='cust_is_t_ip_idx'),
+            models.Index(fields=['tenant', 'vlan_id'], name='cust_is_t_vlan_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.customer.name} · {self.site.name} · {self.service_code}"
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.organization_id is not None:
+            self.tenant_id = self.organization_id
+        if self.organization_id is None and self.tenant_id is not None:
+            self.organization_id = self.tenant_id
+        if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
+            raise ValueError("Internet service organization and tenant must match.")
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValueError("Internet service customer belongs to another tenant.")
+        if self.site_id:
+            if self.site.tenant_id != self.tenant_id:
+                raise ValueError("Internet service site belongs to another tenant.")
+            if self.site.customer_id != self.customer_id:
+                raise ValueError("Internet service site belongs to another customer.")
+        if self.disconnected_at and self.installed_at and self.disconnected_at < self.installed_at:
+            raise ValueError("Disconnected date cannot be earlier than installed date.")
+        super().save(*args, **kwargs)
+
+    @property
+    def current_subscription(self):
+        return self.subscriptions.filter(status="active").order_by("-start_date", "-id").first()
 
 class InternetCustomer(models.Model):
     customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='internet_profile')

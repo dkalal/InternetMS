@@ -221,6 +221,27 @@
       });
     }
 
+    var sidebarCollapse = document.querySelector("[data-sidebar-collapse]");
+    if (sidebarCollapse && navPanel) {
+      var sidebarKey = "jims.sidebar.collapsed";
+      function setSidebarCollapsed(collapsed) {
+        document.body.classList.toggle("jims-sidebar-collapsed", collapsed);
+        sidebarCollapse.setAttribute("aria-expanded", String(!collapsed));
+        sidebarCollapse.title = collapsed ? "Expand navigation" : "Minimize navigation";
+        var path = sidebarCollapse.querySelector("path");
+        if (path) path.setAttribute("d", collapsed ? "m9 18 6-6-6-6" : "m15 18-6-6 6-6");
+        navPanel.querySelectorAll(".jims-sidebar-link").forEach(function (link) {
+          var label = link.textContent.trim();
+          if (label) link.title = collapsed ? label : "";
+        });
+        try { window.localStorage.setItem(sidebarKey, String(collapsed)); } catch (error) {}
+      }
+      var collapsed = false;
+      try { collapsed = window.localStorage.getItem(sidebarKey) === "true"; } catch (error) {}
+      setSidebarCollapsed(collapsed);
+      sidebarCollapse.addEventListener("click", function () { setSidebarCollapsed(!document.body.classList.contains("jims-sidebar-collapsed")); });
+    }
+
     document.querySelectorAll("[data-menu-button]").forEach(function (button) {
       var panel = document.getElementById(button.getAttribute("aria-controls"));
       if (!panel) return;
@@ -376,6 +397,56 @@
         if (!dirty) return;
         event.preventDefault();
         event.returnValue = "";
+      });
+    });
+  });
+})();
+
+(function () {
+  "use strict";
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var billing = document.querySelector("[data-customer-billing]");
+    if (billing) {
+      var preferenceKey = "jims.customer-list.billing-open";
+      try {
+        billing.open = window.localStorage.getItem(preferenceKey) === "true";
+      } catch (error) {
+        billing.open = false;
+      }
+      billing.addEventListener("toggle", function () {
+        try {
+          window.localStorage.setItem(preferenceKey, String(billing.open));
+        } catch (error) {
+          // The disclosure remains usable when browser storage is unavailable.
+        }
+      });
+    }
+
+    document.querySelectorAll("[data-customer-actions]").forEach(function (menu) {
+      menu.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          menu.open = false;
+          menu.querySelector("summary").focus();
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-customer-sites-toggle]").forEach(function (button) {
+      var panel = document.getElementById(button.getAttribute("aria-controls"));
+      if (!panel) return;
+      button.addEventListener("click", function () {
+        var expanded = button.getAttribute("aria-expanded") === "true";
+        button.setAttribute("aria-expanded", String(!expanded));
+        panel.hidden = expanded;
+        var label = button.querySelector("[data-customer-sites-toggle-label]");
+        if (label) label.textContent = expanded ? button.dataset.closedLabel : "Hide sites";
+      });
+    });
+
+    document.addEventListener("click", function (event) {
+      document.querySelectorAll("[data-customer-actions][open]").forEach(function (menu) {
+        if (!menu.contains(event.target)) menu.open = false;
       });
     });
   });

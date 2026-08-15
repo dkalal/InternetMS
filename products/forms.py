@@ -5,7 +5,6 @@ from internetservices.tailwind import apply_tailwind
 from custom_fields.forms import CustomFieldFormMixin
 
 from .models import Product, ProductCategory, UnitOfMeasure
-from customers.models import Customer
 
 
 class ProductForm(CustomFieldFormMixin, forms.ModelForm):
@@ -27,7 +26,6 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'wholesale_price',
             'wholesale_min_quantity',
             'allow_wholesale',
-            'customer',
             'track_stock',
             'is_serialized',
             'track_expiry',
@@ -46,7 +44,6 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'technician_price': 'Special selling price for walk-in technicians. Leave blank to use Selling Price.',
             'wholesale_price': 'Only used when wholesale pricing is enabled.',
             'wholesale_min_quantity': 'Minimum quantity required before wholesale price applies.',
-            'customer': 'Optional. Link this product to a specific customer when it is assigned or reserved.',
             'is_active': 'Inactive products stay in history but are hidden from normal selling workflows.',
             'sku': 'Unique product or service code within this business.',
             'track_stock': 'Stock changes only through purchases and authorized adjustments.',
@@ -58,8 +55,7 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.organization = kwargs.pop('organization', None)
         super().__init__(*args, organization=self.organization, **kwargs)
-        if self.organization is not None and 'customer' in self.fields:
-            self.fields['customer'].queryset = Customer.objects.filter(organization=self.organization)
+        if self.organization is not None:
             self.fields['catalog_category'].queryset = ProductCategory.objects.filter(
                 organization=self.organization, is_active=True
             )
@@ -69,7 +65,6 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         self.fields['sku'].required = False
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
-        self.fields['customer'].empty_label = 'No customer association'
         self.fields['category'].empty_label = None
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Router, radio, cable, software license...')
         self.has_movement_history = bool(
@@ -83,12 +78,6 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
                     'Locked because this item already has inventory or sales history.'
                 )
         apply_tailwind(self)
-
-    def clean_customer(self):
-        customer = self.cleaned_data.get('customer')
-        if customer and self.organization and customer.organization_id != self.organization.id:
-            raise forms.ValidationError("Invalid customer for the active organization.")
-        return customer
 
     def clean_sku(self):
         sku = (self.cleaned_data.get('sku') or '').strip().upper()

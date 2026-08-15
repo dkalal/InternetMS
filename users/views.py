@@ -69,6 +69,11 @@ TEAM_PERMISSION_GROUPS = (
     ("Inventory", "Operational stock visibility", (
         (PermissionCode.INVENTORY_VIEW, "View inventory"),
     )),
+    ("Cart financial controls", "Controlled exceptions for point-of-sale transactions", (
+        (PermissionCode.CART_PRICING_OVERRIDE, "Override customer category"),
+        (PermissionCode.CART_DISCOUNT_APPLY, "Apply cart discount"),
+        (PermissionCode.CART_TAX_RATE_EDIT, "Edit cart tax rate"),
+    )),
 )
 
 
@@ -111,6 +116,7 @@ def _member_permission_groups(member, effective):
     if member.base_role == TenantMembership.BaseRole.ADMIN_MANAGER:
         return []
     granted = set(member.granted_action_codes)
+    grants = {grant.action_code: grant for grant in member.permission_grants.all()}
     groups = []
     for title, helper, definitions in TEAM_PERMISSION_GROUPS:
         items = []
@@ -125,6 +131,9 @@ def _member_permission_groups(member, effective):
                 "label": label,
                 "inherited": inherited,
                 "granted": granted_exception,
+                "is_pricing_control": code == PermissionCode.CART_PRICING_OVERRIDE,
+                "is_discount_control": code == PermissionCode.CART_DISCOUNT_APPLY,
+                "grant": grants.get(code),
             })
         groups.append({"title": title, "helper": helper, "items": items, "enabled_count": enabled_count})
     return groups
@@ -224,6 +233,7 @@ def _team_access_context(request, *, invite_form=None, invite_open=False):
         "role_filter": role_filter,
         "status_filter": status_filter,
         "sort": sort,
+        "pricing_category_choices": (("standard", "Standard"), ("technician", "Technician"), ("wholesale", "Wholesale")),
     }
 
 
@@ -480,10 +490,20 @@ def update_member_access(request, membership_id):
     target.full_clean()
     target.save(update_fields=["base_role", "updated_at"])
     target.permission_grants.all().delete()
-    TenantPermissionGrant.objects.bulk_create([
-        TenantPermissionGrant(membership=target, action_code=action, scope=scope, granted_by=actor)
-        for action in sorted(requested)
-    ])
+    grants = []
+    for action in sorted(requested):
+        grant = TenantPermissionGrant(membership=target, action_code=action, scope=scope, granted_by=actor)
+        if action == PermissionCode.CART_DISCOUNT_APPLY:
+            grant.max_discount_percent = request.POST.get("max_discount_percent") or None
+            grant.max_discount_amount = request.POST.get("max_discount_amount") or None
+        elif action == PermissionCode.CART_PRICING_OVERRIDE:
+            grant.allowed_pricing_categories = [
+                value for value in request.POST.getlist("allowed_pricing_categories")
+                if value in {"standard", "technician", "wholesale"}
+            ]
+        grant.full_clean()
+        grants.append(grant)
+    TenantPermissionGrant.objects.bulk_create(grants)
     AuditLog.objects.create(
         organization=tenant, tenant=tenant, actor=request.user,
         action="security.member.access_changed", object_type="TenantMembership", object_id=str(target.pk),

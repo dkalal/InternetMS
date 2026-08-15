@@ -45,6 +45,9 @@ class PermissionCode:
     RECEIPTS_VIEW = "receipts.view"
     RECEIPTS_ISSUE_OWN = "receipts.issue_own"
     RECEIPTS_VOID = "receipts.void"
+    CART_PRICING_OVERRIDE = "cart.pricing_category.override"
+    CART_DISCOUNT_APPLY = "cart.discount.apply"
+    CART_TAX_RATE_EDIT = "cart.tax_rate.edit"
     FINANCE_DASHBOARD_VIEW = "finance.dashboard.view"
     FINANCE_SALES_VIEW_ALL = "finance.sales.view_all"
     FINANCE_SALES_REPORTS_VIEW = "finance.sales_reports.view"
@@ -157,6 +160,8 @@ TENANT_OPERATION_PERMISSIONS = frozenset({
     PermissionCode.INVOICES_UPDATE_OWN_DRAFT, PermissionCode.INVOICES_ISSUE_OWN,
     PermissionCode.PAYMENTS_RECORD_OWN, PermissionCode.RECEIPTS_VIEW,
     PermissionCode.RECEIPTS_ISSUE_OWN,
+    PermissionCode.CART_PRICING_OVERRIDE, PermissionCode.CART_DISCOUNT_APPLY,
+    PermissionCode.CART_TAX_RATE_EDIT,
 }) | MANAGER_FINANCE_PERMISSIONS | WORK_REPORT_MANAGEMENT_PERMISSIONS
 
 DELEGABLE_PERMISSIONS = frozenset({
@@ -167,6 +172,8 @@ DELEGABLE_PERMISSIONS = frozenset({
     PermissionCode.INVOICES_UPDATE_OWN_DRAFT, PermissionCode.INVOICES_ISSUE_OWN,
     PermissionCode.PAYMENTS_RECORD_OWN, PermissionCode.RECEIPTS_VIEW,
     PermissionCode.RECEIPTS_ISSUE_OWN,
+    PermissionCode.CART_PRICING_OVERRIDE, PermissionCode.CART_DISCOUNT_APPLY,
+    PermissionCode.CART_TAX_RATE_EDIT,
 })
 
 
@@ -203,6 +210,16 @@ def has_tenant_permission(user, tenant, action_code: str, *, membership=None) ->
     if membership.base_role != TenantMembership.BaseRole.SUPER_ADMIN and membership.tenant_id != getattr(tenant, "id", None):
         return False
     return action_code in permissions_for_membership(membership)
+
+
+def permission_grant_for(membership, action_code: str):
+    """Return the configured exception grant; managers are policy-unlimited."""
+    if membership is None or membership.base_role in {
+        TenantMembership.BaseRole.SUPER_ADMIN,
+        TenantMembership.BaseRole.ADMIN_MANAGER,
+    }:
+        return None
+    return membership.permission_grants.filter(action_code=action_code).first()
 
 
 def user_has_permission(user, permission: str) -> bool:

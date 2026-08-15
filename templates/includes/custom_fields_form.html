@@ -1,5 +1,37 @@
 {% load custom_fields_tags %}
 {% if form.custom_field_names or can_manage_custom_fields %}
+{% if compact_collapsed %}
+<details id="additional-information" class="group rounded-lg border border-slate-200 bg-white" data-additional-information {% if form.has_custom_field_errors or form.has_custom_field_values %}open{% endif %}>
+    <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600/30">
+        <span class="text-sm font-semibold text-slate-900">
+            Additional information{% if form.custom_field_names %} ({{ form.custom_field_names|length }}){% endif %}
+        </span>
+        <span class="flex items-center gap-3">
+            <span class="hidden text-xs text-slate-500 sm:inline">Tenant-specific fields</span>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+    </summary>
+
+    <div class="border-t border-slate-200 p-4">
+        <div class="mb-4 flex items-center justify-between gap-3">
+            <p class="text-xs text-slate-500">Optional information configured for this organization.</p>
+            {% if can_manage_custom_fields %}
+                <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact" data-custom-field-open>Add custom field</button>
+            {% endif %}
+        </div>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2" data-custom-fields-list>
+            {% for field_name in form.custom_field_names %}
+                <div class="custom-field-item" data-custom-field-item data-field-name="{{ field_name }}">
+                    {% include "components/form_field.html" with field=form|get_item:field_name %}
+                </div>
+            {% endfor %}
+        </div>
+        <div class="{% if form.custom_field_names %}hidden{% endif %} rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-600" data-custom-fields-empty>
+            No custom fields are configured yet.
+        </div>
+    </div>
+</details>
+{% else %}
 <section id="additional-information" class="rounded-lg border border-slate-200 bg-white shadow-sm">
     <div class="border-b border-slate-200 px-5 py-4">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -8,30 +40,18 @@
                 <p class="mt-1 text-sm text-slate-600">Optional tenant-specific metadata configured by your administrator.</p>
             </div>
             {% if can_manage_custom_fields %}
-                <button
-                    type="button"
-                    class="inline-flex items-center justify-center rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/30"
-                    data-custom-field-open
-                >
-                    Add custom field
-                </button>
+                <button type="button" class="inline-flex items-center justify-center rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/30" data-custom-field-open>Add custom field</button>
             {% endif %}
         </div>
     </div>
-
     <div class="space-y-4 p-5">
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2" data-custom-fields-list>
-            {% if form.custom_field_names %}
-                {% for field_name in form.custom_field_names %}
-                    <div class="custom-field-item" data-custom-field-item data-field-name="{{ field_name }}">
-                        {% include "components/form_field.html" with field=form|get_item:field_name %}
-                    </div>
-                {% endfor %}
-            {% endif %}
+            {% for field_name in form.custom_field_names %}
+                <div class="custom-field-item" data-custom-field-item data-field-name="{{ field_name }}">{% include "components/form_field.html" with field=form|get_item:field_name %}</div>
+            {% endfor %}
         </div>
-        <div class="{% if form.custom_field_names %}hidden{% endif %} rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600" data-custom-fields-empty>
-            No custom fields are configured for this section yet.
-        </div>
+        <div class="{% if form.custom_field_names %}hidden{% endif %} rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600" data-custom-fields-empty>No custom fields are configured for this section yet.</div>
     </div>
 </section>
+{% endif %}
 {% endif %}

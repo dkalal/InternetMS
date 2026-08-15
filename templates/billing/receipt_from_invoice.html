@@ -20,12 +20,29 @@
       Record the actual amount you received. If you only received part of the invoice, enter that payment amount here and the invoice will remain partially paid until the balance is covered.
     {% endif %}
     {% if outstanding_balance is not None %}
-      <div class="mt-2 font-medium">Outstanding balance: {{ outstanding_balance|intcomma }} {{ invoice.currency }}</div>
+      <div class="mt-2 font-medium">This invoice balance: {{ outstanding_balance|intcomma }} {{ invoice.currency }}</div>
     {% endif %}
     {% if credited_total %}
       <div class="mt-1 text-xs text-sky-900">Already credited: {{ credited_total|intcomma }} {{ invoice.currency }}</div>
     {% endif %}
   </div>
+
+  {% if customer_account_balance > outstanding_balance %}
+  <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <div class="font-semibold">Payment allocation matters</div>
+    <p class="mt-1">The customer's total open account balance is {{ customer_account_balance|intcomma }} {{ invoice.currency }}, but this form applies money only to invoice {{ invoice.number }}, whose balance is {{ outstanding_balance|intcomma }} {{ invoice.currency }}.</p>
+    <p class="mt-2 text-xs leading-5">To record the full account payment, allocate no more than this invoice balance here, then register the remainder against the customer's other open invoice. This prevents one invoice from being overpaid.</p>
+    <a href="{% url 'customer-detail' invoice.customer_id %}" class="mt-2 inline-flex font-semibold text-amber-950 underline">View all customer billing documents</a>
+  </div>
+  {% endif %}
+
+  {% if linked_subscription_period %}
+  <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+    <div class="font-semibold">Subscription coverage on this invoice</div>
+    <div class="mt-1">{{ linked_subscription_period.subscription.package.name }} · {{ linked_subscription_period.period_start|date:"d M Y" }} – {{ linked_subscription_period.period_end|date:"d M Y" }}</div>
+    <p class="mt-2 text-xs leading-5 text-emerald-900">This range becomes confirmed paid service coverage only when the invoice balance reaches zero. A partial receipt does not grant partial months automatically.</p>
+  </div>
+  {% endif %}
 
   <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
     <form method="post" class="space-y-4">

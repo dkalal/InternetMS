@@ -30,6 +30,9 @@
                             <span class="sr-only">Open navigation</span>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><path stroke-linecap="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/></svg>
                         </button>
+                        <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact hidden lg:inline-flex" data-sidebar-collapse aria-controls="primary-navigation" aria-expanded="true" title="Minimize navigation">
+                            <span class="sr-only">Minimize navigation</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 18-6-6 6-6"/></svg>
+                        </button>
                         <div class="min-w-0">
                             <div class="truncate text-sm font-semibold text-slate-900">{{ ACTIVE_ORGANIZATION.name|default:"JS Business Management" }}</div>
                             <div class="hidden truncate text-xs text-slate-500 sm:block">{% if SUPPORT_ACCESS %}<span class="font-bold text-amber-700">SUPPORT MODE · audited</span>{% else %}Operational workspace{% endif %}</div>

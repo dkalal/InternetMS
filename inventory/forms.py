@@ -6,6 +6,7 @@ from django.forms import BaseInlineFormSet, inlineformset_factory
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
 from products.models import Product, ProductCategory, UnitOfMeasure
+from users.permissions import PermissionCode, has_tenant_permission, permission_grant_for
 
 from .models import Cart, CartLine, InventorySettings, Purchase, PurchaseLine, StockAdjustment, StockUnit, Supplier, SupplierPaymentRecord
 
@@ -127,6 +128,10 @@ class SupplierPaymentForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseForm(TenantFormMixin, forms.ModelForm):
+    # This is a UI marker, not a trust boundary. It lets the server tell an
+    # untouched generated preview from a supplier reference entered by a user.
+    auto_generated_reference = forms.CharField(required=False, widget=forms.HiddenInput)
+
     class Meta:
         model = Purchase
         fields = ['supplier', 'reference_number', 'purchase_date', 'notes']
@@ -135,6 +140,13 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
     def __init__(self, *args, organization=None, **kwargs):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['supplier'].queryset = Supplier.objects.filter(tenant=organization, is_active=True)
+        self.fields['reference_number'].widget.attrs.update({
+            'autocomplete': 'off',
+            'spellcheck': 'false',
+        })
+        self.fields['reference_number'].help_text = (
+            'Generated automatically. You may replace it with the supplier’s delivery or invoice reference.'
+        )
 
     def clean_reference_number(self):
         value = (self.cleaned_data.get('reference_number') or '').strip()
@@ -258,13 +270,15 @@ class CartForm(TenantFormMixin, forms.ModelForm):
         help_texts = {
             'customer': 'Leave blank for a walk-in customer.',
             'walk_in_name': 'Optional name to print when no customer record is selected.',
-            'sale_pricing_category': 'Choose Standard, Technician, or Wholesale pricing for this sale.',
+            'sale_pricing_category': 'Customer category is automatic unless an authorized override is selected.',
             'discount_amount': 'Cart-wide discount applied after line discounts.',
             'tax_rate': 'VAT percentage applied after discounts.',
         }
 
-    def __init__(self, *args, organization=None, **kwargs):
+    def __init__(self, *args, organization=None, membership=None, **kwargs):
+        self.membership = membership
         super().__init__(*args, organization=organization, **kwargs)
+        self.fields['sale_pricing_category'].label = 'Customer category'
         self.fields['customer'].queryset = Customer.objects.filter(tenant=organization, status=Customer.Status.ACTIVE)
         self.fields['customer'].required = False
         if self.instance.sale_pricing_category != Cart.SalePricingCategory.LEGACY_RETAIL:
@@ -272,6 +286,20 @@ class CartForm(TenantFormMixin, forms.ModelForm):
                 choice for choice in Cart.SalePricingCategory.choices
                 if choice[0] != Cart.SalePricingCategory.LEGACY_RETAIL
             ]
+        can_price = has_tenant_permission(membership.user, organization, PermissionCode.CART_PRICING_OVERRIDE, membership=membership) if membership else False
+        can_discount = has_tenant_permission(membership.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership) if membership else False
+        can_edit_tax = has_tenant_permission(membership.user, organization, PermissionCode.CART_TAX_RATE_EDIT, membership=membership) if membership else False
+        pricing_grant = permission_grant_for(membership, PermissionCode.CART_PRICING_OVERRIDE)
+        if can_price and pricing_grant is not None:
+            allowed = {'customer_tier', self.instance.sale_pricing_category, *pricing_grant.allowed_pricing_categories}
+            self.fields['sale_pricing_category'].choices = [choice for choice in self.fields['sale_pricing_category'].choices if choice[0] in allowed]
+        self.fields['sale_pricing_category'].disabled = not can_price
+        self.fields['discount_amount'].disabled = not can_discount
+        self.fields['tax_rate'].disabled = not can_edit_tax
+        for name in ('sale_pricing_category', 'discount_amount', 'tax_rate'):
+            if self.fields[name].disabled:
+                self.fields[name].help_text += ' Admin controlled.'
+        self.discount_grant = permission_grant_for(membership, PermissionCode.CART_DISCOUNT_APPLY)
 
     def clean(self):
         cleaned = super().clean()
@@ -282,6 +310,16 @@ class CartForm(TenantFormMixin, forms.ModelForm):
             self.add_error('discount_amount', 'Discount cannot be negative.')
         if (cleaned.get('tax_rate') or 0) < 0:
             self.add_error('tax_rate', 'VAT/tax rate cannot be negative.')
+        discount = cleaned.get('discount_amount') or Decimal('0.00')
+        if self.discount_grant is not None:
+            limits = []
+            if self.discount_grant.max_discount_percent is not None:
+                limits.append((self.instance.subtotal * self.discount_grant.max_discount_percent / Decimal('100.00')).quantize(Decimal('0.01')))
+            if self.discount_grant.max_discount_amount is not None:
+                limits.append(self.discount_grant.max_discount_amount)
+            permitted = min(limits) if limits else Decimal('0.00')
+            if discount > permitted and discount != self.instance.discount_amount:
+                self.add_error('discount_amount', f'Your discount limit for this cart is TZS {permitted:,.2f}. Request manager approval for a higher amount.')
         return cleaned
 
 

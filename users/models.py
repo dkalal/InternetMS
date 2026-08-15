@@ -250,6 +250,9 @@ class TenantPermissionGrant(models.Model):
         related_name="permission_grants_made",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    max_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    max_discount_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    allowed_pricing_categories = models.JSONField(default=list, blank=True)
 
     class Meta:
         constraints = [
@@ -262,6 +265,10 @@ class TenantPermissionGrant(models.Model):
             raise ValidationError("Permission grants cannot cross tenants.")
         if self.granted_by_id == self.membership_id:
             raise ValidationError("Users cannot grant permissions to themselves.")
+        if self.max_discount_percent is not None and not 0 <= self.max_discount_percent <= 100:
+            raise ValidationError({"max_discount_percent": "Discount percentage must be between 0 and 100."})
+        if self.max_discount_amount is not None and self.max_discount_amount < 0:
+            raise ValidationError({"max_discount_amount": "Discount amount cannot be negative."})
 
 
 class SupportAccessSession(models.Model):

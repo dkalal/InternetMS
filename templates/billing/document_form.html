@@ -13,6 +13,13 @@
     <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="jims-btn jims-btn-secondary">Cancel</a>
   </header>
 
+  {% if doc_type == 'invoice' %}
+  <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <div class="font-semibold">Recurring Internet packages must use Renew</div>
+    <p class="mt-1">If the customer already has an active package subscription, open the customer account and use <strong>Renew</strong>. That workflow records exact coverage dates and prevents duplicate monthly charges. Use New invoice for products, installation, and genuine one-time or non-subscription charges.</p>
+  </div>
+  {% endif %}
+
   <form method="post" class="space-y-6" id="document-form">
     {% csrf_token %}
 
@@ -190,10 +197,13 @@
     const getSelectedCustomer = () => customerCatalog.get(customerField?.value || '');
 
     const productPriceForCategory = (product, quantity) => {
-      const category = pricingCategoryField?.value || 'standard';
+      let category = pricingCategoryField?.value || 'customer_tier';
+      if (category === 'customer_tier') {
+        const tier = getSelectedCustomer()?.pricing_tier || 'retail';
+        category = tier === 'technician' ? 'technician' : (tier === 'wholesale' ? 'wholesale' : 'standard');
+      }
       if (category === 'technician') return parseMoney(product.technician_price || product.selling_price);
-      const customerTierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(getSelectedCustomer()?.pricing_tier || '');
-      if (category === 'wholesale' || (category === 'standard' && customerTierWantsWholesale)) {
+      if (category === 'wholesale') {
         const qualifies = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
         return qualifies ? parseMoney(product.wholesale_price) : parseMoney(product.selling_price);
       }
@@ -346,10 +356,13 @@
       if (activeType === 'product' && product) {
         const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
         if (controls.pricingMode?.value !== 'manual') {
-          const category = pricingCategoryField?.value || 'standard';
-          const customerTierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(getSelectedCustomer()?.pricing_tier || '');
+          let category = pricingCategoryField?.value || 'customer_tier';
+          if (category === 'customer_tier') {
+            const tier = getSelectedCustomer()?.pricing_tier || 'retail';
+            category = tier === 'technician' ? 'technician' : (tier === 'wholesale' ? 'wholesale' : 'standard');
+          }
           controls.unitPrice.value = Number(productPriceForCategory(product, quantity)).toFixed(2);
-          if (controls.pricingMode) controls.pricingMode.value = (category === 'wholesale' || customerTierWantsWholesale) && qualifiesWholesale ? 'wholesale' : category;
+          if (controls.pricingMode) controls.pricingMode.value = category === 'wholesale' && qualifiesWholesale ? 'wholesale' : (category === 'wholesale' ? 'standard' : category);
         }
         controls.summary.textContent = qualifiesWholesale ? `${product.name} selected - wholesale available` : `${product.name} selected`;
         if (controls.unit && (!controls.unit.value || !product.allowed_units.includes(controls.unit.value))) controls.unit.value = product.unit;

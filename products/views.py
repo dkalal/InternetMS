@@ -38,7 +38,7 @@ class ProductListView(LoginRequiredMixin, ListView):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.PRODUCT_VIEW)
         queryset = super().get_queryset().filter(organization=organization).select_related(
-            "customer", "catalog_category", "inventory_balance"
+            "catalog_category", "inventory_balance"
         )
         search = (self.request.GET.get("search") or "").strip()
         if search:
@@ -48,7 +48,6 @@ class ProductListView(LoginRequiredMixin, ListView):
                 | Q(sku__icontains=search)
                 | Q(brand__icontains=search)
                 | Q(model_number__icontains=search)
-                | Q(customer__name__icontains=search)
                 | Q(stock_units__serial_number__icontains=search)
             ).distinct()
         catalog_category = self.request.GET.get("catalog_category")

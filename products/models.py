@@ -235,7 +235,6 @@ class Product(models.Model):
     wholesale_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     wholesale_min_quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     allow_wholesale = models.BooleanField(default=False)
-    customer = models.ForeignKey('customers.Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
@@ -306,9 +305,6 @@ class Product(models.Model):
     def get_updated_at_display(self):
         return self.updated_at.strftime('%Y-%m-%d %H:%M:%S')    
     
-    def get_customer_display(self):
-        return self.customer.name if self.customer else 'No Customer'
-    
     def get_is_active_display(self):
         return 'Active' if self.is_active else 'Inactive'
     
@@ -321,7 +317,6 @@ class Product(models.Model):
             'measure_unit': self.get_measure_unit_display(),
             'buying_price': self.get_buying_price_display(),
             'selling_price': self.get_selling_price_display(),
-            'customer': self.get_customer_display(),
             'created_at': self.get_created_at_display(),
             'updated_at': self.get_updated_at_display(),
             'is_active': self.get_is_active_display()

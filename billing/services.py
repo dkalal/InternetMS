@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import calendar
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Sum
+from django.db.models import Max, Q, Sum
 from django.utils import timezone
 
 from audit.models import AuditLog
-from customers.models import Customer, CustomerSite
+from customers.models import Customer, CustomerSite, InternetService
 from products.models import Product
 from services.models import Package
 from users.models import Organization, TenantMembership
@@ -31,6 +31,8 @@ ZERO_TAX_RATE = Decimal("0.00")
 class LineItemInput:
     product_id: int | None = None
     package_id: int | None = None
+    internet_service_id: int | None = None
+    subscription_id: int | None = None
     description: str = ""
     quantity: Decimal = Decimal("1.00")
     unit_price: Decimal = Decimal("0.00")
@@ -43,6 +45,64 @@ class LineItemInput:
     promotion_id: int | None = None
     preserve_unit_price: bool = False
     unit_snapshot: str = ""
+
+
+@dataclass(frozen=True)
+class PaidCoverageWindow:
+    """A continuous, financially settled service-coverage interval."""
+
+    start: date
+    end: date
+    period_count: int
+
+
+def _merge_paid_coverage_ranges(ranges) -> tuple[PaidCoverageWindow, ...]:
+    """Merge settled ranges only when their effective coverage is continuous."""
+    paid_ranges = sorted(ranges, key=lambda item: (item[0], item[1], item[2]))
+    windows: list[PaidCoverageWindow] = []
+    for coverage_start, coverage_end, _period_id in paid_ranges:
+        if coverage_start > coverage_end:
+            continue
+        if windows and coverage_start <= windows[-1].end + timedelta(days=1):
+            previous = windows[-1]
+            windows[-1] = PaidCoverageWindow(
+                start=previous.start,
+                end=max(previous.end, coverage_end),
+                period_count=previous.period_count + 1,
+            )
+        else:
+            windows.append(PaidCoverageWindow(coverage_start, coverage_end, 1))
+    return tuple(windows)
+
+
+def _paid_ranges_for_subscription(subscription: CustomerSubscription):
+    for period in subscription.periods.all():
+        if period.status != SubscriptionPeriod.Status.PAID:
+            continue
+        coverage_start = max(period.period_start, subscription.start_date)
+        coverage_end = period.period_end
+        if subscription.end_date is not None:
+            coverage_end = min(coverage_end, subscription.end_date)
+        yield coverage_start, coverage_end, period.id
+
+
+def paid_service_coverage(subscription: CustomerSubscription) -> tuple[PaidCoverageWindow, ...]:
+    """Return one subscription's confirmed, continuous paid-coverage windows.
+
+    `SubscriptionPeriod` is the source of truth: an invoice or receipt date does
+    not itself grant service coverage, and partial payments remain excluded until
+    the linked invoice is fully settled and the period moves to PAID.
+    """
+    return _merge_paid_coverage_ranges(_paid_ranges_for_subscription(subscription))
+
+
+def paid_service_coverage_for_subscriptions(subscriptions) -> tuple[PaidCoverageWindow, ...]:
+    """Return service-level coverage across immutable package-agreement history."""
+    return _merge_paid_coverage_ranges(
+        paid_range
+        for subscription in subscriptions
+        for paid_range in _paid_ranges_for_subscription(subscription)
+    )
 
 
 class BillingServiceError(Exception):
@@ -223,6 +283,7 @@ class BillingService:
                 organization=organization,
                 document_type=BillingDocument.DocumentType.CREDIT_NOTE,
                 corrected_invoice=invoice,
+                status=BillingDocument.Status.ISSUED,
             ).aggregate(total=Sum("total"))["total"]
             or Decimal("0.00")
         )
@@ -230,8 +291,10 @@ class BillingService:
 
     @classmethod
     def invoice_credit_capacity(cls, *, organization: Organization, invoice: BillingDocument) -> Decimal:
-        credited = cls.invoice_credited_total(organization=organization, invoice=invoice)
-        return max(invoice.total - credited, Decimal("0.00")).quantize(Decimal("0.01"))
+        # JIMS does not yet model post-payment refunds or customer credit
+        # balances. A credit note therefore may only reduce the amount that is
+        # currently unpaid on this invoice; it must never over-settle it.
+        return cls.invoice_remaining_balance(organization=organization, invoice=invoice)
 
     @classmethod
     def invoice_remaining_balance(cls, *, organization: Organization, invoice: BillingDocument) -> Decimal:
@@ -305,7 +368,7 @@ class BillingService:
         paid_total = cls.invoice_paid_total(organization=organization, invoice=invoice)
         credited_total = cls.invoice_credited_total(organization=organization, invoice=invoice)
         remaining_balance = max(invoice.total - paid_total - credited_total, Decimal("0.00")).quantize(Decimal("0.01"))
-        credit_capacity = max(invoice.total - credited_total, Decimal("0.00")).quantize(Decimal("0.01"))
+        credit_capacity = remaining_balance
         is_open_period = cls.is_accounting_period_open(organization=organization, on_date=invoice.issue_date)
         status = invoice.status
         active_issued_states = {
@@ -472,6 +535,50 @@ class BillingService:
                 raise BillingServiceError("Line item unit price cannot be negative.")
             if item.discount_amount < Decimal("0.00"):
                 raise BillingServiceError("Line item discount cannot be negative.")
+
+    @classmethod
+    def _validate_manual_recurring_invoice_items(
+        cls,
+        *,
+        organization: Organization,
+        customer: Customer,
+        site: CustomerSite | None,
+        items: list[LineItemInput],
+    ) -> None:
+        """Keep active subscription charges inside the renewal workflow.
+
+        A free-form invoice has no service-period identity. Allowing it to bill
+        an already assigned package as recurring creates duplicate months and
+        leaves the invoice disconnected from paid coverage.
+        """
+        package_ids = {
+            item.package_id
+            for item in items
+            if item.package_id
+            and item.subscription_id is None
+            and item.billing_behavior == BillingLineItem.BillingBehavior.RECURRING_MONTHLY
+        }
+        if not package_ids:
+            return
+
+        subscriptions = CustomerSubscription.objects.unscoped().filter(
+            organization=organization,
+            customer=customer,
+            package_id__in=package_ids,
+            status=CustomerSubscription.Status.ACTIVE,
+        )
+        if site is not None:
+            subscriptions = subscriptions.filter(site=site)
+        conflict = subscriptions.select_related("package", "site").order_by("id").first()
+        if conflict is None:
+            return
+
+        site_label = conflict.site.name if conflict.site_id else "Main Office"
+        raise BillingServiceError(
+            f"{conflict.package.name} is already an active subscription at {site_label}. "
+            "Use Renew from the customer account so the invoice is linked to exact coverage dates. "
+            "For a genuine one-time charge, change Billing behavior to One time."
+        )
 
     @classmethod
     def _promotion_discount(
@@ -647,6 +754,32 @@ class BillingService:
         created_items: list[BillingLineItem] = []
         for item in items:
             product, package = cls._resolve_line_item_refs(organization=organization, item=item)
+            internet_service = None
+            subscription = None
+            if item.internet_service_id:
+                internet_service = InternetService.objects.unscoped().filter(
+                    id=item.internet_service_id,
+                    tenant=organization,
+                ).first()
+                if internet_service is None or internet_service.customer_id != document.customer_id:
+                    raise BillingServiceError("Invalid Internet service context.")
+                if document.site_id and internet_service.site_id != document.site_id:
+                    raise BillingServiceError("Internet service and document site context do not match.")
+            if item.subscription_id:
+                subscription = CustomerSubscription.objects.unscoped().filter(
+                    id=item.subscription_id,
+                    tenant=organization,
+                ).first()
+                if subscription is None or subscription.customer_id != document.customer_id:
+                    raise BillingServiceError("Invalid subscription context.")
+                if document.site_id and subscription.site_id != document.site_id:
+                    raise BillingServiceError("Subscription and document site context do not match.")
+                if package is not None and subscription.package_id != package.id:
+                    raise BillingServiceError("Subscription and package context do not match.")
+                if internet_service is not None and subscription.internet_service_id != internet_service.id:
+                    raise BillingServiceError("Subscription and Internet service context do not match.")
+                if internet_service is None and subscription.internet_service_id:
+                    internet_service = subscription.internet_service
             promotion = None
             if item.promotion_id:
                 promotion = Promotion.objects.unscoped().filter(id=item.promotion_id, organization=organization).first()
@@ -661,21 +794,15 @@ class BillingService:
             if not item.preserve_unit_price and (pricing_mode != BillingLineItem.PricingMode.MANUAL or (product is not None and product.sku)):
                 if product is not None:
                     category = document.sale_pricing_category
+                    if category == BillingDocument.SalePricingCategory.CUSTOMER_TIER:
+                        category = document.customer.default_sale_pricing_category
                     if category == BillingDocument.SalePricingCategory.LEGACY_RETAIL:
-                        wants_wholesale = pricing_mode == BillingLineItem.PricingMode.WHOLESALE or document.customer.pricing_tier in {
-                            Customer.PricingTier.WHOLESALE,
-                            Customer.PricingTier.CORPORATE,
-                            Customer.PricingTier.VIP,
-                        }
+                        wants_wholesale = (
+                            pricing_mode == BillingLineItem.PricingMode.WHOLESALE
+                            or document.customer.pricing_tier == Customer.PricingTier.WHOLESALE
+                        )
                         category = Product.PricingMode.WHOLESALE if wants_wholesale else Product.PricingMode.RETAIL
-                    elif category == BillingDocument.SalePricingCategory.STANDARD and (
-                        pricing_mode == BillingLineItem.PricingMode.WHOLESALE
-                        or document.customer.pricing_tier in {
-                            Customer.PricingTier.WHOLESALE,
-                            Customer.PricingTier.CORPORATE,
-                            Customer.PricingTier.VIP,
-                        }
-                    ):
+                    elif category == BillingDocument.SalePricingCategory.STANDARD and pricing_mode == BillingLineItem.PricingMode.WHOLESALE:
                         category = Product.PricingMode.WHOLESALE
                     unit = product.price_for_sale_category(
                         sale_pricing_category=category, quantity=qty,
@@ -721,6 +848,8 @@ class BillingService:
                     document=document,
                     product=product,
                     package=package,
+                    internet_service=internet_service,
+                    subscription=subscription,
                     description=item.description,
                     quantity=qty,
                     unit_snapshot=cls._resolve_line_unit(
@@ -779,6 +908,7 @@ class BillingService:
         created_by,
         document_type: str,
         customer: Customer,
+        site: CustomerSite | None = None,
         issue_date: date,
         due_date: date | None,
         status: str,
@@ -786,7 +916,7 @@ class BillingService:
         tax_rate: Decimal,
         notes: str,
         items: list[LineItemInput],
-        sale_pricing_category: str = BillingDocument.SalePricingCategory.STANDARD,
+        sale_pricing_category: str = BillingDocument.SalePricingCategory.CUSTOMER_TIER,
         discount_amount: Decimal = Decimal('0.00'),
         invoice: BillingDocument | None = None,
         original_invoice: BillingDocument | None = None,
@@ -839,6 +969,7 @@ class BillingService:
             document_type=document_type,
             number=number,
             customer=customer,
+            site=site,
             issue_date=issue_date,
             due_date=due_date,
             status=status,
@@ -889,6 +1020,7 @@ class BillingService:
         created_by,
         document_type: str,
         customer_id: int,
+        site_id: int | None = None,
         issue_date: date | None = None,
         due_date: date | None = None,
         status: str = BillingDocument.Status.DRAFT,
@@ -901,7 +1033,7 @@ class BillingService:
         payment_method: str = "",
         payment_reference: str = "",
         items: list[LineItemInput] | None = None,
-        sale_pricing_category: str = BillingDocument.SalePricingCategory.STANDARD,
+        sale_pricing_category: str = BillingDocument.SalePricingCategory.CUSTOMER_TIER,
     ) -> BillingDocument:
         if issue_date is None:
             issue_date = timezone.localdate()
@@ -910,6 +1042,15 @@ class BillingService:
         cls._validate_document_status(document_type=document_type, status=status)
 
         customer = cls._resolve_customer(organization=organization, customer_id=customer_id)
+        site = None
+        if site_id is not None:
+            site = CustomerSite.objects.filter(
+                id=site_id,
+                organization=organization,
+                customer=customer,
+            ).first()
+            if site is None:
+                raise BillingServiceError("Invalid customer site context.")
         if tax_rate is None:
             tax_rate = cls.default_tax_rate_for_customer(customer)
         invoice = None
@@ -925,7 +1066,20 @@ class BillingService:
             cls._require_same_tenant(organization, invoice)
             if invoice.organization_id != organization.id:
                 cls._raise_cross_tenant()
+            if invoice.customer_id != customer.id:
+                raise BillingServiceError("Receipt customer must match its invoice customer.")
+            if site is None:
+                site = invoice.site
+            elif invoice.site_id and site.id != invoice.site_id:
+                raise BillingServiceError("Receipt site must match its invoice site.")
         cls._validate_editable_items(items=items)
+        if document_type == BillingDocument.DocumentType.INVOICE:
+            cls._validate_manual_recurring_invoice_items(
+                organization=organization,
+                customer=customer,
+                site=site,
+                items=items,
+            )
 
         with transaction.atomic():
             balance_brought_forward = Decimal("0.00")
@@ -940,6 +1094,7 @@ class BillingService:
                 created_by=created_by,
                 document_type=document_type,
                 customer=customer,
+                site=site,
                 issue_date=issue_date,
                 due_date=due_date,
                 status=status,
@@ -1027,6 +1182,7 @@ class BillingService:
         created_by,
         quotation_id: int,
         customer_id: int,
+        site_id: int | None = None,
         issue_date: date | None = None,
         due_date: date | None = None,
         status: str = BillingDocument.Status.DRAFT,
@@ -1043,6 +1199,13 @@ class BillingService:
         cls._validate_document_status(document_type=BillingDocument.DocumentType.QUOTATION, status=status)
         previous = cls._resolve_quotation(organization=organization, quotation_id=quotation_id)
         customer = cls._resolve_customer(organization=organization, customer_id=customer_id)
+        site = None
+        if site_id is not None:
+            site = CustomerSite.objects.filter(
+                id=site_id, organization=organization, customer=customer,
+            ).first()
+            if site is None:
+                raise BillingServiceError("Invalid customer site context.")
         if sale_pricing_category is None:
             sale_pricing_category = previous.sale_pricing_category
         cls._validate_editable_items(items=items)
@@ -1054,6 +1217,7 @@ class BillingService:
                 created_by=created_by,
                 document_type=BillingDocument.DocumentType.QUOTATION,
                 customer=customer,
+                site=site,
                 issue_date=issue_date,
                 due_date=due_date,
                 status=status,
@@ -1272,6 +1436,8 @@ class BillingService:
             LineItemInput(
                 product_id=item.product_id,
                 package_id=item.package_id,
+                internet_service_id=item.internet_service_id,
+                subscription_id=item.subscription_id,
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
@@ -1294,6 +1460,7 @@ class BillingService:
                 created_by=created_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=quotation.customer_id,
+                site_id=quotation.site_id,
                 issue_date=timezone.localdate(),
                 due_date=quotation.due_date,
                 status=BillingDocument.Status.DRAFT,
@@ -1474,6 +1641,8 @@ class BillingService:
             LineItemInput(
                 product_id=item.product_id,
                 package_id=item.package_id,
+                internet_service_id=item.internet_service_id,
+                subscription_id=item.subscription_id,
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
@@ -1496,6 +1665,7 @@ class BillingService:
                 created_by=performed_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer=invoice.customer,
+                site=invoice.site,
                 issue_date=timezone.localdate(),
                 due_date=invoice.due_date,
                 status=BillingDocument.Status.DRAFT,
@@ -1558,32 +1728,46 @@ class BillingService:
             raise BillingServiceError("A short reason is required to create a credit note.")
         if issue_date is None:
             issue_date = timezone.localdate()
-        invoice = cls._resolve_invoice(organization=organization, invoice_id=invoice_id)
-        state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
-        if not state["can_create_credit_note"]:
-            raise BillingServiceError("This invoice cannot receive a credit note.")
-
         amount = amount.quantize(Decimal("0.01"))
         if amount <= Decimal("0.00"):
             raise BillingServiceError("Credit note amount must be greater than zero.")
-        if amount > state["credit_capacity"]:
-            raise BillingServiceError(
-                f"Credit amount ({amount:,.2f}) cannot exceed the remaining credit capacity ({state['credit_capacity']:,.2f})."
-            )
-
-        subtotal_amount = cls._credit_note_subtotal_for_total(total_amount=amount, tax_rate=invoice.tax_rate)
-        item = LineItemInput(
-            description=f"Credit for invoice {invoice.number}: {reason}",
-            quantity=Decimal("-1.00"),
-            unit_price=subtotal_amount,
-            pricing_mode=BillingLineItem.PricingMode.MANUAL,
-        )
         with transaction.atomic():
+            invoice = (
+                BillingDocument.objects.unscoped()
+                .select_for_update()
+                .select_related("customer")
+                .filter(
+                    id=invoice_id,
+                    document_type=BillingDocument.DocumentType.INVOICE,
+                    organization=organization,
+                )
+                .first()
+            )
+            if invoice is None:
+                raise BillingServiceError("Invoice not found.")
+            cls._require_same_tenant(organization, invoice)
+            state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
+            if not state["can_create_credit_note"]:
+                raise BillingServiceError("This invoice cannot receive a credit note.")
+            if amount > state["credit_capacity"]:
+                raise BillingServiceError(
+                    f"Credit amount ({amount:,.2f}) cannot exceed the unpaid invoice balance "
+                    f"({state['credit_capacity']:,.2f})."
+                )
+
+            subtotal_amount = cls._credit_note_subtotal_for_total(total_amount=amount, tax_rate=invoice.tax_rate)
+            item = LineItemInput(
+                description=f"Credit for invoice {invoice.number}: {reason}",
+                quantity=Decimal("-1.00"),
+                unit_price=subtotal_amount,
+                pricing_mode=BillingLineItem.PricingMode.MANUAL,
+            )
             credit_note = cls._store_document(
                 organization=organization,
                 created_by=performed_by,
                 document_type=BillingDocument.DocumentType.CREDIT_NOTE,
                 customer=invoice.customer,
+                site=invoice.site,
                 issue_date=issue_date,
                 due_date=None,
                 status=BillingDocument.Status.ISSUED,
@@ -1593,6 +1777,10 @@ class BillingService:
                 items=[item],
                 sale_pricing_category=invoice.sale_pricing_category,
                 corrected_invoice=invoice,
+            )
+            cls._sync_invoice_after_credit_change(
+                organization=organization,
+                invoice=invoice,
             )
             cls._log_action(
                 organization=organization,
@@ -1605,6 +1793,140 @@ class BillingService:
                     "corrected_invoice_id": invoice.id,
                     "reason": reason,
                     "amount": str(amount),
+                },
+            )
+            return credit_note
+
+    @classmethod
+    def _sync_invoice_after_credit_change(
+        cls,
+        *,
+        organization: Organization,
+        invoice: BillingDocument,
+    ) -> None:
+        """Reconcile invoice and linked coverage after an auditable credit change."""
+        paid_total = cls.invoice_paid_total(organization=organization, invoice=invoice)
+        remaining = cls.invoice_remaining_balance(organization=organization, invoice=invoice)
+        if remaining == Decimal("0.00"):
+            target_status = BillingDocument.Status.PAID
+        elif paid_total > Decimal("0.00"):
+            target_status = BillingDocument.Status.PARTIALLY_PAID
+        else:
+            target_status = BillingDocument.Status.ISSUED
+        BillingDocument.objects.filter(pk=invoice.pk, organization=organization).update(status=target_status)
+        invoice.status = target_status
+
+        periods = list(
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                invoice=invoice,
+            ).select_related("subscription")
+        )
+        if not periods:
+            return
+
+        if remaining == Decimal("0.00"):
+            receipt = (
+                BillingDocument.objects.filter(
+                    organization=organization,
+                    document_type=BillingDocument.DocumentType.RECEIPT,
+                    invoice=invoice,
+                )
+                .order_by("payment_date", "created_at", "id")
+                .last()
+            )
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                invoice=invoice,
+            ).update(
+                status=SubscriptionPeriod.Status.PAID,
+                receipt=receipt,
+                paid_at=timezone.now(),
+            )
+        else:
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                invoice=invoice,
+                status=SubscriptionPeriod.Status.PAID,
+            ).update(
+                status=SubscriptionPeriod.Status.INVOICED,
+                receipt=None,
+                paid_at=None,
+            )
+
+        for subscription_id in {period.subscription_id for period in periods}:
+            paid_through = (
+                SubscriptionPeriod.objects.filter(
+                    organization=organization,
+                    subscription_id=subscription_id,
+                    status=SubscriptionPeriod.Status.PAID,
+                ).aggregate(value=Max("period_end"))["value"]
+            )
+            CustomerSubscription.objects.filter(
+                organization=organization,
+                pk=subscription_id,
+            ).update(paid_through_date=paid_through)
+
+    @classmethod
+    def void_credit_note(
+        cls,
+        *,
+        organization: Organization,
+        performed_by,
+        credit_note_id: int,
+        reason: str,
+    ) -> BillingDocument:
+        reason = (reason or "").strip()
+        if len(reason) < 5:
+            raise BillingServiceError("A short reason is required to void a credit note.")
+
+        with transaction.atomic():
+            credit_note = (
+                BillingDocument.objects.unscoped()
+                .select_for_update()
+                .select_related("customer")
+                .filter(
+                    id=credit_note_id,
+                    organization=organization,
+                    document_type=BillingDocument.DocumentType.CREDIT_NOTE,
+                )
+                .first()
+            )
+            if credit_note is None:
+                raise BillingServiceError("Credit note not found.")
+            cls._require_same_tenant(organization, credit_note)
+            if credit_note.status != BillingDocument.Status.ISSUED:
+                raise BillingServiceError("Only an issued credit note can be voided.")
+            if credit_note.corrected_invoice_id is None:
+                raise BillingServiceError("This credit note is not linked to an invoice.")
+
+            invoice = BillingDocument.objects.unscoped().select_for_update().get(
+                pk=credit_note.corrected_invoice_id,
+                organization=organization,
+            )
+            if invoice.status in {BillingDocument.Status.VOID, BillingDocument.Status.SUPERSEDED}:
+                raise BillingServiceError("A credit note cannot be voided after its invoice is closed by reversal.")
+
+            old_snapshot = cls._document_snapshot(credit_note)
+            BillingDocument.objects.filter(pk=credit_note.pk, organization=organization).update(
+                status=BillingDocument.Status.VOID,
+                voided_at=timezone.now(),
+            )
+            credit_note.refresh_from_db()
+            cls._sync_invoice_after_credit_change(
+                organization=organization,
+                invoice=invoice,
+            )
+            cls._log_action(
+                organization=organization,
+                performed_by=performed_by,
+                action_type="credit_note_voided",
+                document=credit_note,
+                old_value=old_snapshot,
+                new_value=cls._document_snapshot(credit_note),
+                metadata={
+                    "corrected_invoice_id": invoice.id,
+                    "reason": reason,
                 },
             )
             return credit_note
@@ -1690,6 +2012,7 @@ class BillingService:
                     created_by=created_by,
                     document_type=BillingDocument.DocumentType.RECEIPT,
                     customer=invoice.customer,
+                    site=invoice.site,
                     issue_date=timezone.localdate(),
                     due_date=None,
                     status=BillingDocument.Status.PAID,
@@ -1850,13 +2173,12 @@ def last_day_of_month(value: date) -> date:
 class SubscriptionBillingService:
     @classmethod
     def format_invoice_description(cls, *, subscription: CustomerSubscription, period: SubscriptionPeriod) -> str:
-        """Use a customer-facing billing label that never exposes office topology."""
+        """Describe the exact inclusive service period without exposing office topology."""
         package = subscription.package
         speed = (package.speed or "Speed not specified").strip()
-        start = period.period_start.strftime("%B %Y")
-        end = period.period_end.strftime("%B %Y")
-        billing_range = start if start == end else f"{start} - {end}"
-        return f"Billing for the {package.name} ({speed}) - {billing_range}"
+        start = period.period_start.strftime("%d %b %Y")
+        end = period.period_end.strftime("%d %b %Y")
+        return f"{package.name} ({speed}) subscription - service period: {start} - {end}"
 
     @classmethod
     def _raise_cross_tenant(cls):
@@ -1870,6 +2192,7 @@ class SubscriptionBillingService:
         customer: Customer,
         package: Package,
         site: CustomerSite | None = None,
+        internet_service: InternetService | None = None,
         start_date: date | None = None,
         promotion: Promotion | None = None,
     ) -> CustomerSubscription:
@@ -1883,11 +2206,28 @@ class SubscriptionBillingService:
             site = CustomerService.ensure_primary_site(organization=organization, customer=customer)
         elif site.organization_id != organization.id or site.customer_id != customer.id:
             cls._raise_cross_tenant()
+        if internet_service is not None:
+            if (
+                internet_service.organization_id != organization.id
+                or internet_service.customer_id != customer.id
+                or internet_service.site_id != site.id
+            ):
+                cls._raise_cross_tenant()
+            current = CustomerSubscription.objects.filter(
+                organization=organization,
+                internet_service=internet_service,
+                status=CustomerSubscription.Status.ACTIVE,
+            ).first()
+            if current is not None:
+                if current.package_id != package.id:
+                    raise BillingServiceError("This Internet service already has an active subscription.")
+                return current
         subscription, _ = CustomerSubscription.objects.get_or_create(
             organization=organization,
             tenant=organization,
             customer=customer,
             site=site,
+            internet_service=internet_service,
             package=package,
             status=CustomerSubscription.Status.ACTIVE,
             defaults={
@@ -2071,22 +2411,48 @@ class SubscriptionBillingService:
         )
         paid_until_month = add_months(period_start, months + amount["free_months"] - 1)
         period_end = last_day_of_month(paid_until_month)
-        period, _ = SubscriptionPeriod.objects.get_or_create(
-            organization=organization,
-            tenant=organization,
-            subscription=subscription,
-            period_start=period_start,
-            defaults={
-                "period_end": period_end,
-                "months": months,
-                "free_months": amount["free_months"],
-                "original_amount": amount["original"],
-                "discount_amount": amount["discount"],
-                "final_amount": amount["final"],
-                "promotion": promotion,
-            },
-        )
-        return period
+        with transaction.atomic():
+            CustomerSubscription.objects.unscoped().select_for_update().get(
+                pk=subscription.pk,
+                organization=organization,
+            )
+            existing = SubscriptionPeriod.objects.unscoped().filter(
+                organization=organization,
+                subscription=subscription,
+                period_start=period_start,
+            ).first()
+            if existing is not None:
+                return existing
+            overlap = (
+                SubscriptionPeriod.objects.unscoped()
+                .filter(
+                    organization=organization,
+                    subscription=subscription,
+                    period_start__lte=period_end,
+                    period_end__gte=period_start,
+                )
+                .exclude(status=SubscriptionPeriod.Status.CANCELLED)
+                .order_by("period_start", "id")
+                .first()
+            )
+            if overlap is not None:
+                raise BillingServiceError(
+                    "Coverage overlaps an existing subscription period "
+                    f"({overlap.period_start:%d %b %Y} – {overlap.period_end:%d %b %Y})."
+                )
+            return SubscriptionPeriod.objects.unscoped().create(
+                organization=organization,
+                tenant=organization,
+                subscription=subscription,
+                period_start=period_start,
+                period_end=period_end,
+                months=months,
+                free_months=amount["free_months"],
+                original_amount=amount["original"],
+                discount_amount=amount["discount"],
+                final_amount=amount["final"],
+                promotion=promotion,
+            )
 
     @classmethod
     def create_invoice_for_period(
@@ -2107,6 +2473,8 @@ class SubscriptionBillingService:
             description += f" (includes {period.free_months} complimentary month{'s' if period.free_months != 1 else ''})"
         item = LineItemInput(
             package_id=subscription.package_id,
+            internet_service_id=subscription.internet_service_id,
+            subscription_id=subscription.id,
             description=description,
             quantity=Decimal(period.months),
             base_unit_price=subscription.monthly_fee_at_signup,
@@ -2123,10 +2491,14 @@ class SubscriptionBillingService:
                 created_by=created_by,
                 document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=subscription.customer_id,
+                site_id=subscription.site_id,
                 issue_date=timezone.localdate(),
                 due_date=due_date,
                 status=BillingDocument.Status.ISSUED,
-                notes=f"Monthly subscription renewal for {period.period_start:%B %Y}.",
+                notes=(
+                    "Subscription renewal for service period "
+                    f"{period.period_start:%d %b %Y} - {period.period_end:%d %b %Y}."
+                ),
                 items=[item],
             )
             SubscriptionPeriod.objects.filter(id=period.id).update(

@@ -15,6 +15,13 @@
     <p class="mt-1 text-sm text-slate-600">Financial changes stay auditable. The original invoice remains in history.</p>
   </header>
 
+  {% if action_title == 'Create credit note' %}
+  <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
+    <div class="font-semibold">A credit note reduces what the customer owes</div>
+    <p class="mt-1">Use it only for an overcharge, approved discount, returned item, or service adjustment. Do not use a credit note to add an old debt or increase the customer balance; create the correct invoice or debit/account adjustment instead.</p>
+  </div>
+  {% endif %}
+
   <section class="jims-form-card p-5">
     <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2>
     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">

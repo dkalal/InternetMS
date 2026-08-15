@@ -8,9 +8,10 @@ from rest_framework.views import APIView
 
 from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
+from customers.models import Customer
 from integrations.services import resolve_integration_consumer
 from products.models import Product, ProductCategory
-from users.permissions import PermissionCode, has_tenant_permission, sales_document_queryset_for
+from users.permissions import PermissionCode, has_tenant_permission, membership_for, permission_grant_for, sales_document_queryset_for
 
 from .models import DocumentSerialSelection, InventoryBalance, StockMovement, StockUnit, Supplier
 from .services import CartService
@@ -151,11 +152,12 @@ class InvoiceCreateSerializer(serializers.Serializer):
     walk_in_name = serializers.CharField(required=False, allow_blank=True)
     sale_pricing_category = serializers.ChoiceField(
         choices=(
+            BillingDocument.SalePricingCategory.CUSTOMER_TIER,
             BillingDocument.SalePricingCategory.STANDARD,
             BillingDocument.SalePricingCategory.TECHNICIAN,
             BillingDocument.SalePricingCategory.WHOLESALE,
         ),
-        default=BillingDocument.SalePricingCategory.STANDARD,
+        default=BillingDocument.SalePricingCategory.CUSTOMER_TIER,
     )
     tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     discount_amount = serializers.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
@@ -169,9 +171,26 @@ class InvoiceCreateSerializer(serializers.Serializer):
         customer_id = validated_data.get('customer_id')
         if customer_id is None:
             customer_id = CartService._walk_in_customer(organization=organization, label=validated_data.get('walk_in_name', '')).pk
+        customer = Customer.all_objects.filter(pk=customer_id, tenant=organization, is_deleted=False).first()
+        if customer is None:
+            raise serializers.ValidationError({'customer_id': 'Invalid customer.'})
         inputs = []
         products = []
         sale_pricing_category = validated_data['sale_pricing_category']
+        membership = membership_for(request.user, organization)
+        if sale_pricing_category != BillingDocument.SalePricingCategory.CUSTOMER_TIER and not has_tenant_permission(request.user, organization, PermissionCode.CART_PRICING_OVERRIDE, membership=membership):
+            raise serializers.ValidationError({'sale_pricing_category': 'You cannot override the customer category.'})
+        pricing_grant = permission_grant_for(membership, PermissionCode.CART_PRICING_OVERRIDE)
+        if pricing_grant is not None and sale_pricing_category not in {'customer_tier', *pricing_grant.allowed_pricing_categories}:
+            raise serializers.ValidationError({'sale_pricing_category': 'This customer category is outside your allowed categories.'})
+        requested_tax_rate = validated_data['tax_rate']
+        if requested_tax_rate != Decimal('0.00') and not has_tenant_permission(request.user, organization, PermissionCode.CART_TAX_RATE_EDIT, membership=membership):
+            raise serializers.ValidationError({'tax_rate': 'You do not have permission to edit the tax rate.'})
+        effective_category = (
+            customer.default_sale_pricing_category
+            if sale_pricing_category == BillingDocument.SalePricingCategory.CUSTOMER_TIER
+            else sale_pricing_category
+        )
         for item in validated_data['items']:
             product = Product.objects.unscoped().filter(pk=item['product_id'], tenant=organization, is_active=True).first()
             if product is None:
@@ -181,11 +200,26 @@ class InvoiceCreateSerializer(serializers.Serializer):
             inputs.append(LineItemInput(
                 product_id=product.pk, description=product.name, quantity=item['quantity'],
                 unit_price=product.price_for_sale_category(
-                    sale_pricing_category=sale_pricing_category, quantity=item['quantity'],
+                    sale_pricing_category=effective_category, quantity=item['quantity'],
                 ),
-                discount_amount=item['discount_amount'], pricing_mode=sale_pricing_category,
+                discount_amount=item['discount_amount'], pricing_mode=effective_category,
             ))
             products.append((product, item.get('serial_numbers', [])))
+        requested_discount = validated_data['discount_amount'] + sum((item.discount_amount for item in inputs), Decimal('0.00'))
+        if requested_discount:
+            if not has_tenant_permission(request.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership):
+                raise serializers.ValidationError({'discount_amount': 'You cannot apply discounts.'})
+            discount_grant = permission_grant_for(membership, PermissionCode.CART_DISCOUNT_APPLY)
+            if discount_grant is not None:
+                subtotal = sum((item.quantity * item.unit_price for item in inputs), Decimal('0.00'))
+                limits = []
+                if discount_grant.max_discount_percent is not None:
+                    limits.append(subtotal * discount_grant.max_discount_percent / Decimal('100.00'))
+                if discount_grant.max_discount_amount is not None:
+                    limits.append(discount_grant.max_discount_amount)
+                permitted = min(limits) if limits else Decimal('0.00')
+                if requested_discount > permitted:
+                    raise serializers.ValidationError({'discount_amount': 'Discount exceeds your authorized limit.'})
         try:
             invoice = BillingService.create_document(
                 organization=organization, created_by=request.user, document_type=BillingDocument.DocumentType.INVOICE,

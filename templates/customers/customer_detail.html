@@ -48,21 +48,19 @@
     </header>
 
     <dl class="jims-detail-kpis" aria-label="Customer account overview">
-        <div class="jims-detail-kpi"><dt>Active services</dt><dd>{{ subscriptions|length }}</dd></div>
+        <div class="jims-detail-kpi"><dt>Operational services</dt><dd>{{ operational_service_count }}</dd></div>
         <div class="jims-detail-kpi"><dt>Recent billing periods</dt><dd>{{ subscription_periods|length }}</dd></div>
         <div class="jims-detail-kpi"><dt>Service sites</dt><dd>{{ sites|length }}</dd></div>
         <div class="jims-detail-kpi"><dt>Documents</dt><dd>{{ billing_documents|length }}</dd></div>
     </dl>
 
-    <section class="jims-detail-section">
+    {% if customer.is_internet_customer %}<section class="jims-detail-section">
         <div class="jims-detail-section-header flex-col sm:flex-row">
             <div>
-                <h2 class="text-sm font-semibold text-slate-900">Monthly subscriptions</h2>
+                <h2 class="text-sm font-semibold text-slate-900">Internet package subscriptions</h2>
                 <p class="mt-1 text-sm text-slate-600">Renew packages, track paid-through dates, and see unpaid billing periods.</p>
             </div>
-            <a href="{% url 'customer-update' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                Manage packages
-            </a>
+            {% if can_manage_services %}<a href="{% url 'internet-service-create' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add Internet service</a>{% endif %}
         </div>
 
         <div class="jims-detail-section-body">
@@ -73,18 +71,33 @@
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <div class="text-sm font-semibold text-slate-900">{{ subscription.package.name }}</div>
-                                <div class="mt-1 text-xs text-slate-500">{{ subscription.site.name|default:"Main Office" }}</div>
+                                <div class="mt-1 text-xs text-slate-500">{{ subscription.site.name|default:"Main Office" }}{% if subscription.internet_service %} · <a class="font-mono text-brand-700 hover:underline" href="{% url 'internet-service-detail' subscription.internet_service_id %}">{{ subscription.internet_service.service_code }}</a>{% endif %}</div>
                                 <div class="mt-1 text-sm text-slate-600">{{ subscription.package.speed }} &middot; {{ subscription.monthly_fee_at_signup|intcomma }} TZS / month</div>
                                 {% if subscription.latest_period and subscription.latest_billing_amount %}
-                                    <div class="mt-1 text-xs text-slate-500">
-                                        Latest invoice for {{ subscription.latest_period_label }}: {{ subscription.latest_billing_amount|intcomma }} TZS
+                                    <div class="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                        <div class="flex flex-wrap items-center justify-between gap-2">
+                                            <span class="font-semibold text-slate-800">Billed service period</span>
+                                            {% if subscription.latest_period.status == 'paid' %}
+                                                <span class="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">Paid</span>
+                                            {% elif subscription.latest_period.status == 'overdue' %}
+                                                <span class="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-800">Payment overdue</span>
+                                            {% elif subscription.latest_period.status == 'invoiced' %}
+                                                <span class="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900">Awaiting full payment</span>
+                                            {% else %}
+                                                <span class="rounded-full bg-slate-200 px-2 py-0.5 font-semibold text-slate-700">{{ subscription.latest_period.get_status_display }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="mt-1 tabular-nums text-slate-700">{{ subscription.latest_period.period_start|date:"d M Y" }} – {{ subscription.latest_period.period_end|date:"d M Y" }} &middot; {{ subscription.latest_billing_amount|intcomma }} TZS</div>
+                                        {% if subscription.latest_period.status == 'invoiced' or subscription.latest_period.status == 'overdue' %}
+                                            <p class="mt-1 text-slate-500">This period becomes confirmed paid coverage only after the invoice is fully settled.</p>
+                                        {% endif %}
                                     </div>
                                 {% endif %}
                                 <div class="mt-2 text-sm">
-                                    {% if subscription.latest_paid_through %}
-                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Paid through {{ subscription.latest_paid_through|date:"M d, Y" }}</span>
+                                    {% if subscription.latest_paid_coverage %}
+                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Confirmed paid coverage {{ subscription.latest_paid_coverage.start|date:"M d, Y" }} – {{ subscription.latest_paid_coverage.end|date:"M d, Y" }}</span>
                                     {% else %}
-                                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">No payment recorded</span>
+                                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">No fully paid coverage recorded</span>
                                     {% endif %}
                                 </div>
                             </div>
@@ -116,7 +129,7 @@
                     <caption class="sr-only">Recent subscription billing periods</caption>
                     <thead class="bg-slate-50">
                         <tr>
-                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Month</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Coverage</th>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Package</th>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Amount</th>
                             <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
@@ -126,7 +139,7 @@
                     <tbody class="divide-y divide-slate-200">
                         {% for period in subscription_periods %}
                             <tr>
-                                <td class="px-3 py-2 text-slate-900">{{ period.period_start|date:"M Y" }}</td>
+                                <td class="px-3 py-2 text-slate-900"><span class="whitespace-nowrap">{{ period.period_start|date:"d M Y" }}</span><span class="block whitespace-nowrap text-xs text-slate-500">to {{ period.period_end|date:"d M Y" }}</span></td>
                                 <td class="px-3 py-2 text-slate-700">{{ period.subscription.package.name }}</td>
                                 <td class="px-3 py-2 text-slate-700">
                                     {{ period.final_amount|intcomma }} TZS
@@ -175,7 +188,7 @@
             </div>
         {% endif %}
         </div>
-    </section>
+    </section>{% endif %}
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -198,14 +211,6 @@
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.address|default:"—" }}</dd>
                 </div>
                 <div>
-                    <dt class="text-xs text-slate-500">IP address</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.ip_address|default:"—" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">VLAN ID</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.vlan_id|default:"—" }}</dd>
-                </div>
-                <div>
                     <dt class="text-xs text-slate-500">TIN</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.tin_number|default:"—" }}</dd>
                 </div>
@@ -221,9 +226,9 @@
         </section>
 
         <section class="space-y-6">
-            {% if internet_profile %}
+            {% if internet_profile and not service_count %}
                 <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <h2 class="text-sm font-semibold text-slate-900">Internet package</h2>
+                    <h2 class="text-sm font-semibold text-slate-900">Legacy Internet profile</h2>
                     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                             <dt class="text-xs text-slate-500">Package</dt>
@@ -262,12 +267,10 @@
             <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-sm font-semibold text-slate-900">Service sites</h2>
-                        <p class="mt-1 text-sm text-slate-600">Each office or branch can carry its own packages and subscriptions.</p>
+                        <h2 class="text-sm font-semibold text-slate-900">Sites &amp; Internet services</h2>
+                        <p class="mt-1 text-sm text-slate-600">Physical locations contain installed connections; each connection owns its network identity and current package agreement.</p>
                     </div>
-                    <a href="{% url 'customer-site-create' customer.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
-                        Add site
-                    </a>
+                    {% if can_manage_services %}<div class="flex flex-wrap gap-2"><a href="{% url 'customer-site-create' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Add site</a>{% if customer.is_internet_customer %}<a href="{% url 'internet-service-create' customer.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Add Internet service</a>{% endif %}</div>{% endif %}
                 </div>
 
                 {% if sites %}
@@ -286,19 +289,19 @@
                                             {% endif %}
                                         </div>
                                         <div class="mt-1 text-sm text-slate-600">{{ site.summary }}</div>
-                                        <div class="mt-2 text-xs text-slate-500">Manage packages from this site to keep billing separate by office.</div>
-                                        <div class="mt-2 flex flex-wrap gap-2">
-                                            {% for package in site.packages.all %}
-                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ package.name }}</span>
-                                            {% empty %}
-                                                <span class="text-xs text-slate-500">No packages assigned.</span>
-                                            {% endfor %}
-                                        </div>
                                     </div>
                                     <a href="{% url 'customer-site-update' site.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                                         Manage site
                                     </a>
                                 </div>
+                                {% if customer.is_internet_customer %}<div class="mt-4 space-y-2 border-t border-slate-200 pt-4">
+                                  {% for service in site.service_rows %}
+                                  <a href="{% url 'internet-service-detail' service.id %}" class="group flex min-h-16 flex-col gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 hover:border-brand-300 hover:bg-brand-50/40 sm:flex-row sm:items-center sm:justify-between">
+                                    <span class="min-w-0"><span class="flex flex-wrap items-center gap-2"><span class="font-mono text-xs font-semibold text-slate-500">{{ service.service_code }}</span><span class="text-sm font-semibold text-slate-950">{{ service.name }}</span>{% if service.operational_status == 'unknown' %}<span class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">Not verified</span>{% elif service.operational_status == 'active' %}<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Active</span>{% elif service.operational_status == 'blocked' %}<span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Blocked</span>{% else %}<span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">Disconnected</span>{% endif %}</span><span class="mt-1 block text-xs text-slate-500">IP {{ service.ip_address|default:"not set" }} · VLAN {{ service.vlan_id|default:"not set" }}</span>{% if service.operational_status == 'unknown' %}<span class="mt-1 block text-xs text-slate-500">Operational state has not been confirmed. Open the service to verify it.</span>{% endif %}</span>
+                                    <span class="shrink-0 text-left sm:text-right">{% if service.active_subscription %}<span class="block text-sm font-semibold text-slate-900">{{ service.active_subscription.package.name }}</span><span class="block text-xs tabular-nums text-slate-500">{{ service.active_subscription.monthly_fee_at_signup|intcomma }} TZS/month · {{ service.active_subscription.package.speed }}</span>{% else %}<span class="text-sm text-slate-500">No current package</span>{% endif %}</span>
+                                  </a>
+                                  {% empty %}<div class="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">No Internet service at this site.</div>{% endfor %}
+                                </div>{% endif %}
                             </div>
                         {% endfor %}
                     </div>
@@ -307,11 +310,11 @@
                 {% endif %}
             </div>
 
-            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            {% if not service_count and packages %}<div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-sm font-semibold text-slate-900">Account packages</h2>
-                        <p class="mt-1 text-sm text-slate-600">These are mirrored to the account's primary site and drive default billing.</p>
+                        <h2 class="text-sm font-semibold text-slate-900">Legacy account packages</h2>
+                        <p class="mt-1 text-sm text-slate-600">Compatibility assignments awaiting explicit Internet service configuration.</p>
                     </div>
                     <a href="{% url 'customer-update' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                         Manage
@@ -343,7 +346,7 @@
                 {% else %}
                     <p class="mt-4 text-sm text-slate-600">No service packages assigned.</p>
                 {% endif %}
-            </div>
+            </div>{% endif %}
         </section>
     </div>
 
@@ -351,10 +354,10 @@
 
     {% include "includes/custom_field_definition_modal.html" %}
 
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+        <section class="self-start rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div class="flex items-center justify-between gap-3">
-                <h2 class="text-sm font-semibold text-slate-900">Billing documents</h2>
+                <div><h2 class="text-sm font-semibold text-slate-900">Billing documents</h2><p class="mt-1 text-xs text-slate-500">{{ billing_document_count }} document{{ billing_document_count|pluralize }} total · latest 10 shown</p></div>
                 <div class="flex flex-wrap items-center gap-2">
                     <a href="{% url 'billing:document_create' doc_type='quotation' %}?customer={{ customer.id }}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                         New quotation
@@ -366,9 +369,9 @@
             </div>
 
             {% if billing_documents %}
-                <div class="mt-4 space-y-3">
+                <div class="jims-customer-bounded-list mt-4 space-y-2 overflow-y-auto pr-1" tabindex="0" role="region" aria-label="Billing documents; scroll for more">
                     {% for doc in billing_documents %}
-                        <div class="rounded-lg border border-slate-200 p-4">
+                        <div class="rounded-lg border border-slate-200 p-3">
                             <div class="flex items-start justify-between gap-4">
                                 <div class="min-w-0">
                                     <div class="flex flex-wrap items-center gap-2">
@@ -380,14 +383,27 @@
                                         <span class="text-slate-300">&middot;</span>
                                         <div class="text-sm text-slate-700">{{ doc.total|intcomma }} {{ doc.currency }}</div>
                                     </div>
-                                    <div class="mt-2 text-sm text-slate-600">{{ doc.get_status_display }}</div>
+                                    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+                                        <span class="font-medium">{{ doc.get_status_display }}</span>
+                                        {% if doc.document_type == 'invoice' %}
+                                            <span class="text-slate-300" aria-hidden="true">&middot;</span>
+                                            <span class="tabular-nums">Current invoice balance {{ doc.timeline_remaining|intcomma }} {{ doc.currency }}</span>
+                                            {% if doc.timeline_paid %}<span class="text-emerald-700">Paid {{ doc.timeline_paid|intcomma }}</span>{% endif %}
+                                            {% if doc.timeline_credited %}<span class="text-sky-700">Credited {{ doc.timeline_credited|intcomma }}</span>{% endif %}
+                                        {% elif doc.timeline_reference %}
+                                            <span class="text-slate-300" aria-hidden="true">&middot;</span><span>{{ doc.timeline_reference }}</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if doc.document_type == 'invoice' and doc.balance_brought_forward %}
+                                        <div class="mt-1 text-xs text-slate-500">Issue-date snapshot included {{ doc.balance_brought_forward|intcomma }} {{ doc.currency }} from earlier invoices; it is not part of this invoice total.</div>
+                                    {% endif %}
                                 </div>
 
                                 <div class="flex shrink-0 items-center gap-2">
-                                    <a href="{% url 'billing:document_detail' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                    <a href="{% url 'billing:document_detail' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
                                         View
                                     </a>
-                                    <a href="{% url 'billing:document_pdf' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                    <a href="{% url 'billing:document_pdf' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
                                         PDF
                                     </a>
                                 </div>
@@ -400,28 +416,58 @@
             {% endif %}
         </section>
 
-        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 class="text-sm font-semibold text-slate-900">Associated products</h2>
-            {% if customer.products.all %}
-                <div class="mt-4 space-y-3">
-                    {% for product in customer.products.all %}
-                        <a href="{% url 'product-detail' product.id %}" class="block rounded-lg border border-slate-200 p-4 hover:bg-slate-50">
-                            <div class="flex items-start justify-between gap-3">
-                                <div>
-                                    <div class="text-sm font-semibold text-slate-900">{{ product.name }}</div>
-                                    <div class="mt-1 text-sm text-slate-600">
-                                        {{ product.quantity }} {{ product.measure_unit }} • {{ product.selling_price|intcomma }} TZS
+        <section class="self-start rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-900">Associated assets</h2>
+                    <p class="mt-1 text-xs leading-5 text-slate-500">Equipment linked to this customer in AssetMS.</p>
+                </div>
+                <span class="inline-flex min-w-8 items-center justify-center rounded-full bg-brand-50 px-2.5 py-1 text-xs font-bold tabular-nums text-brand-700 ring-1 ring-inset ring-brand-200" aria-label="{{ associated_assets|length }} linked assets">{{ associated_assets|length }}</span>
+            </div>
+            {% if associated_assets %}
+                <div class="jims-customer-bounded-list mt-4 space-y-3 overflow-y-auto pr-1" tabindex="0" role="region" aria-label="Associated assets; scroll for more">
+                    {% for asset in associated_assets %}
+                        <article class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
+                            <div class="p-4">
+                                <div class="flex items-start gap-3">
+                                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-100" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 21h8M12 17v4M7 9h.01M10 9h.01"></path></svg>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex flex-wrap items-start justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <h3 class="truncate text-sm font-semibold text-slate-950">{{ asset.display_name|default:asset.asset_tag|default:asset.serial_number|default:asset.category_name }}</h3>
+                                                <p class="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{{ asset.category_name }}</p>
+                                            </div>
+                                            {% include "components/status_badge.html" with value=asset.status label=asset.status_label %}
+                                        </div>
+                                        <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                                            <div>
+                                                <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Asset ID</div>
+                                                <div class="mt-1 break-all font-mono text-xs font-semibold text-slate-800">{% if asset.asset_tag %}{{ asset.asset_tag }}{% else %}{{ asset.external_uuid|stringformat:"s"|slice:":8"|upper }}{% endif %}</div>
+                                            </div>
+                                            {% if asset.serial_number %}<div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Serial number</div><div class="mt-1 break-all font-mono text-xs font-semibold text-slate-800">{{ asset.serial_number }}</div></div>{% endif %}
+                                            {% if asset.branch_name %}<div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Managed from</div><div class="mt-1 text-xs font-semibold text-slate-800">{{ asset.branch_name }}</div></div>{% endif %}
+                                            <div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Asset updated</div><div class="mt-1 text-xs font-semibold text-slate-800">{{ asset.source_updated_at|date:"d M Y, H:i" }}</div></div>
+                                        </div>
+                                        {% if asset.custom_attributes %}
+                                            <dl class="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-slate-100 pt-3 sm:grid-cols-2">
+                                                {% for attribute in asset.custom_attributes %}<div><dt class="text-[11px] font-medium uppercase tracking-wide text-slate-500">{{ attribute.label }}</dt><dd class="mt-0.5 text-xs font-medium text-slate-800">{{ attribute.value }}</dd></div>{% endfor %}
+                                            </dl>
+                                        {% endif %}
+                                        {% if asset.description %}<div class="mt-3 border-t border-slate-100 pt-3"><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Operational notes</div><p class="mt-1 text-xs leading-5 text-slate-600">{{ asset.description|linebreaksbr }}</p></div>{% endif %}
                                     </div>
                                 </div>
-                                <span class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700">
-                                    View
-                                </span>
                             </div>
-                        </a>
+                            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-4 py-3">
+                                <span class="text-[11px] text-slate-500">Synced {{ asset.last_synced_at|timesince }} ago</span>
+                                {% if asset.source_url %}<a href="{{ asset.source_url }}" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:border-brand-300 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">Open in AssetMS <span aria-hidden="true">&nearr;</span><span class="sr-only"> (opens in a new tab)</span></a>{% endif %}
+                            </div>
+                        </article>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="mt-4 text-sm text-slate-600">No products linked to this customer.</p>
+                <div class="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center"><div class="text-sm font-semibold text-slate-800">No linked assets</div><p class="mt-1 text-xs leading-5 text-slate-500">Link equipment from the asset edit page in AssetMS and it will appear here.</p></div>
             {% endif %}
         </section>
     </div>

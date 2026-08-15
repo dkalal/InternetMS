@@ -37,13 +37,13 @@
 
     <dl class="jims-detail-kpis" aria-label="Package performance">
         <div class="jims-detail-kpi"><dt>Monthly fee</dt><dd>{{ package.monthly_fee|intcomma }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>
-        <div class="jims-detail-kpi"><dt>Active subscribers</dt><dd>{{ active_subscriber_count }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Unpaid periods</dt><dd class="{% if unpaid_period_count %}text-rose-700{% endif %}">{{ unpaid_period_count }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Collected</dt><dd>{{ collected_amount|intcomma }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>
+        <div class="jims-detail-kpi"><dt>Active services</dt><dd>{{ active_subscriber_count }}</dd></div>
+        {% if finance_all %}<div class="jims-detail-kpi"><dt>Unpaid periods</dt><dd class="{% if unpaid_period_count %}text-rose-700{% endif %}">{{ unpaid_period_count }}</dd></div>
+        <div class="jims-detail-kpi"><dt>Collected</dt><dd>{{ collected_amount|intcomma }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>{% endif %}
     </dl>
 
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="grid grid-cols-1 gap-6 {% if finance_all %}lg:grid-cols-2{% endif %}">
+        {% if finance_all %}<section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 class="text-sm font-semibold text-slate-900">Pricing</h2>
             <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -59,13 +59,13 @@
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.price|intcomma }} TZS</dd>
                 </div>
             </dl>
-        </section>
+        </section>{% endif %}
 
         <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 class="text-sm font-semibold text-slate-900">Subscription performance</h2>
             <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                    <dt class="text-xs text-slate-500">Active subscribers</dt>
+                    <dt class="text-xs text-slate-500">Active services</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ active_subscriber_count }}</dd>
                 </div>
                 <div>
@@ -97,22 +97,22 @@
 
     <section class="jims-detail-section">
         <div class="jims-detail-section-header">
-            <div><h2 class="text-sm font-semibold text-slate-900">Subscribers</h2><p class="mt-1 text-sm text-slate-600">Active and historical package subscriptions, with payment readiness at a glance.</p></div>
+            <div><h2 class="text-sm font-semibold text-slate-900">Service subscriptions</h2><p class="mt-1 text-sm text-slate-600">Connections currently or historically subscribed to this package. Package type classifies this offering, not the customer.</p></div>
             <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800">{{ subscriptions|length }} total</span>
         </div>
         {% if subscriptions %}
             <div class="jims-scroll-region" tabindex="0" role="region" aria-label="Package subscribers">
                 <table class="jims-table min-w-[56rem]">
                     <caption class="sr-only">Subscribers for {{ package.name }}</caption>
-                    <thead><tr><th>Subscriber</th><th>Site</th><th>Subscription status</th><th>Paid through</th><th class="text-right">Action</th></tr></thead>
+                    <thead><tr><th>Customer</th><th>Site / service</th><th>Subscription status</th><th>Paid through</th><th class="text-right">Action</th></tr></thead>
                     <tbody>
                 {% for subscription in subscriptions %}
                     <tr>
                         <td><a href="{% url 'customer-detail' subscription.customer.id %}" class="font-semibold text-slate-950 hover:text-brand-700">{{ subscription.customer.name }}</a><div class="mt-1 text-xs text-slate-500">{{ subscription.customer.get_customer_type_display }} · {{ subscription.customer.location }}</div></td>
-                        <td>{{ subscription.site.name|default:"Main Office" }}</td>
+                        <td>{{ subscription.site.name|default:"Main Office" }}{% if subscription.internet_service %}<div class="mt-1"><a class="font-mono text-xs font-semibold text-brand-700 hover:underline" href="{% url 'internet-service-detail' subscription.internet_service_id %}">{{ subscription.internet_service.service_code }}</a> · {{ subscription.internet_service.get_operational_status_display }}</div>{% else %}<div class="mt-1 text-xs text-amber-700">Legacy subscription without service context</div>{% endif %}</td>
                         <td>{% if subscription.status == 'active' %}<span class="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Active</span>{% else %}<span class="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{{ subscription.get_status_display }}</span>{% endif %}</td>
                         <td class="whitespace-nowrap">{{ subscription.paid_through_date|date:"d M Y"|default:"Not paid yet" }}</td>
-                        <td class="text-right"><a href="{% url 'customer-detail' subscription.customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Open customer</a></td>
+                        <td class="text-right">{% if subscription.internet_service %}<a href="{% url 'internet-service-detail' subscription.internet_service_id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Open service</a>{% else %}<a href="{% url 'customer-detail' subscription.customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Open customer</a>{% endif %}</td>
                     </tr>
                 {% endfor %}
                     </tbody>

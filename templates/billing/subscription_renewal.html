@@ -13,7 +13,7 @@
         <span class="text-slate-700">Renew subscription</span>
       </div>
       <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Renew {{ subscription.package.name }}</h1>
-      <p class="mt-1 text-sm text-slate-600">Generate the monthly subscription period and invoice with eligible discounts applied.</p>
+      <p class="mt-1 text-sm text-slate-600">Define the service coverage being billed. It becomes confirmed paid coverage only after the invoice is fully settled.</p>
     </div>
     <a href="{{ subscription.customer.get_absolute_url }}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Back</a>
   </div>
@@ -25,8 +25,8 @@
         <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</div>
       </div>
       <div>
-        <div class="text-xs text-slate-500">Paid through</div>
-        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.paid_through_date|date:"F d, Y"|default:"Not paid yet" }}</div>
+        <div class="text-xs text-slate-500">Latest paid service coverage</div>
+        <div class="mt-1 text-sm font-semibold text-slate-900">{% if latest_paid_coverage %}{{ latest_paid_coverage.start|date:"F d, Y" }} – {{ latest_paid_coverage.end|date:"F d, Y" }}{% else %}Not paid yet{% endif %}</div>
       </div>
       <div>
         <div class="text-xs text-slate-500">Status</div>
@@ -53,6 +53,7 @@
       <div class="sm:col-span-2">
         {% include "components/form_field.html" with field=form.issue_invoice %}
       </div>
+      <div class="sm:col-span-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">Partial payments reduce the invoice balance but do not mark this service period as paid. Full settlement confirms the complete coverage range and updates the next renewal date.</div>
     </div>
     <div class="mt-5 flex items-center justify-end gap-3">
       <a href="{{ subscription.customer.get_absolute_url }}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</a>

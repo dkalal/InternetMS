@@ -29,8 +29,6 @@
                 {% include "components/form_field.html" with field=form.name %}
                 {% include "components/form_field.html" with field=form.location %}
                 {% include "components/form_field.html" with field=form.address %}
-                {% include "components/form_field.html" with field=form.ip_address %}
-                {% include "components/form_field.html" with field=form.vlan_id %}
                 <div class="space-y-3">
                     {% include "components/form_field.html" with field=form.is_primary %}
                     {% include "components/form_field.html" with field=form.is_active %}
@@ -41,20 +39,14 @@
             </div>
         </div>
 
-        <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div class="mb-4">
-                <h2 class="text-sm font-semibold text-slate-900">Packages at this site</h2>
-                <p class="mt-1 text-sm text-slate-600">These packages create or keep subscriptions tied to this specific office.</p>
-            </div>
-            {% include "components/form_field.html" with field=form.packages %}
-        </div>
+        <div class="rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-slate-700">This form manages the physical site only. IP, VLAN and package agreements belong to Internet services created from the customer workspace.</div>
 
         <div class="flex items-center justify-end gap-3">
             <a href="{{ customer.get_absolute_url }}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
                 Cancel
             </a>
             <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-                Save site and packages
+                Save site
             </button>
         </div>
     </form>

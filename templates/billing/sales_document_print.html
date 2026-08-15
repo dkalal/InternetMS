@@ -175,13 +175,13 @@
         <div class="account has-prior">
           <div class="summary-title">Customer account summary</div>
           <table class="summary">
-            <tr><td>Previous Outstanding Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</td></tr>
+            <tr><td>Prior Balance at Issue</td><td>{{ document.currency|upper }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</td></tr>
             <tr><td>+ Current Invoice Total</td><td>{{ document.currency|upper }} {{ invoice_account_summary.current_invoice_total|floatformat:2|intcomma }}</td></tr>
-            <tr class="due"><td>Total Amount Due</td><td>{{ document.currency|upper }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</td></tr>
+            <tr class="due"><td>Amount Due at Issue</td><td>{{ document.currency|upper }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</td></tr>
             {% if invoice_account_summary.has_payment %}<tr><td>- Payment Received</td><td>{{ document.currency|upper }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</td></tr>{% endif %}
-            <tr class="outstanding"><td>Outstanding Account Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</td></tr>
+            <tr class="outstanding"><td>Current Account Outstanding</td><td>{{ document.currency|upper }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</td></tr>
           </table>
-          <p class="account-note">Previous outstanding balance relates to earlier unpaid invoices and is not included in this invoice's item total.</p>
+          <p class="account-note">Prior balance is an issue-date snapshot and is not part of this invoice's item total. Payments are allocated to their original invoices.</p>
         </div>
         {% else %}
         <div class="account">

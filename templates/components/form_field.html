@@ -8,13 +8,14 @@
 
     {{ field }}
 
-    {% if field.help_text %}
-      <p class="text-xs text-slate-500">{{ field.help_text }}</p>
+    {% if field.help_text and not hide_help %}
+      <p id="{{ field.auto_id }}_helptext" class="text-xs text-slate-500">{{ field.help_text }}</p>
     {% endif %}
 
-    {% for error in field.errors %}
-      <p class="text-sm text-rose-600">{{ error }}</p>
-    {% endfor %}
+    {% if field.errors %}
+      <div id="{{ field.auto_id }}_errors" class="space-y-1 text-sm text-rose-600" role="alert">
+        {% for error in field.errors %}<p>{{ error }}</p>{% endfor %}
+      </div>
+    {% endif %}
   </div>
 {% endif %}
-

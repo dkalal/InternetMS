@@ -102,16 +102,6 @@
                     <dt class="text-xs text-slate-500">Last updated</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.updated_at|date:"F d, Y" }}</dd>
                 </div>
-                <div class="sm:col-span-2">
-                    <dt class="text-xs text-slate-500">Customer</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">
-                        {% if product.customer %}
-                            <a class="text-brand-700 hover:underline" href="{% url 'customer-detail' product.customer.id %}">{{ product.customer.name }}</a>
-                        {% else %}
-                            —
-                        {% endif %}
-                    </dd>
-                </div>
             </dl>
         </section>
     </div>

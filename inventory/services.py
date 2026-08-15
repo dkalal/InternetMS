@@ -438,8 +438,6 @@ class InventoryService:
 class CartService:
     WHOLESALE_TIERS = {
         Customer.PricingTier.WHOLESALE,
-        Customer.PricingTier.CORPORATE,
-        Customer.PricingTier.VIP,
     }
 
     @classmethod
@@ -453,14 +451,16 @@ class CartService:
         Technician pricing is never inferred from a logged-in user's role.
         """
         category = sale_pricing_category
-        if category in {Cart.SalePricingCategory.LEGACY_RETAIL, Cart.SalePricingCategory.STANDARD}:
+        if category == Cart.SalePricingCategory.CUSTOMER_TIER:
+            category = customer.default_sale_pricing_category if customer else Product.PricingMode.STANDARD
+        if category == Cart.SalePricingCategory.LEGACY_RETAIL:
             qualifies_for_wholesale = (
                 product.allow_wholesale and product.wholesale_price is not None
                 and quantity >= product.wholesale_min_quantity
             )
             if qualifies_for_wholesale:
                 category = Product.PricingMode.WHOLESALE
-            elif category == Cart.SalePricingCategory.LEGACY_RETAIL:
+            else:
                 category = Product.PricingMode.RETAIL
         unit_price = money(product.price_for_sale_category(sale_pricing_category=category, quantity=quantity))
         if category == Product.PricingMode.WHOLESALE and product.wholesale_price is not None and unit_price == money(product.wholesale_price):

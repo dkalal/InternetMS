@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ internet_service.service_code }} · {{ internet_service.customer.name }}{% endblock %}
+
+{% block content %}
+<div class="jims-detail-page space-y-6">
+  <header class="jims-record-header flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:underline" href="{{ internet_service.customer.get_absolute_url }}">{{ internet_service.customer.name }}</a><span class="px-1">/</span><span>{{ internet_service.service_code }}</span></nav>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ internet_service.name }}</h1>
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600"><span>{{ internet_service.site.name }}</span><span aria-hidden="true">·</span><span class="font-mono">{{ internet_service.service_code }}</span><span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{{ internet_service.get_operational_status_display }}</span></div>
+    </div>
+    {% if can_manage_service %}<div class="flex flex-wrap gap-2">
+      {% if internet_service.operational_status == 'unknown' %}<a class="jims-btn jims-btn-secondary" href="{% url 'internet-service-status-change' internet_service.id 'unblock' %}">Verify active</a>{% elif internet_service.operational_status == 'blocked' %}<a class="jims-btn jims-btn-secondary" href="{% url 'internet-service-status-change' internet_service.id 'unblock' %}">Unblock</a>{% elif internet_service.operational_status != 'disconnected' %}<a class="jims-btn jims-btn-secondary" href="{% url 'internet-service-status-change' internet_service.id 'block' %}">Block</a>{% endif %}
+      {% if internet_service.operational_status != 'disconnected' %}<a class="jims-btn jims-btn-secondary" href="{% url 'internet-service-status-change' internet_service.id 'disconnect' %}">Disconnect</a>{% endif %}
+      <a class="jims-btn jims-btn-primary" href="{% url 'internet-service-change-package' internet_service.id %}">{% if current_subscription %}Change package{% else %}Assign package{% endif %}</a>
+    </div>{% endif %}
+  </header>
+
+  <dl class="jims-detail-kpis" aria-label="Internet service overview">
+    <div class="jims-detail-kpi"><dt>Current package</dt><dd class="text-base">{{ current_subscription.package.name|default:"Not assigned" }}</dd></div>
+    <div class="jims-detail-kpi"><dt>Monthly agreement</dt><dd>{% if current_subscription %}{{ current_subscription.monthly_fee_at_signup|intcomma }} <span class="text-xs">TZS</span>{% else %}—{% endif %}</dd></div>
+    <div class="jims-detail-kpi"><dt>Subscription start</dt><dd class="text-base">{{ current_subscription.start_date|date:"d M Y"|default:"—" }}</dd></div>
+    <div class="jims-detail-kpi"><dt>Paid service coverage</dt><dd class="text-base">{% if latest_paid_coverage %}{{ latest_paid_coverage.start|date:"d M Y" }} – {{ latest_paid_coverage.end|date:"d M Y" }}{% else %}Not paid yet{% endif %}</dd></div>
+  </dl>
+
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <section class="jims-detail-section">
+      <div class="jims-detail-section-header"><div><h2 class="text-sm font-semibold text-slate-950">Subscription history</h2><p class="mt-1 text-sm text-slate-600">Commercial agreements are immutable history; package changes create a new row. Paid coverage is confirmed only when the linked billing period is fully settled.</p></div></div>
+      {% if paid_coverage_windows %}<div class="border-b border-slate-200 bg-emerald-50/50 px-4 py-3"><div class="text-xs font-semibold uppercase tracking-wide text-emerald-900">Confirmed paid coverage</div><div class="mt-2 flex flex-wrap gap-2">{% for window in paid_coverage_windows %}<span class="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-medium text-emerald-800">{{ window.start|date:"d M Y" }} – {{ window.end|date:"d M Y" }}</span>{% endfor %}</div>{% if paid_coverage_windows|length > 1 %}<p class="mt-2 text-xs text-slate-600">Separate ranges indicate a gap in confirmed paid coverage.</p>{% endif %}</div>{% endif %}
+      {% if subscription_history %}<div class="jims-scroll-region" tabindex="0" role="region" aria-label="Subscription history"><table class="jims-table min-w-[50rem]"><thead><tr><th>Package</th><th>Type / speed</th><th>Agreement term</th><th>Paid coverage</th><th>Status</th><th class="text-right">Agreed monthly fee</th></tr></thead><tbody>{% for subscription in subscription_history %}<tr><td><a class="font-semibold text-brand-700 hover:underline" href="{% url 'package-detail' subscription.package_id %}">{{ subscription.package.name }}</a></td><td>{{ subscription.package.get_package_type_display }} · {{ subscription.package.speed }}</td><td>{{ subscription.start_date|date:"d M Y" }} – {% if subscription.end_date %}{{ subscription.end_date|date:"d M Y" }}{% else %}No scheduled end{% endif %}</td><td>{% for window in subscription.paid_coverage_windows %}<span class="block whitespace-nowrap">{{ window.start|date:"d M Y" }} – {{ window.end|date:"d M Y" }}</span>{% empty %}<span class="text-slate-500">None confirmed</span>{% endfor %}</td><td>{{ subscription.get_status_display }}</td><td class="text-right tabular-nums">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="jims-detail-section-body text-sm text-slate-600">No package has been assigned to this service.</div>{% endif %}
+    </section>
+    <aside class="h-fit rounded-lg border border-slate-200 bg-white p-5">
+      <h2 class="text-sm font-semibold text-slate-950">Network &amp; installation</h2>
+      <dl class="mt-4 space-y-4"><div><dt class="text-xs text-slate-500">Site</dt><dd class="mt-1 text-sm font-medium">{{ internet_service.site.name }} · {{ internet_service.site.location }}</dd></div><div><dt class="text-xs text-slate-500">IP address</dt><dd class="mt-1 font-mono text-sm">{{ internet_service.ip_address|default:"Not set" }}</dd></div><div><dt class="text-xs text-slate-500">VLAN</dt><dd class="mt-1 font-mono text-sm">{{ internet_service.vlan_id|default:"Not set" }}</dd></div><div><dt class="text-xs text-slate-500">Installed</dt><dd class="mt-1 text-sm">{{ internet_service.installed_at|date:"d M Y, H:i"|default:"Not recorded" }}</dd></div>{% if internet_service.disconnected_at %}<div><dt class="text-xs text-slate-500">Disconnected</dt><dd class="mt-1 text-sm">{{ internet_service.disconnected_at|date:"d M Y, H:i" }}</dd></div>{% endif %}</dl>
+      {% if internet_service.technical_notes %}<p class="mt-5 border-t border-slate-200 pt-4 text-sm text-slate-600">{{ internet_service.technical_notes }}</p>{% endif %}
+    </aside>
+  </div>
+</div>
+{% endblock %}

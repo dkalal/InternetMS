@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import date, timedelta
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
@@ -11,11 +12,214 @@ from audit.models import AuditLog
 from custom_fields.services import CustomFieldService
 from billing.models import BillingDocument
 
-from .models import Customer, CustomerDocument, CustomerSite, InternetCustomer
+from .models import Customer, CustomerDocument, CustomerSite, InternetCustomer, InternetService
+from services.models import Package
+from users.permissions import PermissionCode, has_tenant_permission
 
 
 class CustomerServiceError(Exception):
     code = "customer_service_error"
+
+
+class InternetServiceDomainService:
+    """Tenant-safe commands for installed services and their commercial history."""
+
+    @classmethod
+    def _require_update_permission(cls, *, organization, actor):
+        if not has_tenant_permission(actor, organization, PermissionCode.CUSTOMERS_UPDATE):
+            raise PermissionDenied("Insufficient permission to update Internet services.")
+
+    @classmethod
+    def _audit(cls, *, organization, actor, action, service, old_value=None, new_value=None, metadata=None):
+        AuditLog.objects.create(
+            organization=organization,
+            tenant=organization,
+            actor=actor,
+            performed_by=actor,
+            action=action,
+            action_type=action,
+            object_type="InternetService",
+            object_id=str(service.id),
+            old_value=old_value or {},
+            new_value=new_value or {},
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def add_customer_site(cls, *, organization, actor, site_instance: CustomerSite) -> CustomerSite:
+        cls._require_update_permission(organization=organization, actor=actor)
+        return CustomerService.upsert_site(
+            organization=organization,
+            actor=actor,
+            site_instance=site_instance,
+            packages=None,
+        )
+
+    @classmethod
+    def add_internet_service(
+        cls, *, organization, actor, customer_id: int, site_id: int,
+        service_code: str, name: str, ip_address=None, vlan_id=None,
+        installed_at=None, technical_notes="",
+    ) -> InternetService:
+        cls._require_update_permission(organization=organization, actor=actor)
+        service_code = (service_code or "").strip()
+        if not service_code:
+            raise CustomerServiceError("Service code is required.")
+        with transaction.atomic():
+            customer = Customer.all_objects.select_for_update().filter(
+                tenant=organization, id=customer_id, is_deleted=False,
+            ).first()
+            site = CustomerSite.objects.select_for_update().filter(
+                tenant=organization, customer_id=customer_id, id=site_id,
+            ).first()
+            if customer is None or site is None:
+                raise CustomerServiceError("Customer site not found.")
+            if not customer.is_internet_customer:
+                raise CustomerServiceError("Internet services can only be added to Internet customers.")
+            if InternetService.objects.filter(tenant=organization, service_code=service_code).exists():
+                raise CustomerServiceError("Service code already exists in this tenant.")
+            service = InternetService.objects.create(
+                organization=organization, tenant=organization, customer=customer, site=site,
+                service_code=service_code, name=(name or "Primary Internet Service").strip(),
+                ip_address=ip_address or None, vlan_id=vlan_id or None,
+                installed_at=installed_at, technical_notes=(technical_notes or "").strip(),
+            )
+            cls._audit(
+                organization=organization, actor=actor, action="internet_service.created", service=service,
+                new_value={"status": service.operational_status}, metadata={"customer_id": customer.id, "site_id": site.id},
+            )
+            return service
+
+    @classmethod
+    def assign_initial_subscription(
+        cls, *, organization, actor, service_id: int, package_id: int,
+        start_date: date, promotion=None,
+    ):
+        from billing.services import SubscriptionBillingService
+
+        cls._require_update_permission(organization=organization, actor=actor)
+        with transaction.atomic():
+            service = InternetService.objects.unscoped().select_for_update().select_related(
+                "customer", "site"
+            ).filter(tenant=organization, id=service_id).first()
+            package = Package.objects.unscoped().filter(tenant=organization, id=package_id, is_active=True).first()
+            if service is None or package is None:
+                raise CustomerServiceError("Internet service or assignable package not found.")
+            subscription = SubscriptionBillingService.get_or_create_subscription(
+                organization=organization, customer=service.customer, site=service.site,
+                internet_service=service, package=package, start_date=start_date, promotion=promotion,
+            )
+            service.site.packages.add(package)
+            if service.site.is_primary:
+                service.customer.packages.add(package)
+            cls._audit(
+                organization=organization, actor=actor, action="internet_service.subscription_assigned", service=service,
+                new_value={"subscription_id": subscription.id, "package_id": package.id},
+            )
+            return subscription
+
+    @classmethod
+    def change_service_package(
+        cls, *, organization, actor, service_id: int, package_id: int,
+        effective_date: date, reason: str,
+    ):
+        from billing.models import CustomerSubscription
+
+        cls._require_update_permission(organization=organization, actor=actor)
+        reason = (reason or "").strip()
+        if not reason:
+            raise CustomerServiceError("A reason is required to change package.")
+        with transaction.atomic():
+            service = InternetService.objects.unscoped().select_for_update().select_related(
+                "customer", "site"
+            ).filter(tenant=organization, id=service_id).first()
+            package = Package.objects.unscoped().filter(tenant=organization, id=package_id, is_active=True).first()
+            if service is None or package is None:
+                raise CustomerServiceError("Internet service or assignable package not found.")
+            current = CustomerSubscription.objects.unscoped().select_for_update().filter(
+                tenant=organization, internet_service=service,
+                status=CustomerSubscription.Status.ACTIVE,
+            ).first()
+            if current is None:
+                return cls.assign_initial_subscription(
+                    organization=organization, actor=actor, service_id=service.id,
+                    package_id=package.id, start_date=effective_date,
+                )
+            if current.package_id == package.id:
+                return current
+            if effective_date <= current.start_date:
+                raise CustomerServiceError("Package change date must be after the current subscription start date.")
+            old_package_id = current.package_id
+            CustomerSubscription.objects.filter(pk=current.pk).update(
+                status=CustomerSubscription.Status.CANCELLED,
+                end_date=effective_date - timedelta(days=1),
+            )
+            replacement = CustomerSubscription.objects.create(
+                organization=organization, tenant=organization, customer=service.customer,
+                site=service.site, internet_service=service, package=package,
+                status=CustomerSubscription.Status.ACTIVE, start_date=effective_date,
+                billing_day=current.billing_day, monthly_fee_at_signup=package.monthly_fee,
+            )
+            service.site.packages.add(package)
+            if service.site.is_primary:
+                service.customer.packages.add(package)
+            if not CustomerSubscription.objects.filter(
+                tenant=organization, site=service.site, package_id=old_package_id,
+                status=CustomerSubscription.Status.ACTIVE,
+            ).exists():
+                service.site.packages.remove(old_package_id)
+                if service.site.is_primary:
+                    service.customer.packages.remove(old_package_id)
+            cls._audit(
+                organization=organization, actor=actor, action="internet_service.package_changed", service=service,
+                old_value={"subscription_id": current.id, "package_id": old_package_id},
+                new_value={"subscription_id": replacement.id, "package_id": package.id},
+                metadata={"effective_date": effective_date.isoformat(), "reason": reason},
+            )
+            return replacement
+
+    @classmethod
+    def _set_operational_status(cls, *, organization, actor, service_id, status, reason):
+        cls._require_update_permission(organization=organization, actor=actor)
+        reason = (reason or "").strip()
+        if not reason:
+            raise CustomerServiceError("A reason is required for a service status change.")
+        with transaction.atomic():
+            service = InternetService.objects.unscoped().select_for_update().filter(
+                tenant=organization, id=service_id,
+            ).first()
+            if service is None:
+                raise CustomerServiceError("Internet service not found.")
+            old = service.operational_status
+            if old == status:
+                return service
+            if old == InternetService.OperationalStatus.DISCONNECTED:
+                raise CustomerServiceError("A disconnected service cannot change status implicitly.")
+            if status == InternetService.OperationalStatus.ACTIVE and old not in {
+                InternetService.OperationalStatus.UNKNOWN,
+                InternetService.OperationalStatus.BLOCKED,
+            }:
+                raise CustomerServiceError("Only an unverified or blocked service can be activated.")
+            service.operational_status = status
+            service.disconnected_at = timezone.now() if status == InternetService.OperationalStatus.DISCONNECTED else None
+            service.save(update_fields=["operational_status", "disconnected_at", "updated_at"])
+            cls._audit(
+                organization=organization, actor=actor, action="internet_service.status_changed", service=service,
+                old_value={"status": old}, new_value={"status": status}, metadata={"reason": reason},
+            )
+            return service
+
+    @classmethod
+    def block_service(cls, **kwargs):
+        return cls._set_operational_status(status=InternetService.OperationalStatus.BLOCKED, **kwargs)
+
+    @classmethod
+    def unblock_service(cls, **kwargs):
+        return cls._set_operational_status(status=InternetService.OperationalStatus.ACTIVE, **kwargs)
+
+    @classmethod
+    def disconnect_service(cls, **kwargs):
+        return cls._set_operational_status(status=InternetService.OperationalStatus.DISCONNECTED, **kwargs)
 
 
 class CustomerService:
@@ -54,6 +258,56 @@ class CustomerService:
         )
 
     @classmethod
+    def create_customer_with_primary_service(
+        cls, *, organization, actor, customer_instance, packages, customer_type,
+        internet_profile_instance, status_change_reason="", custom_field_data=None,
+    ) -> Customer:
+        """Create an account and its explicit primary connection topology atomically."""
+        with transaction.atomic():
+            package_rows = list(packages or [])
+            customer = cls.upsert_customer(
+                organization=organization,
+                actor=actor,
+                customer_instance=customer_instance,
+                packages=None,
+                customer_type=customer_type,
+                existing_internet_profile=None,
+                internet_profile_instance=internet_profile_instance,
+                status_change_reason=status_change_reason,
+                custom_field_data=custom_field_data,
+            )
+            if customer_type != "internet":
+                return customer
+
+            site = cls.ensure_primary_site(organization=organization, customer=customer)
+            service_count = max(1, len(package_rows))
+            for index in range(service_count):
+                package = package_rows[index] if index < len(package_rows) else None
+                service = InternetServiceDomainService.add_internet_service(
+                    organization=organization,
+                    actor=actor,
+                    customer_id=customer.id,
+                    site_id=site.id,
+                    service_code=f"CUST-{customer.id}-SVC-{index + 1:02d}",
+                    name="Primary Internet Service" if index == 0 else f"Internet Service {index + 1}",
+                    ip_address=customer.ip_address if index == 0 else None,
+                    vlan_id=customer.vlan_id if index == 0 else None,
+                )
+                if package is not None:
+                    start_date = (
+                        getattr(internet_profile_instance, "start_date", None)
+                        or timezone.localdate()
+                    )
+                    InternetServiceDomainService.assign_initial_subscription(
+                        organization=organization,
+                        actor=actor,
+                        service_id=service.id,
+                        package_id=package.id,
+                        start_date=start_date,
+                    )
+            return customer
+
+    @classmethod
     def upsert_customer(
         cls,
         *,
@@ -89,14 +343,19 @@ class CustomerService:
             customer_instance.organization = organization
             customer_instance.tenant = organization
             customer_instance.save()
-            primary_site = cls.ensure_primary_site(organization=organization, customer=customer_instance)
+            primary_site = None
+            if customer_type == "internet":
+                primary_site = cls.ensure_primary_site(organization=organization, customer=customer_instance)
+            else:
+                primary_site = customer_instance.primary_site
             if packages is not None:
                 if customer_instance.status == Customer.Status.SUSPENDED and packages:
                     raise CustomerServiceError(
                         "Packages cannot be assigned to a suspended customer. Reactivate the customer first."
                     )
                 customer_instance.packages.set(packages)
-                primary_site.packages.set(packages)
+                if primary_site is not None:
+                    primary_site.packages.set(packages)
                 if customer_instance.customer_type == "internet":
                     from billing.services import SubscriptionBillingService
 

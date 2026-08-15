@@ -3,133 +3,112 @@
 {% block title %}{% if form.instance.pk %}Edit Package{% else %}New Package{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-form-page w-full max-w-6xl space-y-5">
-    <header class="jims-form-hero flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <div class="text-sm text-slate-500">
-                <a class="hover:underline" href="{% url 'package-list' %}">Service packages</a>
-                {% if form.instance.pk %}
-                    <span class="px-1">/</span>
-                    <a class="hover:underline" href="{% url 'package-detail' form.instance.pk %}">{{ form.instance.name }}</a>
-                    <span class="px-1">/</span>
-                    <span class="text-slate-700">Edit</span>
-                {% endif %}
+<div class="jims-form-page mx-auto w-full max-w-[1180px] space-y-6 pb-8">
+    <header class="sticky top-16 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-b-lg sm:px-5">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+                <nav aria-label="Breadcrumb" class="truncate text-xs text-slate-500">
+                    <a class="hover:text-slate-800 hover:underline" href="{% url 'package-list' %}">Service packages</a>
+                    {% if form.instance.pk %}<span class="px-1" aria-hidden="true">/</span><a class="hover:text-slate-800 hover:underline" href="{% url 'package-detail' form.instance.pk %}">{{ form.instance.name }}</a><span class="px-1" aria-hidden="true">/</span><span>Edit</span>{% endif %}
+                </nav>
+                <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                    <h1 class="truncate text-xl font-semibold tracking-tight text-slate-950">{% if form.instance.pk %}Edit service package{% else %}Create service package{% endif %}</h1>
+                    {% if form.instance.pk %}
+                        <span class="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-800">{{ form.instance.get_package_type_display }}</span>
+                        <span class="rounded-full px-2 py-0.5 text-xs font-semibold {% if form.instance.is_active %}bg-emerald-50 text-emerald-800{% else %}bg-slate-200 text-slate-700{% endif %}">{% if form.instance.is_active %}Active{% else %}Inactive{% endif %}</span>
+                    {% endif %}
+                    <span class="hidden text-xs font-medium text-slate-500" data-unsaved-indicator aria-live="polite">Unsaved changes</span>
+                </div>
             </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">
-                {% if form.instance.pk %}Edit service package{% else %}New service package{% endif %}
-            </h1>
-            <p class="mt-1 text-sm text-slate-600">Define package identity, speed, recurring fees, setup cost, and availability.</p>
+            <div class="flex shrink-0 items-center gap-2">
+                <a href="{% if form.instance.pk %}{% url 'package-detail' form.instance.pk %}{% else %}{% url 'package-list' %}{% endif %}" class="jims-btn jims-btn-secondary jims-btn-compact flex-1 sm:flex-none">Cancel</a>
+                <button type="submit" form="package-form" class="jims-btn jims-btn-primary jims-btn-compact flex-1 sm:flex-none">{% if form.instance.pk %}Save changes{% else %}Save package{% endif %}</button>
+            </div>
         </div>
-        <a href="{% url 'package-list' %}" class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-            Back
-        </a>
     </header>
 
-    <form method="post" class="space-y-5" data-package-form>
+    <form id="package-form" method="post" class="space-y-6" data-package-form data-unsaved-form>
         {% csrf_token %}
-
         {% if form.errors %}
             <section class="jims-error-summary" aria-labelledby="package-errors-title" role="alert" tabindex="-1">
                 <h2 id="package-errors-title" class="font-semibold text-rose-950">Fix the highlighted fields</h2>
-                <div class="mt-2 space-y-1 text-sm">
-                    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
-                    {% for field in form %}{% for error in field.errors %}<a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>{% endfor %}{% endfor %}
-                </div>
+                <div class="mt-2 space-y-1 text-sm">{% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}{% for field in form %}{% for error in field.errors %}<a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>{% endfor %}{% endfor %}</div>
             </section>
         {% endif %}
 
-        <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            <div class="space-y-5 lg:col-span-2">
-                <section class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Package identity</h2>
-                        <p class="mt-1 text-sm text-slate-600">Name and categorize the offer so it is easy to find and assign.</p>
+        <div class="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,780px)_300px] xl:justify-center xl:items-start">
+            <div class="min-w-0 space-y-6">
+                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="package-definition-title">
+                    <div class="mb-5">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Package definition</p>
+                        <h2 id="package-definition-title" class="mt-1 text-base font-semibold text-slate-950">Service and availability</h2>
+                        <p class="mt-1 text-sm text-slate-500">The package identity and technical speed shown during customer assignment.</p>
                     </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.name %}
-                        </div>
-                        {% include "components/form_field.html" with field=form.package_type %}
-                        {% include "components/form_field.html" with field=form.is_active %}
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.description %}
-                        </div>
-                    </div>
-                </section>
-
-                <section class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Service characteristics</h2>
-                        <p class="mt-1 text-sm text-slate-600">Capture the speed customers and staff recognize in day-to-day work.</p>
-                    </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        {% include "components/form_field.html" with field=form.speed %}
-                    </div>
-                </section>
-            </div>
-
-            <aside class="space-y-5">
-                <section class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Price summary</h2>
-                    </div>
-                    <div class="space-y-3 p-5 text-sm">
-                        <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Monthly</span>
-                            <span id="package-monthly-summary" class="font-semibold text-slate-900" aria-live="polite">-</span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Setup</span>
-                            <span id="package-setup-summary" class="font-semibold text-slate-900" aria-live="polite">-</span>
-                        </div>
-                        <div class="border-t border-slate-200 pt-3">
-                            <div class="flex items-center justify-between">
-                                <span class="text-slate-500">First month total</span>
-                                <span id="package-first-month-summary" class="font-semibold text-slate-900" aria-live="polite">-</span>
+                    <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
+                        <div class="md:col-span-8">{% include "components/form_field.html" with field=form.name %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.package_type %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.speed %}</div>
+                        <div class="md:col-span-8 md:flex md:items-end">
+                            <div class="w-full rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                                <div class="flex min-h-11 items-center gap-3">
+                                    {{ form.is_active }}
+                                    <div><label for="{{ form.is_active.id_for_label }}" class="text-sm font-semibold text-slate-900">Active and assignable</label><p class="mt-0.5 text-xs leading-5 text-slate-500">Inactive packages remain in history and are excluded from normal new assignments.</p></div>
+                                </div>
+                                {% for error in form.is_active.errors %}<p class="mt-1 text-sm text-rose-600" role="alert">{{ error }}</p>{% endfor %}
                             </div>
                         </div>
+                        <div class="md:col-span-12">{% include "components/form_field.html" with field=form.description hide_help=True %}</div>
                     </div>
                 </section>
 
-                <section class="jims-form-insight">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Availability</h2>
+                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="pricing-title">
+                    <div class="mb-5">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Pricing</p>
+                        <h2 id="pricing-title" class="mt-1 text-base font-semibold text-slate-950">Recurring and setup charges</h2>
+                        <p class="mt-1 text-sm text-slate-500">Existing package amounts in Tanzanian shillings.</p>
                     </div>
-                    <div class="p-5 text-sm text-slate-600">
-                        Inactive packages remain visible in customer and billing history, but should not be assigned to new customers.
+                    <fieldset>
+                        <legend class="sr-only">Package pricing</legend>
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <label for="{{ form.monthly_fee.id_for_label }}" class="block text-sm font-medium text-slate-800">{{ form.monthly_fee.label }}{% if form.monthly_fee.field.required %}<span class="ml-1 text-rose-600" aria-hidden="true">*</span><span class="sr-only"> required</span>{% endif %}</label>
+                                <div class="relative mt-1.5"><span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-slate-500">TZS</span>{{ form.monthly_fee }}</div>
+                                {% for error in form.monthly_fee.errors %}<p class="mt-1 text-sm text-rose-600" role="alert">{{ error }}</p>{% endfor %}
+                            </div>
+                            <div>
+                                <label for="{{ form.setup_fee.id_for_label }}" class="block text-sm font-medium text-slate-800">{{ form.setup_fee.label }}{% if form.setup_fee.field.required %}<span class="ml-1 text-rose-600" aria-hidden="true">*</span><span class="sr-only"> required</span>{% endif %}</label>
+                                <div class="relative mt-1.5"><span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-slate-500">TZS</span>{{ form.setup_fee }}</div>
+                                {% for error in form.setup_fee.errors %}<p class="mt-1 text-sm text-rose-600" role="alert">{{ error }}</p>{% endfor %}
+                            </div>
+                        </div>
+                    </fieldset>
+                </section>
+
+                {% include "includes/custom_fields_form.html" with compact_collapsed=True %}
+            </div>
+
+            <aside class="min-w-0 xl:sticky xl:top-40" aria-labelledby="package-preview-title">
+                <section class="rounded-lg border border-slate-200 bg-white p-5">
+                    <div class="flex items-start justify-between gap-3">
+                        <div><p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">At a glance</p><h2 id="package-preview-title" class="mt-1 text-base font-semibold text-slate-950">Package preview</h2></div>
+                        <span id="package-state-dot" class="h-2.5 w-2.5 rounded-full {% if form.is_active.value %}bg-emerald-500{% else %}bg-slate-400{% endif %}" aria-hidden="true"></span>
+                    </div>
+                    <dl class="mt-5 space-y-4">
+                        {% include "components/summary_row.html" with label="Package name" value=form.name.value value_id="preview-package-name" live=True %}
+                        {% include "components/summary_row.html" with label="Package type" value=form.package_type.value value_id="preview-package-type" live=True %}
+                        {% include "components/summary_row.html" with label="Speed" value=form.speed.value value_id="preview-package-speed" live=True %}
+                        {% include "components/summary_row.html" with label="Availability" value="Active and assignable" value_id="preview-package-state" live=True %}
+                        {% include "components/summary_row.html" with label="Monthly price" value="—" value_id="package-monthly-summary" value_class="tabular-nums" live=True %}
+                        {% include "components/summary_row.html" with label="Setup fee" value="—" value_id="package-setup-summary" value_class="tabular-nums" live=True %}
+                    </dl>
+                    <div class="mt-5 rounded-md bg-brand-50 p-3">
+                        <div class="flex items-center justify-between gap-3"><span class="text-xs font-medium text-brand-800">Initial package total</span><span id="package-first-month-summary" class="text-sm font-semibold tabular-nums text-brand-800" aria-live="polite">—</span></div>
+                        <p class="mt-1 text-xs leading-5 text-brand-800/80">Preview of monthly plus setup fee. Saved values remain server-controlled.</p>
                     </div>
                 </section>
             </aside>
         </div>
-
-        <section class="jims-form-section">
-            <div class="border-b border-slate-200 px-5 py-4">
-                <h2 class="text-sm font-semibold text-slate-900">Pricing</h2>
-                <p class="mt-1 text-sm text-slate-600">Separate recurring monthly price from one-time setup or installation cost.</p>
-            </div>
-            <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                {% include "components/form_field.html" with field=form.monthly_fee %}
-                {% include "components/form_field.html" with field=form.setup_fee %}
-            </div>
-        </section>
-
-        {% include "includes/custom_fields_form.html" %}
-
-        <div class="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:bg-white">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p class="text-sm text-slate-600">Package changes affect future assignments and renewals.</p>
-                <div class="flex items-center justify-end gap-3">
-                    <a href="{% url 'package-list' %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                        Cancel
-                    </a>
-                    <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                        Save package
-                    </button>
-                </div>
-            </div>
-        </div>
     </form>
-
     {% include "includes/custom_field_definition_modal.html" %}
 </div>
 {% endblock %}
@@ -137,35 +116,27 @@
 {% block extra_js %}
 {% include "includes/form_state_preserver.html" with form_selector="[data-package-form]" storage_key="package-form-state" %}
 <script>
-  (function () {
-    var errorSummary = document.querySelector('.jims-error-summary');
-    var monthly = document.getElementById('id_monthly_fee');
-    var setup = document.getElementById('id_setup_fee');
-    var monthlySummary = document.getElementById('package-monthly-summary');
-    var setupSummary = document.getElementById('package-setup-summary');
-    var firstMonthSummary = document.getElementById('package-first-month-summary');
-
-    function numeric(input) {
-      var value = parseFloat(input && input.value ? input.value : '');
-      return isFinite(value) ? value : 0;
-    }
-
-    function money(value) {
-      return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value) + ' TZS';
-    }
-
-    function syncSummary() {
-      var monthlyValue = numeric(monthly);
-      var setupValue = numeric(setup);
-      monthlySummary.textContent = money(monthlyValue);
-      setupSummary.textContent = money(setupValue);
-      firstMonthSummary.textContent = money(monthlyValue + setupValue);
-    }
-
-    if (monthly) monthly.addEventListener('input', syncSummary);
-    if (setup) setup.addEventListener('input', syncSummary);
-    if (errorSummary) errorSummary.focus();
-    syncSummary();
-  })();
+(function () {
+  var form = document.querySelector('[data-package-form]');
+  var errorSummary = document.querySelector('.jims-error-summary');
+  var name = document.getElementById('id_name'); var type = document.getElementById('id_package_type'); var speed = document.getElementById('id_speed'); var active = document.getElementById('id_is_active'); var monthly = document.getElementById('id_monthly_fee'); var setup = document.getElementById('id_setup_fee');
+  var monthlySummary = document.getElementById('package-monthly-summary'); var setupSummary = document.getElementById('package-setup-summary'); var firstMonthSummary = document.getElementById('package-first-month-summary'); var unsaved = document.querySelector('[data-unsaved-indicator]');
+  function numeric(input) { var value = parseFloat(input && input.value ? input.value : ''); return isFinite(value) ? value : 0; }
+  function money(value) { return 'TZS ' + new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value); }
+  function selectedLabel(select) { return select && select.selectedIndex >= 0 ? select.options[select.selectedIndex].text : ''; }
+  function setText(id, value, fallback) { var node = document.getElementById(id); if (node) node.textContent = value || fallback || '—'; }
+  function syncPreview() {
+    var monthlyValue = numeric(monthly); var setupValue = numeric(setup); var isActive = !!(active && active.checked);
+    setText('preview-package-name', name && name.value, 'Untitled package'); setText('preview-package-type', selectedLabel(type), 'Not selected'); setText('preview-package-speed', speed && speed.value, 'Not specified'); setText('preview-package-state', isActive ? 'Active and assignable' : 'Inactive · history only');
+    if (monthlySummary) monthlySummary.textContent = money(monthlyValue); if (setupSummary) setupSummary.textContent = money(setupValue); if (firstMonthSummary) firstMonthSummary.textContent = money(monthlyValue + setupValue);
+    var dot = document.getElementById('package-state-dot'); if (dot) { dot.classList.toggle('bg-emerald-500', isActive); dot.classList.toggle('bg-slate-400', !isActive); }
+  }
+  if (form) {
+    form.addEventListener('input', function () { if (unsaved) unsaved.classList.remove('hidden'); syncPreview(); });
+    form.addEventListener('change', function () { if (unsaved) unsaved.classList.remove('hidden'); syncPreview(); });
+    form.addEventListener('submit', function () { if (unsaved) unsaved.classList.add('hidden'); });
+  }
+  if (errorSummary) errorSummary.focus(); syncPreview();
+})();
 </script>
 {% endblock %}

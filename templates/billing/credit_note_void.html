@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Void credit note{% endblock %}
+
+{% block content %}
+<div class="jims-workflow-page jims-form-page--compact space-y-5">
+  <header>
+    <div class="text-sm text-slate-500">
+      <a class="hover:underline" href="{% url 'billing:document_detail' doc_type='credit_note' pk=credit_note.id %}">{{ credit_note.number }}</a>
+      <span class="px-1">/</span><span class="text-slate-700">Void</span>
+    </div>
+    <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Void credit note</h1>
+    <p class="mt-1 text-sm text-slate-600">This reverses the credit adjustment and recalculates the linked invoice. The original record remains in the audit trail.</p>
+  </header>
+
+  <section class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
+    <div class="font-semibold">Confirm the financial effect</div>
+    <p class="mt-1">{{ credit_note.number }} currently reduces invoice {{ credit_note.corrected_invoice.number }} by {{ credit_amount|floatformat:2|intcomma }} {{ credit_note.currency }}. Voiding it increases that invoice's outstanding balance by the credited amount.</p>
+  </section>
+
+  <form method="post" class="jims-form-card">
+    {% csrf_token %}
+    <div class="jims-form-section-body">
+      {% for field in form %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">{{ field.label }} <span class="text-rose-500">*</span></label>
+          <div class="mt-1">{{ field }}</div>
+          {% if field.help_text %}<p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>{% endif %}
+          {% for error in field.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:document_detail' doc_type='credit_note' pk=credit_note.id %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <button type="submit" class="jims-btn jims-btn-danger">Void credit note</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

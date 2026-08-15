@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, OuterRef, Q, Subquery, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
@@ -51,6 +51,7 @@ from .models import (
     StockUnit,
     Supplier,
 )
+from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService, audit, money
 
 
@@ -321,23 +322,41 @@ def purchase_list(request):
 def purchase_create(request):
     organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
     purchase = Purchase(organization=organization, tenant=organization, created_by=request.user)
-    form = PurchaseForm(request.POST or None, instance=purchase, organization=organization)
+    form_initial = None
+    # Previewing does not consume a sequence number. The hidden marker lets a
+    # successful POST atomically replace an untouched preview with the actual
+    # next number, while preserving a user-entered supplier reference.
+    if request.method == 'GET':
+        purchase.reference_number = PurchaseReferenceNumberService.preview_next_number(organization=organization)
+        form_initial = {'auto_generated_reference': purchase.reference_number}
+    form = PurchaseForm(request.POST or None, instance=purchase, organization=organization, initial=form_initial)
     formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization)
     if request.method == 'POST' and form.is_valid() and formset.is_valid():
-        with transaction.atomic():
-            purchase = form.save(commit=False)
-            purchase.organization = purchase.tenant = organization
-            purchase.created_by = request.user
-            purchase.save()
-            formset.instance = purchase
-            formset.save()
-            # Keep the persisted draft total aligned with its authoritative
-            # lines. Confirmation repeats this calculation under a lock.
-            total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
-            Purchase.objects.filter(pk=purchase.pk).update(total_cost=total.quantize(Decimal('0.01')))
-            audit(organization=organization, actor=request.user, action='inventory.purchase.created', obj=purchase, new_value={'reference_number': purchase.reference_number})
-        messages.success(request, 'Purchase draft saved. Confirm it after reviewing all lines.')
-        return redirect('inventory:purchase_detail', pk=purchase.pk)
+        try:
+            with transaction.atomic():
+                purchase = form.save(commit=False)
+                purchase.organization = purchase.tenant = organization
+                purchase.created_by = request.user
+                if form.cleaned_data['auto_generated_reference'] == purchase.reference_number:
+                    purchase.reference_number = PurchaseReferenceNumberService.next_number(
+                        organization=organization,
+                        purchase_date=purchase.purchase_date,
+                    )
+                purchase.save()
+                formset.instance = purchase
+                formset.save()
+                # Keep the persisted draft total aligned with its authoritative
+                # lines. Confirmation repeats this calculation under a lock.
+                total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
+                Purchase.objects.filter(pk=purchase.pk).update(total_cost=total.quantize(Decimal('0.01')))
+                audit(organization=organization, actor=request.user, action='inventory.purchase.created', obj=purchase, new_value={'reference_number': purchase.reference_number})
+        except IntegrityError:
+            # The database constraint remains the final protection against a
+            # concurrent manual-reference submission.
+            form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
+        else:
+            messages.success(request, 'Purchase draft saved. Confirm it after reviewing all lines.')
+            return redirect('inventory:purchase_detail', pk=purchase.pk)
     product_meta = {
         str(product.pk): {
             'serialized': product.is_serialized,
@@ -570,7 +589,7 @@ def cart_create(request):
 def cart_detail(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     cart = get_object_or_404(Cart.objects.filter(tenant=organization).select_related('customer', 'quotation', 'invoice'), pk=pk)
-    cart_form = CartForm(request.POST or None, instance=cart, organization=organization)
+    cart_form = CartForm(request.POST or None, instance=cart, organization=organization, membership=request.membership)
     if request.method == 'POST':
         if cart.status != Cart.Status.DRAFT:
             messages.error(request, 'Only draft carts can be edited.')

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Change package · {{ internet_service.service_code }}{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-6 px-4 sm:px-0">
+  <header><nav class="text-sm text-slate-500"><a class="hover:underline" href="{% url 'internet-service-detail' internet_service.id %}">{{ internet_service.service_code }}</a><span class="px-1">/</span><span>Change package</span></nav><h1 class="mt-1 text-2xl font-semibold text-slate-950">{% if current_subscription %}Change service package{% else %}Assign initial package{% endif %}</h1><p class="mt-1 text-sm text-slate-600">{{ internet_service.customer.name }} · {{ internet_service.site.name }}</p></header>
+  <form method="post" class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]" data-unsaved-form>{% csrf_token %}
+    <section class="rounded-lg border border-slate-200 bg-white p-5">
+      {% if form.non_field_errors %}<div class="jims-error-summary mb-4" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      {% if current_subscription %}<div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current agreement</div><div class="mt-2 font-semibold text-slate-950">{{ current_subscription.package.name }}</div><div class="mt-1 text-sm text-slate-600">{{ current_subscription.package.speed }} · {{ current_subscription.monthly_fee_at_signup|intcomma }} TZS/month · since {{ current_subscription.start_date|date:"d M Y" }}</div></div>{% endif %}
+      <div class="space-y-4">{% include "components/form_field.html" with field=form.package %}{% include "components/form_field.html" with field=form.effective_date %}{% include "components/form_field.html" with field=form.reason %}</div>
+    </section>
+    <aside class="h-fit rounded-lg border border-amber-200 bg-amber-50 p-5 lg:sticky lg:top-24"><h2 class="text-sm font-semibold text-amber-950">Historical impact</h2><p class="mt-2 text-sm leading-6 text-amber-900">The current subscription will end the day before the effective date. A new subscription captures the new package and current package price. Existing periods, invoices and receipts remain attached to the old agreement.</p><button class="jims-btn jims-btn-primary mt-5 w-full" type="submit">Confirm package change</button><a class="jims-btn jims-btn-secondary mt-2 w-full" href="{% url 'internet-service-detail' internet_service.id %}">Cancel</a></aside>
+  </form>
+</div>
+{% endblock %}

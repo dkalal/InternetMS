@@ -343,6 +343,25 @@ class CustomFieldIntegrationTests(TestCase):
         value.refresh_from_db()
         self.assertEqual(value.value_text, "Install on the wall")
 
+        edit_response = self.client.get(reverse("package-update", args=[package.id]))
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertContains(edit_response, "Package preview")
+        self.assertContains(edit_response, "data-additional-information open")
+
+    def test_dynamic_field_error_reopens_only_its_additional_information_disclosure(self):
+        self.customer_field.required = True
+        self.customer_field.save(update_fields=["required"])
+        self.client.login(username="admin", password="pass")
+
+        response = self.client.post(
+            reverse("customer-create"),
+            self._customer_payload(cf_landmark=""),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-additional-information open")
+        self.assertIn("This field is required.", response.context["form"].errors["cf_landmark"])
+
     def test_inline_custom_field_modal_reopens_with_validation_errors(self):
         self.client.login(username="admin", password="pass")
 

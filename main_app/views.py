@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 
 from billing.models import BillingDocument, CustomerSubscription
-from customers.models import Customer
+from customers.models import Customer, InternetService
 from users.models import TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission, sales_document_queryset_for
 from users.tenancy import require_tenant
@@ -50,8 +50,10 @@ def workspace_home(request):
         "customer_count": Customer.objects.filter(tenant=tenant, is_deleted=False).count() if can_view_customers and membership.base_role in {
             TenantMembership.BaseRole.ADMIN_MANAGER, TenantMembership.BaseRole.SUPER_ADMIN,
         } else None,
-        "active_subscription_count": CustomerSubscription.objects.filter(
-            tenant=tenant, status=CustomerSubscription.Status.ACTIVE,
+        "operational_service_count": InternetService.objects.filter(
+            tenant=tenant,
+        ).exclude(
+            operational_status=InternetService.OperationalStatus.DISCONNECTED,
         ).count() if can_view_customers and membership.base_role in {
             TenantMembership.BaseRole.ADMIN_MANAGER, TenantMembership.BaseRole.SUPER_ADMIN,
         } else None,

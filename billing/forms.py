@@ -6,14 +6,20 @@ from django import forms
 from django.forms import BaseInlineFormSet, inlineformset_factory
 
 from internetservices.tailwind import apply_tailwind
+from customers.models import CustomerSite
 
 from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion
 
 
 class BillingDocumentForm(forms.ModelForm):
+    site = forms.ModelChoiceField(
+        queryset=CustomerSite.objects.none(), required=False,
+        help_text="Optional when every line concerns one customer site. Leave blank for account-wide or multi-site documents.",
+    )
+
     class Meta:
         model = BillingDocument
-        fields = ["customer", "sale_pricing_category", "issue_date", "due_date", "status", "currency", "tax_rate", "notes"]
+        fields = ["customer", "site", "sale_pricing_category", "issue_date", "due_date", "status", "currency", "tax_rate", "notes"]
         widgets = {
             "issue_date": forms.DateInput(attrs={"type": "date"}),
             "due_date": forms.DateInput(attrs={"type": "date"}),
@@ -24,6 +30,8 @@ class BillingDocumentForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if organization is not None:
             self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
+            self.fields["site"].queryset = CustomerSite.objects.filter(organization=organization, is_active=True).select_related("customer").order_by("customer__name", "-is_primary", "name")
+            self.fields["site"].label_from_instance = lambda obj: f"{obj.customer.name} — {obj.name} ({obj.location})"
         if doc_type == BillingDocument.DocumentType.INVOICE:
             self.fields["status"].choices = BillingDocument.invoice_status_choices()
         elif doc_type == BillingDocument.DocumentType.QUOTATION:
@@ -37,6 +45,8 @@ class BillingDocumentForm(forms.ModelForm):
             choice for choice in BillingDocument.SalePricingCategory.choices
             if choice[0] != BillingDocument.SalePricingCategory.LEGACY_RETAIL
         ]
+        self.fields["sale_pricing_category"].label = "Customer category"
+        self.fields["sale_pricing_category"].help_text = "Use the customer's category automatically, or select an authorized transaction override."
         self.fields["tax_rate"].widget.attrs.update({"min": "0", "step": "0.01"})
         self.fields["notes"].widget.attrs.update(
             {"rows": 4, "placeholder": "Add staff-only context, approval notes, or operational follow-up."}
@@ -191,6 +201,14 @@ class ReceiptCreateForm(forms.Form):
             )
         apply_tailwind(self)
 
+    def clean(self):
+        cleaned = super().clean()
+        customer = cleaned.get("customer")
+        site = cleaned.get("site")
+        if site and customer and site.customer_id != customer.id:
+            self.add_error("site", "Select a site belonging to the document customer.")
+        return cleaned
+
     def clean_amount_paid(self):
         amount = self.cleaned_data.get('amount_paid')
         if amount is None or self.remaining_balance is None:
@@ -243,8 +261,18 @@ class DraftInvoiceEditForm(forms.Form):
 
 class SubscriptionRenewalForm(forms.Form):
     subscription = forms.ModelChoiceField(queryset=CustomerSubscription.objects.none())
-    period_start = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
-    months = forms.IntegerField(min_value=1, max_value=24, initial=1)
+    period_start = forms.DateField(
+        label="Coverage starts",
+        help_text="The system normalizes subscription coverage to the first day of this month.",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    months = forms.IntegerField(
+        min_value=1,
+        max_value=24,
+        initial=1,
+        label="Months to cover",
+        help_text="The invoice and billing period will automatically store the resulting coverage end date.",
+    )
     promotion = forms.ModelChoiceField(queryset=Promotion.objects.none(), required=False)
     due_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}), required=False)
     issue_invoice = forms.BooleanField(required=False, initial=True, label="Create invoice now")

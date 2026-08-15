@@ -10,9 +10,10 @@ from users.tenant_models import TenantScopedManager
 
 class BillingDocument(models.Model):
     class SalePricingCategory(models.TextChoices):
-        STANDARD = "standard", "Standard Customer"
-        TECHNICIAN = "technician", "Technician Customer"
-        WHOLESALE = "wholesale", "Wholesale Customer"
+        CUSTOMER_TIER = "customer_tier", "Customer category (automatic)"
+        STANDARD = "standard", "Standard"
+        TECHNICIAN = "technician", "Technician"
+        WHOLESALE = "wholesale", "Wholesale"
         LEGACY_RETAIL = "retail", "Legacy Retail"
 
     class DocumentType(models.TextChoices):
@@ -69,6 +70,14 @@ class BillingDocument(models.Model):
     number = models.CharField(max_length=60)
 
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_documents")
+    site = models.ForeignKey(
+        "customers.CustomerSite",
+        on_delete=models.PROTECT,
+        related_name="billing_documents",
+        null=True,
+        blank=True,
+        help_text="Optional when the whole document concerns one customer site.",
+    )
 
     issue_date = models.DateField(db_index=True)
     issued_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -103,7 +112,7 @@ class BillingDocument(models.Model):
     sale_pricing_category = models.CharField(
         max_length=20,
         choices=SalePricingCategory.choices,
-        default=SalePricingCategory.STANDARD,
+        default=SalePricingCategory.CUSTOMER_TIER,
         db_index=True,
         help_text="Select the customer pricing category intentionally for this transaction.",
     )
@@ -311,6 +320,10 @@ class BillingDocument(models.Model):
             self.organization_id = self.tenant_id
         if self.customer_id and self.customer.tenant_id != self.tenant_id:
             raise ValidationError({"customer": "Customer must belong to the document tenant."})
+        if self.site_id and (
+            self.site.tenant_id != self.tenant_id or self.site.customer_id != self.customer_id
+        ):
+            raise ValidationError({"site": "Site must belong to the document customer and tenant."})
         if self.created_by_membership_id is None and self.created_by_id and self.tenant_id:
             from users.models import TenantMembership
 
@@ -375,6 +388,20 @@ class BillingLineItem(models.Model):
 
     product = models.ForeignKey("products.Product", on_delete=models.PROTECT, null=True, blank=True)
     package = models.ForeignKey("services.Package", on_delete=models.PROTECT, null=True, blank=True)
+    internet_service = models.ForeignKey(
+        "customers.InternetService",
+        on_delete=models.PROTECT,
+        related_name="billing_line_items",
+        null=True,
+        blank=True,
+    )
+    subscription = models.ForeignKey(
+        "CustomerSubscription",
+        on_delete=models.PROTECT,
+        related_name="billing_line_items",
+        null=True,
+        blank=True,
+    )
     description = models.TextField(blank=True, default="")
 
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1.00"))
@@ -444,6 +471,22 @@ class BillingLineItem(models.Model):
             raise ValidationError("Package belongs to another tenant.")
         if self.promotion_id and self.promotion.tenant_id != self.tenant_id:
             raise ValidationError("Promotion belongs to another tenant.")
+        if self.internet_service_id:
+            if self.internet_service.tenant_id != self.tenant_id:
+                raise ValidationError("Internet service belongs to another tenant.")
+            if document is not None and self.internet_service.customer_id != document.customer_id:
+                raise ValidationError("Internet service belongs to another customer.")
+            if document is not None and document.site_id and self.internet_service.site_id != document.site_id:
+                raise ValidationError("Internet service belongs to another document site.")
+        if self.subscription_id:
+            if self.subscription.tenant_id != self.tenant_id:
+                raise ValidationError("Subscription belongs to another tenant.")
+            if document is not None and self.subscription.customer_id != document.customer_id:
+                raise ValidationError("Subscription belongs to another customer.")
+            if document is not None and document.site_id and self.subscription.site_id != document.site_id:
+                raise ValidationError("Subscription belongs to another document site.")
+            if self.internet_service_id and self.subscription.internet_service_id != self.internet_service_id:
+                raise ValidationError("Line service and subscription context must agree.")
         if self.base_unit_price == Decimal("0.00"):
             self.base_unit_price = self.unit_price
         self.unit_snapshot = (self.unit_snapshot or "Unit").strip()
@@ -603,6 +646,13 @@ class CustomerSubscription(models.Model):
     )
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="subscriptions")
     site = models.ForeignKey("customers.CustomerSite", on_delete=models.PROTECT, related_name="subscriptions", null=True, blank=True)
+    internet_service = models.ForeignKey(
+        "customers.InternetService",
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+    )
     package = models.ForeignKey("services.Package", on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     start_date = models.DateField()
@@ -618,9 +668,18 @@ class CustomerSubscription(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "customer", "site", "package"],
-                condition=models.Q(status="active"),
+                condition=models.Q(status="active", internet_service__isnull=True),
                 name="uniq_active_subscription_per_tenant_site_package",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "internet_service"],
+                condition=models.Q(status="active", internet_service__isnull=False),
+                name="uniq_active_subscription_per_internet_service",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(end_date__isnull=True) | models.Q(end_date__gte=models.F("start_date")),
+                name="subscription_end_not_before_start",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "status"]),
@@ -647,6 +706,15 @@ class CustomerSubscription(models.Model):
             raise ValidationError("Subscription package belongs to another tenant.")
         if self.site_id and self.site.tenant_id != self.tenant_id:
             raise ValidationError("Subscription site belongs to another tenant.")
+        if self.site_id and self.site.customer_id != self.customer_id:
+            raise ValidationError("Subscription site belongs to another customer.")
+        if self.internet_service_id:
+            if self.internet_service.tenant_id != self.tenant_id:
+                raise ValidationError("Subscription Internet service belongs to another tenant.")
+            if self.internet_service.customer_id != self.customer_id:
+                raise ValidationError("Subscription Internet service belongs to another customer.")
+            if self.site_id and self.internet_service.site_id != self.site_id:
+                raise ValidationError("Subscription Internet service belongs to another site.")
         if self.site_id is None and self.customer_id is not None:
             from customers.models import Customer
             from customers.services import CustomerService

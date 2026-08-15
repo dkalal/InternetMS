@@ -65,3 +65,14 @@ class CustomFieldFormMixin:
         if not self.cleaned_custom_field_data:
             return []
         return CustomFieldService.save_custom_field_values(instance, self.cleaned_custom_field_data, user=user)
+
+    @property
+    def has_custom_field_errors(self):
+        """Allow disclosures to open only for errors they actually contain."""
+        return any(self[field_name].errors for field_name in self.custom_field_names)
+
+    @property
+    def has_custom_field_values(self):
+        """Keep populated tenant fields visible on edit and failed submissions."""
+        empty_values = (None, '', [], (), {})
+        return any(self[field_name].value() not in empty_values for field_name in self.custom_field_names)

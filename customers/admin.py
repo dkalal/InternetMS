@@ -1,7 +1,7 @@
 from django.contrib import admin
 from users.admin_scoping import TenantScopedAdmin
 
-from .models import Customer, CustomerDocument, CustomerSite, InternetCustomer
+from .models import Customer, CustomerDocument, CustomerSite, InternetCustomer, InternetService
 
 
 @admin.register(Customer)
@@ -21,7 +21,13 @@ class CustomerSiteAdmin(TenantScopedAdmin):
 @admin.register(InternetCustomer)
 class InternetCustomerAdmin(TenantScopedAdmin):
     list_display = ("customer", "package_type", "start_date", "end_date")
-    search_fields = ("customer__name",)
+
+
+@admin.register(InternetService)
+class InternetServiceAdmin(TenantScopedAdmin):
+    list_display = ("service_code", "customer", "site", "operational_status", "ip_address", "vlan_id")
+    list_filter = ("operational_status",)
+    search_fields = ("service_code", "name", "customer__name", "site__name", "ip_address", "vlan_id")
 
 
 @admin.register(CustomerDocument)

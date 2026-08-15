@@ -4,223 +4,239 @@
 {% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-form-page w-full max-w-7xl space-y-5">
-    <header class="jims-page-header">
-        <div>
-            <div class="text-sm text-slate-500">
-                <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
-                {% if form.instance.pk %}
-                    <span class="px-1">/</span>
-                    <a class="hover:underline" href="{{ form.instance.get_absolute_url }}">{{ form.instance.name }}</a>
-                    <span class="px-1">/</span>
-                    <span class="text-slate-700">Edit</span>
-                {% endif %}
+<div class="jims-form-page mx-auto w-full max-w-[1360px] space-y-6 pb-8">
+    <header class="sticky top-16 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-b-lg sm:px-5">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+                <nav aria-label="Breadcrumb" class="truncate text-xs text-slate-500">
+                    <a class="hover:text-slate-800 hover:underline" href="{% url 'customer-list' %}">Customers</a>
+                    {% if form.instance.pk %}<span class="px-1" aria-hidden="true">/</span><a class="hover:text-slate-800 hover:underline" href="{{ form.instance.get_absolute_url }}">{{ form.instance.name }}</a><span class="px-1" aria-hidden="true">/</span><span>Edit</span>{% endif %}
+                </nav>
+                <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                    <h1 class="truncate text-xl font-semibold tracking-tight text-slate-950">{% if form.instance.pk %}Edit customer{% else %}Create customer{% endif %}</h1>
+                    {% if form.instance.pk %}
+                        <span class="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-800">{{ form.instance.get_customer_type_display }}</span>
+                        <span class="rounded-full px-2 py-0.5 text-xs font-semibold {% if form.instance.status == 'active' %}bg-emerald-50 text-emerald-800{% elif form.instance.status == 'suspended' %}bg-amber-50 text-amber-800{% else %}bg-slate-200 text-slate-700{% endif %}">{{ form.instance.get_status_display }}</span>
+                    {% endif %}
+                    <span class="hidden text-xs font-medium text-slate-500" data-unsaved-indicator aria-live="polite">Unsaved changes</span>
+                </div>
             </div>
-            <p class="jims-page-eyebrow">Customer workspace</p>
-            <h1 class="jims-page-title">
-                {% if form.instance.pk %}Edit customer{% else %}New customer{% endif %}
-            </h1>
-            <p class="jims-page-subtitle">Capture account identity, contact details, network information, services, and billing identifiers.</p>
+            <div class="flex shrink-0 items-center gap-2">
+                <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="jims-btn jims-btn-secondary jims-btn-compact flex-1 sm:flex-none">Cancel</a>
+                <button type="submit" form="customer-form" class="jims-btn jims-btn-primary jims-btn-compact flex-1 sm:flex-none">{% if form.instance.pk %}Save changes{% else %}Save customer{% endif %}</button>
+            </div>
         </div>
-        <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="jims-btn jims-btn-secondary">
-            Cancel
-        </a>
     </header>
 
-    <form method="post" class="space-y-5" data-customer-form>
+    <form id="customer-form" method="post" class="space-y-6" data-customer-form data-unsaved-form>
         {% csrf_token %}
 
         {% if form.errors or internet_form.errors %}
             <section class="jims-error-summary" aria-labelledby="form-errors-title" role="alert" tabindex="-1">
                 <h2 id="form-errors-title" class="font-semibold text-rose-950">Fix the highlighted fields</h2>
-                <div class="mt-2 space-y-1">
+                <div class="mt-2 space-y-1 text-sm">
                     {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
                     {% for error in internet_form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
-                    {% for field in form %}
-                        {% for error in field.errors %}
-                            <a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>
-                        {% endfor %}
-                    {% endfor %}
-                    {% for field in internet_form %}
-                        {% for error in field.errors %}
-                            <a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>
-                        {% endfor %}
-                    {% endfor %}
+                    {% for field in form %}{% for error in field.errors %}<a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>{% endfor %}{% endfor %}
+                    {% for field in internet_form %}{% for error in field.errors %}<a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a>{% endfor %}{% endfor %}
                 </div>
             </section>
         {% endif %}
 
-        <div class="grid grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-            <aside class="hidden lg:block">
-                <nav class="jims-form-nav jims-section-nav sticky top-6 text-sm" aria-label="Customer form sections">
-                    <p class="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">On this page</p>
-                    <a href="#customer-essentials" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Essentials</a>
-                    <a href="#contact-network" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Contact and network</a>
-                    <a href="#billing-identity" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Billing identity</a>
-                    <a href="#internet-section" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Internet service</a>
-                    <a href="#package-section" class="block rounded-md px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Packages</a>
-                </nav>
-            </aside>
-
-            <div class="space-y-5">
-                <section id="customer-essentials" class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Customer essentials</h2>
-                        <p class="mt-1 text-sm text-slate-600">The minimum information needed to identify and govern the customer account.</p>
+        <div class="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_300px] xl:items-start">
+            <div class="min-w-0 space-y-6">
+                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="customer-profile-title">
+                    <div class="mb-5">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Customer profile</p>
+                        <h2 id="customer-profile-title" class="mt-1 text-base font-semibold text-slate-950">Basic information</h2>
+                        <p class="mt-1 text-sm text-slate-500">Identity and contact details used across customer and sales records.</p>
                     </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 lg:grid-cols-12">
-                        <div class="lg:col-span-5">
-                            {% include "components/form_field.html" with field=form.name %}
-                        </div>
-                        <div class="lg:col-span-3">
-                            {% include "components/form_field.html" with field=form.customer_type %}
-                        </div>
-                        <div class="lg:col-span-2">
-                            {% include "components/form_field.html" with field=form.status %}
-                        </div>
-                        <div class="lg:col-span-2">
-                            {% include "components/form_field.html" with field=form.pricing_tier %}
-                        </div>
-                        <div id="status-reason-panel" class="hidden lg:col-span-12 rounded-md border border-amber-200 bg-amber-50 p-4">
-                            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 class="text-sm font-semibold text-amber-950">Status change reason</h3>
-                                    <p class="text-sm text-amber-900">Required for auditability whenever this customer status changes.</p>
-                                </div>
-                                {% if form.instance.pk %}
-                                    <span class="text-xs font-medium text-amber-900">Current: {{ form.instance.get_status_display }}</span>
-                                {% endif %}
+                    <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
+                        <div class="md:col-span-8">{% include "components/form_field.html" with field=form.name %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.customer_type %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.phone %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.email %}</div>
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.location %}</div>
+                        <details class="group md:col-span-12" {% if form.address.value or form.address.errors %}open{% endif %}>
+                            <summary class="inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/30">
+                                <span>{% if form.address.value %}Full address{% else %}Add full address{% endif %}</span>
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </summary>
+                            <div class="mt-2 max-w-2xl">{% include "components/form_field.html" with field=form.address hide_help=True %}</div>
+                        </details>
+                        {% if form.instance.pk %}
+                            <div class="md:col-span-4">{% include "components/form_field.html" with field=form.status %}</div>
+                            <div id="status-reason-panel" class="hidden rounded-lg border border-amber-200 bg-amber-50 p-4 md:col-span-8">
+                                {% include "components/form_field.html" with field=form.status_change_reason %}
+                                <p class="mt-1 text-xs text-amber-900">The reason is recorded in the audit trail.</p>
                             </div>
-                            {% include "components/form_field.html" with field=form.status_change_reason %}
-                        </div>
+                        {% else %}
+                            <input type="hidden" name="{{ form.status.html_name }}" value="active">
+                        {% endif %}
                     </div>
                 </section>
 
-                <section id="contact-network" class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Contact and network</h2>
-                        <p class="mt-1 text-sm text-slate-600">Communication details and service addressing kept compact for repeated editing.</p>
+                <section id="internet-section" class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6 {% if form.customer_type.value != 'internet' %}hidden{% endif %}" aria-labelledby="internet-service-title">
+                    <div class="mb-5">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Internet service setup</p>
+                        <h2 id="internet-service-title" class="mt-1 text-base font-semibold text-slate-950">Primary internet service</h2>
+                        <p class="mt-1 text-sm text-slate-500">Connection profile, package assignment, and service period for the primary site.</p>
                     </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        {% include "components/form_field.html" with field=form.email %}
-                        {% include "components/form_field.html" with field=form.phone %}
-                        <div class="md:col-span-2">
-                            {% include "components/form_field.html" with field=form.address %}
-                        </div>
-                        {% include "components/form_field.html" with field=form.location %}
-                        {% include "components/form_field.html" with field=form.ip_address %}
-                        {% include "components/form_field.html" with field=form.vlan_id %}
+
+                    {% if service_configuration_managed_separately %}
+                    <div class="rounded-lg border border-brand-200 bg-brand-50 p-4">
+                        <h3 class="text-sm font-semibold text-slate-950">Service configuration is managed separately</h3>
+                        <p class="mt-1 text-sm text-slate-600">This page updates account identity only. Packages, commercial dates, IP addresses and VLANs remain attached to their existing site and Internet service.</p>
+                        <a href="{{ object.get_absolute_url }}" class="jims-btn jims-btn-secondary jims-btn-compact mt-3">Open Sites &amp; Services</a>
                     </div>
-                </section>
+                    {% else %}
+                    <fieldset>
+                        <legend class="sr-only">Primary internet service details</legend>
+                        <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
+                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.package_type %}</div>
+                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.start_date %}</div>
+                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.end_date %}</div>
 
-                <section id="billing-identity" class="jims-form-section">
-                    <div class="border-b border-slate-200 px-5 py-4">
-                        <h2 class="text-sm font-semibold text-slate-900">Tax and billing identity</h2>
-                        <p class="mt-1 text-sm text-slate-600">These identifiers appear on financial documents when available.</p>
-                    </div>
-                    <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-                        {% include "components/form_field.html" with field=form.tin_number %}
-                        {% include "components/form_field.html" with field=form.vrn_number %}
-                    </div>
-                </section>
-
-                {% include "includes/custom_fields_form.html" %}
-
-                <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
-                    <section id="internet-section" class="jims-form-section lg:col-span-1 {% if form.customer_type.value != 'internet' %}hidden{% endif %}">
-                        <div class="border-b border-slate-200 px-5 py-4">
-                            <h2 class="text-sm font-semibold text-slate-900">Internet service</h2>
-                            <p class="mt-1 text-sm text-slate-600">Subscription dates and installation type for internet customers.</p>
-                        </div>
-                        <div class="space-y-4 p-5">
-                            {% include "components/form_field.html" with field=internet_form.package_type %}
-                            {% include "components/form_field.html" with field=internet_form.start_date %}
-                            {% include "components/form_field.html" with field=internet_form.end_date %}
-                        </div>
-                    </section>
-
-                    <section id="package-section" class="jims-form-section lg:col-span-2">
-                        <div class="jims-package-heading px-5 py-5">
-                            <h2 class="text-lg font-semibold tracking-tight text-slate-950">Service packages</h2>
-                            <p class="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Manage active service levels and billing assignments for this customer’s primary site.</p>
-                        </div>
-                        <div class="space-y-5 p-5">
-                            <div>
-                                <label for="package-search" class="block text-sm font-semibold text-slate-900">Find package</label>
-                                <div class="jims-package-search-wrap mt-2">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke-width="1.9"/><path d="m16 16 4 4" stroke-linecap="round" stroke-width="1.9"/></svg>
-                                    <input id="package-search" type="search" class="jims-package-search" placeholder="Search for a package by name or speed…" data-package-search>
+                            <div id="package-section" class="md:col-span-12 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <h3 class="text-sm font-semibold text-slate-950">Service package assignment</h3>
+                                        <p class="mt-1 text-xs leading-5 text-slate-500">Optional default package(s) for the primary site. Package type is shown on each option and does not filter connection type.</p>
+                                    </div>
+                                    <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact shrink-0" data-package-open {% if form.packages.field.disabled %}disabled{% endif %}>{% if form.selected_package_ids %}Change packages{% else %}Choose package{% endif %}</button>
                                 </div>
+                                <div class="mt-4 space-y-2" data-package-summary aria-live="polite">
+                                    {% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}{% if package_id in form.selected_package_ids %}
+                                        <div class="flex flex-col gap-1 rounded-md border border-brand-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between"><span><span class="block text-sm font-medium text-slate-900">{{ package.name }}</span><span class="block text-xs text-slate-500">{{ package.speed|default:"Speed not specified" }} · {{ package.get_package_type_display }}</span></span><span class="text-sm font-semibold tabular-nums text-slate-800">TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month</span></div>
+                                    {% endif %}{% endwith %}{% empty %}<div class="rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">No service packages are available for this organization.</div>{% endfor %}
+                                    {% if not form.selected_package_ids and form.packages.field.queryset %}<div class="rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">No package selected. You can save the Internet customer without assigning one.</div>{% endif %}
+                                </div>
+                                {% if form.packages.errors %}<div id="package-errors" class="mt-3 text-sm text-rose-600" role="alert">{% for error in form.packages.errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+                                {% if form.packages.field.disabled %}<p class="mt-2 text-xs text-amber-800">{{ form.packages.help_text }}</p>{% endif %}
+                                <noscript><div class="mt-4">{{ form.packages }}</div></noscript>
                             </div>
-
-                            <p id="package-help" class="text-sm leading-6 text-slate-600">{{ form.packages.help_text }}</p>
-                            {% if form.packages.errors %}
-                                <div id="package-errors" class="jims-error-summary py-3 text-sm" role="alert">
-                                    {% for error in form.packages.errors %}<p>{{ error }}</p>{% endfor %}
-                                </div>
-                            {% endif %}
-
-                            <fieldset class="jims-package-picker" data-package-list aria-describedby="package-help{% if form.packages.errors %} package-errors{% endif %}">
-                                <legend class="sr-only">{{ form.packages.label }}</legend>
-                                {% for package in form.packages.field.queryset %}
-                                    {% with package_id=package.pk|stringformat:"s" %}
-                                    <label class="jims-package-option" data-package-option>
-                                        <input
-                                            id="id_packages_{{ forloop.counter0 }}"
-                                            type="checkbox"
-                                            name="{{ form.packages.html_name }}"
-                                            value="{{ package.pk }}"
-                                            class="jims-package-input"
-                                            {% if package_id in form.packages.value %}checked{% endif %}
-                                            {% if form.packages.field.disabled %}disabled{% endif %}
-                                        >
-                                        <span class="jims-package-card">
-                                            <span class="jims-package-icon" aria-hidden="true">
-                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-7 w-7"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>
-                                            </span>
-                                            <span class="min-w-0 flex-1">
-                                                <span class="block truncate text-base font-semibold text-slate-950">{{ package.name }}</span>
-                                                <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
-                                                    <span>{{ package.speed|default:"Speed not specified" }}</span>
-                                                    <span class="text-slate-300" aria-hidden="true">•</span>
-                                                    <span>{{ package.get_package_type_display }}</span>
-                                                </span>
-                                            </span>
-                                            <span class="jims-package-price">
-                                                <span class="whitespace-nowrap text-lg font-bold tracking-tight text-slate-950">TZS {{ package.monthly_fee|floatformat:0|intcomma }}</span>
-                                                <span class="text-sm text-slate-600">/ month</span>
-                                            </span>
-                                            <span class="jims-package-control" aria-hidden="true">
-                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 12 4 4L19 6"/></svg>
-                                            </span>
-                                        </span>
-                                    </label>
-                                    {% endwith %}
-                                {% empty %}
-                                    <div class="jims-package-empty">No active packages are available for this organization.</div>
-                                {% endfor %}
-                            </fieldset>
                         </div>
-                    </section>
-                </div>
+                    </fieldset>
+
+                    <details class="group mt-5 rounded-lg border border-slate-200 bg-white" {% if form.ip_address.value or form.vlan_id.value or form.ip_address.errors or form.vlan_id.errors %}open{% endif %}>
+                        <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600/30">
+                            <span><span class="text-sm font-semibold text-slate-900">Network details</span><span class="text-sm text-slate-500"> · Optional</span></span>
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </summary>
+                        <div class="grid grid-cols-1 gap-4 border-t border-slate-200 p-4 md:grid-cols-2">
+                            <div>{% include "components/form_field.html" with field=form.ip_address %}</div>
+                            <div>{% include "components/form_field.html" with field=form.vlan_id %}</div>
+                            <p class="text-xs leading-5 text-slate-500 md:col-span-2">The primary site is created and maintained by the existing customer-site workflow. Additional offices remain managed from the customer record.</p>
+                        </div>
+                    </details>
+                    {% endif %}
+                </section>
+
+                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="billing-business-title">
+                    <div class="mb-5">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Billing and business preferences</p>
+                        <h2 id="billing-business-title" class="mt-1 text-base font-semibold text-slate-950">Sales and billing preferences</h2>
+                        <p class="mt-1 text-sm text-slate-500">Defaults used by existing sales and billing workflows.</p>
+                    </div>
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-12">
+                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.pricing_tier %}</div>
+                        <details class="group md:col-span-8" {% if form.tin_number.value or form.vrn_number.value or form.tin_number.errors or form.vrn_number.errors %}open{% endif %}>
+                            <summary class="inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/30">
+                                <span>Business tax identity</span>
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </summary>
+                            <div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>{% include "components/form_field.html" with field=form.tin_number hide_help=True %}</div>
+                                <div>{% include "components/form_field.html" with field=form.vrn_number hide_help=True %}</div>
+                            </div>
+                        </details>
+                    </div>
+                </section>
+
+                {% include "includes/custom_fields_form.html" with compact_collapsed=True %}
             </div>
+
+            <aside class="min-w-0 xl:sticky xl:top-40" aria-labelledby="customer-summary-title">
+                <section class="rounded-lg border border-slate-200 bg-white p-5">
+                    <div class="flex items-start justify-between gap-3">
+                        <div><p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">At a glance</p><h2 id="customer-summary-title" class="mt-1 text-base font-semibold text-slate-950">{% if form.instance.pk %}Account summary{% else %}Customer preview{% endif %}</h2></div>
+                        <span class="h-2.5 w-2.5 rounded-full bg-brand-500" aria-hidden="true"></span>
+                    </div>
+                    <dl class="mt-5 space-y-4">
+                        {% include "components/summary_row.html" with label="Customer" value=form.name.value value_id="summary-customer-name" live=True %}
+                        {% include "components/summary_row.html" with label="Customer type" value=form.customer_type.value value_id="summary-customer-type" live=True %}
+                        {% include "components/summary_row.html" with label="Status" value=form.instance.get_status_display|default:"Active" value_id="summary-customer-status" live=True %}
+                        {% if service_configuration_managed_separately %}
+                        <div>
+                            <dt class="text-xs font-medium text-slate-500">Current service</dt>
+                            <dd class="mt-1 text-sm font-medium text-slate-900">
+                                {% if current_service_subscription %}{{ current_service_subscription.package.name }}{% elif current_internet_service %}No package assigned{% else %}No installed service{% endif %}
+                            </dd>
+                            {% if current_internet_service %}<dd class="mt-0.5 text-xs text-slate-500">{{ current_internet_service.service_code }} · {{ current_internet_service.get_operational_status_display }}</dd>{% endif %}
+                        </div>
+                        {% if current_service_subscription %}
+                        <div>
+                            <dt class="text-xs font-medium text-slate-500">Recurring charge</dt>
+                            <dd class="mt-1 text-sm font-medium tabular-nums text-slate-900">TZS {{ current_service_subscription.monthly_fee_at_signup|floatformat:0|intcomma }} / month</dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-slate-500">Current agreement</dt>
+                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ current_service_subscription.start_date|date:"d M Y" }} – {% if current_service_subscription.end_date %}{{ current_service_subscription.end_date|date:"d M Y" }}{% else %}No scheduled end{% endif %}</dd>
+                            <dd class="mt-1 text-xs leading-5 text-slate-500">Agreement dates are separate from paid-through and invoice coverage.</dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-slate-500">Paid service coverage</dt>
+                            {% if current_paid_coverage %}
+                            <dd class="mt-1 text-sm font-semibold text-emerald-800">{{ current_paid_coverage.start|date:"d M Y" }} – {{ current_paid_coverage.end|date:"d M Y" }}</dd>
+                            <dd class="mt-1 text-xs leading-5 text-slate-500">Confirmed from fully settled subscription billing periods.</dd>
+                            {% else %}
+                            <dd class="mt-1 text-sm font-medium text-slate-600">No fully paid coverage recorded</dd>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% else %}
+                        <div id="summary-service-block" class="{% if form.customer_type.value != 'internet' %}hidden{% endif %}">
+                            <dt class="text-xs font-medium text-slate-500">Selected service</dt>
+                            <dd id="summary-packages" class="mt-1 text-sm font-medium text-slate-900" aria-live="polite">{% if form.selected_package_ids %}{{ form.selected_package_ids|length }} package{{ form.selected_package_ids|length|pluralize }} selected{% else %}No package selected{% endif %}</dd>
+                        </div>
+                        <div id="summary-recurring-charge" class="{% if form.customer_type.value != 'internet' or form.selected_package_ids|length != 1 %}hidden{% endif %}">
+                            <dt class="text-xs font-medium text-slate-500">Recurring charge</dt>
+                            <dd id="summary-recurring-value" class="mt-1 text-sm font-medium tabular-nums text-slate-900" aria-live="polite">{% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}{% if package_id in form.selected_package_ids %}TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month{% endif %}{% endwith %}{% endfor %}</dd>
+                        </div>
+                        <div id="summary-service-period" class="{% if form.customer_type.value != 'internet' %}hidden{% endif %}">
+                            <dt class="text-xs font-medium text-slate-500">Planned agreement</dt>
+                            <dd class="mt-1 text-sm font-medium text-slate-900"><span id="summary-start-date">{{ internet_form.start_date.value|default:"Not set" }}</span><span aria-hidden="true"> – </span><span id="summary-end-date">{{ internet_form.end_date.value|default:"No scheduled end" }}</span></dd>
+                        </div>
+                        {% endif %}
+                        {% comment %} {% include "components/summary_row.html" with label="Readiness" value="Add the core customer details" value_id="summary-readiness" live=True %} {% endcomment %}
+                    </dl>
+                    <p class="mt-5 rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-500">This preview reflects form selections only. Billing and subscription rules remain server-controlled when you save.</p>
+                </section>
+            </aside>
         </div>
 
-        <div class="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:bg-white">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p class="text-sm text-slate-600">Status changes are written to the audit trail with the reason you provide.</p>
-                <div class="flex items-center justify-end gap-3">
-                    <a href="{% if form.instance.pk %}{{ form.instance.get_absolute_url }}{% else %}{% url 'customer-list' %}{% endif %}" class="rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                        Cancel
-                    </a>
-                    <button type="submit" class="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                        Save customer
-                    </button>
+        <div class="fixed inset-0 z-50 hidden items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4" data-package-dialog role="dialog" aria-modal="true" aria-labelledby="package-dialog-title">
+            <div class="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-t-lg bg-white shadow-2xl sm:rounded-lg">
+                <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                    <div><h2 id="package-dialog-title" class="text-base font-semibold text-slate-950">Choose service packages</h2><p class="mt-0.5 text-xs text-slate-500">Assignments apply to the primary site through the existing save workflow.</p></div>
+                    <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact" data-package-close aria-label="Close package picker">Close</button>
                 </div>
+                <div class="border-b border-slate-200 p-3"><label for="package-search" class="sr-only">Search packages</label><input id="package-search" type="search" class="block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Search by package name, speed, or type" data-package-search></div>
+                <fieldset class="min-h-0 flex-1 overflow-y-auto p-2" data-package-list aria-describedby="package-help{% if form.packages.errors %} package-errors{% endif %}">
+                    <legend class="sr-only">{{ form.packages.label }}</legend><p id="package-help" class="sr-only">{{ form.packages.help_text }}</p>
+                    {% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}
+                        <label class="relative flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-slate-200 hover:bg-slate-50 has-[:checked]:border-brand-300 has-[:checked]:bg-brand-50" data-package-option data-package-name="{{ package.name }}" data-package-meta="{{ package.speed|default:'Speed not specified' }} · {{ package.get_package_type_display }}{% if not package.is_active %} · Inactive{% endif %}" data-package-price="TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month">
+                            <input id="id_packages_{{ forloop.counter0 }}" type="checkbox" name="{{ form.packages.html_name }}" value="{{ package.pk }}" class="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30" {% if package_id in form.selected_package_ids %}checked{% endif %} {% if form.packages.field.disabled %}disabled{% endif %}>
+                            <span class="min-w-0 flex-1"><span class="flex flex-wrap items-center gap-2"><span class="block truncate text-sm font-medium text-slate-900">{{ package.name }}</span>{% if not package.is_active %}<span class="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">Inactive · existing assignment</span>{% endif %}</span><span class="block truncate text-xs text-slate-500">{{ package.speed|default:"Speed not specified" }} · {{ package.get_package_type_display }}</span></span>
+                            <span class="shrink-0 text-right"><span class="block text-sm font-semibold tabular-nums text-slate-900">TZS {{ package.monthly_fee|floatformat:0|intcomma }}</span><span class="block text-xs text-slate-500">per month</span></span>
+                        </label>
+                    {% endwith %}{% empty %}<div class="p-6 text-center text-sm text-slate-500">No active service packages are available for this organization.</div>{% endfor %}
+                    <p class="hidden p-6 text-center text-sm text-slate-500" data-package-no-results>No packages match your search.</p>
+                </fieldset>
+                <div class="flex justify-end border-t border-slate-200 px-4 py-3"><button type="button" class="jims-btn jims-btn-primary jims-btn-compact" data-package-done>Use selection</button></div>
             </div>
         </div>
     </form>
-
     {% include "includes/custom_field_definition_modal.html" %}
 </div>
 {% endblock %}
@@ -228,47 +244,101 @@
 {% block extra_js %}
 {% include "includes/form_state_preserver.html" with form_selector="[data-customer-form]" storage_key="customer-form-state" %}
 <script>
-  (function () {
-    var errorSummary = document.querySelector('.jims-error-summary');
-    var typeSelect = document.getElementById('customer-type-select');
-    var internetSection = document.getElementById('internet-section');
-    var statusSelect = document.getElementById('id_status');
-    var reasonPanel = document.getElementById('status-reason-panel');
-    var reasonInput = document.getElementById('id_status_change_reason');
-    var originalStatus = '{{ form.original_status|default_if_none:"" }}';
-    var packageSearch = document.querySelector('[data-package-search]');
-    var packageOptions = Array.prototype.slice.call(document.querySelectorAll('[data-package-option]'));
+(function () {
+  var form = document.querySelector('[data-customer-form]');
+  var errorSummary = document.querySelector('.jims-error-summary');
+  var typeSelect = document.getElementById('customer-type-select');
+  var internetSection = document.getElementById('internet-section');
+  var statusSelect = document.getElementById('id_status');
+  var reasonPanel = document.getElementById('status-reason-panel');
+  var reasonInput = document.getElementById('id_status_change_reason');
+  var originalStatus = '{{ form.original_status|default_if_none:""|escapejs }}';
+  var dialog = document.querySelector('[data-package-dialog]');
+  var packageSearch = document.querySelector('[data-package-search]');
+  var packageOptions = Array.prototype.slice.call(document.querySelectorAll('[data-package-option]'));
+  var packageSummary = document.querySelector('[data-package-summary]');
+  var packageOpen = document.querySelector('[data-package-open]');
+  var unsaved = document.querySelector('[data-unsaved-indicator]');
+  var lastFocused;
 
-    function syncInternetSection() {
-      if (!typeSelect || !internetSection) return;
-      internetSection.classList.toggle('hidden', typeSelect.value !== 'internet');
-    }
-
-    function syncStatusReason() {
-      if (!statusSelect || !reasonPanel || !reasonInput || !originalStatus) return;
-      var changed = statusSelect.value !== originalStatus;
-      reasonPanel.classList.toggle('hidden', !changed);
-      reasonInput.required = changed;
-      if (!changed) {
-        reasonInput.value = '';
-      }
-    }
-
-    function syncPackageSearch() {
-      if (!packageSearch) return;
-      var term = packageSearch.value.trim().toLowerCase();
-      packageOptions.forEach(function (option) {
-        option.classList.toggle('hidden', term && option.textContent.toLowerCase().indexOf(term) === -1);
+  function selectedOptions() { return packageOptions.filter(function (option) { return option.querySelector('input').checked; }); }
+  function selectedLabel(select) { return select && select.selectedIndex >= 0 ? select.options[select.selectedIndex].text : ''; }
+  function setText(id, value, fallback) { var node = document.getElementById(id); if (node) node.textContent = value || fallback || '—'; }
+  function syncCustomerType() {
+    var isInternet = typeSelect && typeSelect.value === 'internet';
+    if (internetSection) internetSection.classList.toggle('hidden', !isInternet);
+    document.querySelectorAll('#summary-service-block, #summary-service-period').forEach(function (node) { node.classList.toggle('hidden', !isInternet); });
+    setText('summary-customer-type', selectedLabel(typeSelect), 'Not selected');
+    syncPackageSummary();
+    syncReadiness();
+  }
+  function syncStatusReason() {
+    if (!statusSelect) return;
+    setText('summary-customer-status', selectedLabel(statusSelect), 'Active');
+    if (!reasonPanel || !reasonInput || !originalStatus) return;
+    var changed = statusSelect.value !== originalStatus;
+    reasonPanel.classList.toggle('hidden', !changed);
+    reasonInput.required = changed;
+    if (!changed) reasonInput.value = '';
+  }
+  function syncPackageSummary() {
+    if (!packageSummary) return;
+    var selected = selectedOptions();
+    packageSummary.innerHTML = '';
+    if (!packageOptions.length) {
+      var unavailable = document.createElement('div'); unavailable.className = 'rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500'; unavailable.textContent = 'No service packages are available for this organization.'; packageSummary.appendChild(unavailable);
+    } else if (!selected.length) {
+      var empty = document.createElement('div'); empty.className = 'rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500'; empty.textContent = 'No package selected. You can save the Internet customer without assigning one.'; packageSummary.appendChild(empty);
+    } else {
+      selected.forEach(function (option) {
+        var item = document.createElement('div'); item.className = 'flex flex-col gap-1 rounded-md border border-brand-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between';
+        var identity = document.createElement('span'); var name = document.createElement('span'); var meta = document.createElement('span'); var price = document.createElement('span');
+        name.className = 'block text-sm font-medium text-slate-900'; meta.className = 'block text-xs text-slate-500'; price.className = 'text-sm font-semibold tabular-nums text-slate-800';
+        name.textContent = option.dataset.packageName; meta.textContent = option.dataset.packageMeta; price.textContent = option.dataset.packagePrice; identity.appendChild(name); identity.appendChild(meta); item.appendChild(identity); item.appendChild(price); packageSummary.appendChild(item);
       });
     }
+    if (packageOpen) packageOpen.textContent = selected.length ? 'Change packages' : 'Choose package';
+    setText('summary-packages', selected.length ? selected.map(function (option) { return option.dataset.packageName; }).join(', ') : '', 'No package selected');
+    var recurringRow = document.getElementById('summary-recurring-charge'); if (recurringRow) recurringRow.classList.toggle('hidden', selected.length !== 1 || !(typeSelect && typeSelect.value === 'internet'));
+    setText('summary-recurring-value', selected.length === 1 ? selected[0].dataset.packagePrice : '', '—');
+    syncReadiness();
+  }
+  function syncReadiness() {
+    var name = document.getElementById('id_name');
+    var isInternet = typeSelect && typeSelect.value === 'internet';
+    var value = name && name.value.trim() ? (isInternet ? (selectedOptions().length ? 'Profile and service selected' : 'Profile ready · package optional') : 'Ready for sales and billing details') : 'Add the core customer details';
+    setText('summary-readiness', value);
+  }
+  function syncPreview() {
+    var name = document.getElementById('id_name'); var start = document.getElementById('id_start_date'); var end = document.getElementById('id_end_date');
+    setText('summary-customer-name', name && name.value, 'Not named yet'); setText('summary-start-date', start && start.value, 'Not set'); setText('summary-end-date', end && end.value, 'No scheduled end'); syncReadiness();
+  }
+  function openDialog() { if (!dialog) return; lastFocused = document.activeElement; dialog.classList.remove('hidden'); dialog.classList.add('flex'); document.body.classList.add('overflow-hidden'); if (packageSearch) packageSearch.focus(); }
+  function closeDialog() { if (!dialog) return; dialog.classList.add('hidden'); dialog.classList.remove('flex'); document.body.classList.remove('overflow-hidden'); syncPackageSummary(); if (lastFocused) lastFocused.focus(); }
+  function syncPackageSearch() { var term = packageSearch ? packageSearch.value.trim().toLowerCase() : ''; var shown = 0; packageOptions.forEach(function (option) { var hidden = !!term && option.textContent.toLowerCase().indexOf(term) === -1; option.classList.toggle('hidden', hidden); if (!hidden) shown += 1; }); var empty = document.querySelector('[data-package-no-results]'); if (empty) empty.classList.toggle('hidden', shown !== 0 || !term); }
 
-    if (typeSelect) typeSelect.addEventListener('change', syncInternetSection);
-    if (statusSelect) statusSelect.addEventListener('change', syncStatusReason);
-    if (packageSearch) packageSearch.addEventListener('input', syncPackageSearch);
-    if (errorSummary) errorSummary.focus();
-    syncInternetSection();
-    syncStatusReason();
-    syncPackageSearch();
-  })();
+  if (typeSelect) typeSelect.addEventListener('change', syncCustomerType);
+  if (statusSelect) statusSelect.addEventListener('change', syncStatusReason);
+  if (packageOpen) packageOpen.addEventListener('click', openDialog);
+  document.querySelectorAll('[data-package-close], [data-package-done]').forEach(function (button) { button.addEventListener('click', closeDialog); });
+  if (dialog) {
+    dialog.addEventListener('click', function (event) { if (event.target === dialog) closeDialog(); });
+    dialog.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeDialog();
+      if (event.key !== 'Tab') return;
+      var focusable = Array.prototype.slice.call(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), [href]')).filter(function (node) { return !node.closest('.hidden'); });
+      if (!focusable.length) return; var first = focusable[0]; var last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    });
+  }
+  if (packageSearch) packageSearch.addEventListener('input', syncPackageSearch);
+  packageOptions.forEach(function (option) { option.querySelector('input').addEventListener('change', syncPackageSummary); });
+  if (form) {
+    form.addEventListener('input', function () { if (unsaved) unsaved.classList.remove('hidden'); syncPreview(); });
+    form.addEventListener('change', function () { if (unsaved) unsaved.classList.remove('hidden'); syncPreview(); });
+    form.addEventListener('submit', function () { if (unsaved) unsaved.classList.add('hidden'); });
+  }
+  if (errorSummary) errorSummary.focus(); syncCustomerType(); syncStatusReason(); syncPackageSearch(); syncPackageSummary(); syncPreview();
+})();
 </script>
 {% endblock %}

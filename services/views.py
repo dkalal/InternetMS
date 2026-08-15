@@ -60,27 +60,29 @@ class PackageListView(LoginRequiredMixin, ListView):
             self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
             membership=self.request.membership,
         )
-        if finance_all:
-            queryset = queryset.annotate(
+        queryset = queryset.annotate(
             active_subscribers=Count(
                 "subscriptions",
                 filter=Q(subscriptions__status=CustomerSubscription.Status.ACTIVE),
                 distinct=True,
             ),
-            unpaid_periods=Count(
-                "subscriptions__periods",
-                filter=Q(subscriptions__periods__status__in=[
-                    SubscriptionPeriod.Status.INVOICED,
-                    SubscriptionPeriod.Status.OVERDUE,
-                ]),
-                distinct=True,
-            ),
         )
-            subscriber_state = self.request.GET.get("subscriber_state")
-            if subscriber_state == "has":
-                queryset = queryset.filter(active_subscribers__gt=0)
-            elif subscriber_state == "none":
-                queryset = queryset.filter(active_subscribers=0)
+        subscriber_state = self.request.GET.get("subscriber_state")
+        if subscriber_state == "has":
+            queryset = queryset.filter(active_subscribers__gt=0)
+        elif subscriber_state == "none":
+            queryset = queryset.filter(active_subscribers=0)
+        if finance_all:
+            queryset = queryset.annotate(
+                unpaid_periods=Count(
+                    "subscriptions__periods",
+                    filter=Q(subscriptions__periods__status__in=[
+                        SubscriptionPeriod.Status.INVOICED,
+                        SubscriptionPeriod.Status.OVERDUE,
+                    ]),
+                    distinct=True,
+                ),
+            )
             unpaid_state = self.request.GET.get("unpaid_state")
             if unpaid_state == "has":
                 queryset = queryset.filter(unpaid_periods__gt=0)
@@ -114,28 +116,27 @@ class PackageDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
             self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
             membership=self.request.membership,
         )
-        if not finance_all:
-            context["subscriptions"] = []
-            context["finance_all"] = False
-            context.update(self.get_custom_field_modal_context(target_model="package"))
-            context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
-            return context
         subscriptions = CustomerSubscription.objects.filter(
             organization=organization,
             package=package,
-        ).select_related("customer", "site")
+        ).select_related("customer", "site", "internet_service").order_by("-status", "customer__name", "site__name", "-start_date")
         context["subscriptions"] = subscriptions
         context["active_subscriber_count"] = subscriptions.filter(status=CustomerSubscription.Status.ACTIVE).count()
-        periods = SubscriptionPeriod.objects.filter(organization=organization, subscription__package=package)
-        context["unpaid_period_count"] = periods.filter(
-            status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
-        ).count()
-        subscription_invoice_ids = periods.exclude(invoice_id=None).values("invoice_id")
-        context["collected_amount"] = BillingDocument.objects.filter(
-            organization=organization,
-            document_type=BillingDocument.DocumentType.RECEIPT,
-            invoice_id__in=subscription_invoice_ids,
-        ).aggregate(total=Sum("total"))["total"] or 0
+        context["active_customer_count"] = subscriptions.filter(
+            status=CustomerSubscription.Status.ACTIVE,
+        ).values("customer_id").distinct().count()
+        context["finance_all"] = finance_all
+        if finance_all:
+            periods = SubscriptionPeriod.objects.filter(organization=organization, subscription__package=package)
+            context["unpaid_period_count"] = periods.filter(
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
+            ).count()
+            subscription_invoice_ids = periods.exclude(invoice_id=None).values("invoice_id")
+            context["collected_amount"] = BillingDocument.objects.filter(
+                organization=organization,
+                document_type=BillingDocument.DocumentType.RECEIPT,
+                invoice_id__in=subscription_invoice_ids,
+            ).aggregate(total=Sum("total"))["total"] or 0
         context.update(self.get_custom_field_modal_context(target_model="package"))
         context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
         return context
@@ -218,7 +219,13 @@ class PackageDeleteView(LoginRequiredMixin, DeleteView):
         # Add any additional context if needed
         return context
     
-    def delete(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):
         package = self.get_object()
-        messages.success(self.request, f'Package {package.name} deleted successfully.')
-        return super().delete(request, *args, **kwargs)
+        if package.subscriptions.exists() or package.billinglineitem_set.exists():
+            messages.error(
+                request,
+                "This package has subscription or financial history and cannot be deleted. Mark it inactive instead.",
+            )
+            return render(request, self.template_name, {"package": package, "object": package, "protected_history": True})
+        messages.success(request, f'Package {package.name} deleted successfully.')
+        return super().post(request, *args, **kwargs)

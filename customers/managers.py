@@ -41,7 +41,11 @@ class CustomerQuerySet(models.QuerySet):
     
     def optimized_list(self):
         """Optimized query for list views"""
-        return self.select_related('internet_profile').prefetch_related('packages', 'sites__packages')
+        return self.select_related('internet_profile').prefetch_related(
+            'packages',
+            'sites__packages',
+            'sites__internet_services',
+        )
     
     def search(self, query):
         """Search customers by name, email, phone, location"""
