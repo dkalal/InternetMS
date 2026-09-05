@@ -46,10 +46,20 @@ control and can grant three independent exceptions under Team > Manage access:
 
 - override customer category, with an allow-list of Standard, Technician and
   Wholesale;
-- apply cart discount, with percentage and/or fixed TZS caps (the lower cap
-  wins); and
+- apply transaction discounts, with percentage and/or fixed TZS caps over the
+  combined line-item and cart-wide discount (the lower cap wins); and
 - edit the cart tax rate as a free decimal value.
 
 Without the corresponding grant, the customer-category, discount, or tax-rate
-control is disabled and its posted value is ignored server-side. The invoice API
-enforces the same boundary. Discounts above the configured cap are rejected.
+control is disabled and its posted value is ignored server-side. A discount
+grant with both caps blank is fail-closed at zero. The invoice API enforces the
+same boundary. Discounts above the configured cap are rejected when edited and
+again immediately before a cart is converted, so stale drafts and revoked or
+reduced grants cannot bypass the current policy.
+
+Checkout submits the displayed customer and financial controls with the
+conversion request. Django saves those values, reprices the cart, validates the
+actor's current discount authority, and creates the quotation or invoice in one
+database transaction. The conversion is rolled back in full when any value is
+invalid; JavaScript auto-save is a convenience and is not part of the security
+boundary.

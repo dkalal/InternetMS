@@ -1,8 +1,8 @@
-# JIMS Multi-Tenant, RBAC, and Work Reports Audit
+# JBMS Multi-Tenant, RBAC, and Work Reports Audit
 
 ## Audit summary
 
-JIMS is a modular Django monolith using server-rendered templates and the existing Tailwind design layer. Global Django users are linked to the concrete tenant model, `users.Organization`, through the authoritative `TenantMembership`. `users.Tenant` is a naming proxy; it does not introduce another table. The request tenant is resolved by `ActiveOrganizationMiddleware` from active server-side memberships or an explicit, audited Super Administrator support session. Browser-supplied tenant identifiers are not used as tenant context.
+JBMS is a modular Django monolith using server-rendered templates and the existing Tailwind design layer. Global Django users are linked to the concrete tenant model, `users.Organization`, through the authoritative `TenantMembership`. `users.Tenant` is a naming proxy; it does not introduce another table. The request tenant is resolved by `ActiveOrganizationMiddleware` from active server-side memberships or an explicit, audited Super Administrator support session. Browser-supplied tenant identifiers are not used as tenant context.
 
 Legacy `Membership`, `UserAccessProfile`, and duplicate `organization` fields remain as compatibility bridges while authoritative access and scoping use `TenantMembership` and `tenant`. Removing those bridges should be a later, separately verified cleanup rather than part of this security change.
 
@@ -19,7 +19,7 @@ The current authoritative tenant field covers:
 - Inventory: `Supplier`, `SupplierPaymentRecord`, `Purchase`, `PurchaseLine`, `InventoryBalance`, `StockAdjustment`, `StockMovement`, `StockUnit`, `Cart`, `CartLine`, `CartSerialSelection`, `InventorySale`, `InventorySaleLine`, `DocumentSerialSelection`, `InventorySettings`, `ImportJob`, `HistoricalInventoryRecord`.
 - Configuration and integration: `CustomFieldDefinition`, `CustomFieldValue`, `IntegrationConsumer`, `MessageTemplate`, `WhatsAppManualMessageLog`, `OrganizationBranding`.
 - Security and history: `TenantMembership`, `TenantPermissionGrant`, `SupportAccessSession`, `AuditLog`.
-- Technician workflow: `TechnicianWorkReport`, `WorkReportHistory`.
+- Technician workflow: `TechnicianWorkReport`, `TechnicianPaymentRecord`, `WorkReportHistory`.
 
 `Organization` is the tenant itself. Global authentication users and platform constructs are intentionally not tenant-owned business rows.
 
@@ -69,3 +69,25 @@ Primary risks are legacy compatibility fields, any unscoped code path added outs
 ## Tailwind UI plan
 
 Reuse the existing full-width `jims-workspace`, sidebar, `jims-btn` controls, form-field component, slate surfaces, status patterns, keyboard focus rings, and configured purple `#786EF9` primary. Orange `#FF9A0D` is reserved for restrained pending-attention indicators. The Work Reports pages use compact responsive tables, a mobile-safe status strip, one primary action per state, clear empty states, private-amount callouts, and a focused Technician navigation path. No new frontend framework or package is introduced.
+
+## Technician payment acknowledgement extension
+
+`TechnicianPaymentRecord` is a small internal accountability record owned by `work_reports`. It has an independent `AWAITING_CONFIRMATION -> CONFIRMED` or `AWAITING_CONFIRMATION -> DISPUTED` lifecycle. Corrections use an immutable `VOIDED -> replacement` chain. Payment status never changes `TechnicianWorkReport.status`, and recording or acknowledging an amount never changes the approved report amount.
+
+Security invariants:
+
+- Manager actions lock the tenant report and payment rows, recheck active tenant and Technician memberships, and require non-delegable `technician_payments.*` permissions.
+- Technician querysets start with the active tenant and add `report__technician=request.membership`; only the owner can acknowledge or dispute an awaiting record.
+- Browser input never controls tenant, report owner, amount snapshot, actor, lifecycle status, response fields, or void fields.
+- A conditional database uniqueness constraint prevents more than one non-voided payment per report; the report row lock serializes normal concurrent recording attempts.
+- Payment and history rows reject hard deletion and unrestricted queryset updates. Each transition writes both `WorkReportHistory` and `AuditLog` with payment snapshot and request metadata.
+- Once any payment history exists, the approved agreed amount cannot be corrected. The payment snapshot therefore remains anchored to the approved amount seen at recording time.
+
+Billing isolation:
+
+- The workflow imports no billing, invoice, receipt, supplier-payment, inventory, accounting, bank, mobile-money, or gateway service.
+- Payment method is a descriptive label only. No provider identity, account credential, callback, reconciliation, instruction, PDF, or money movement is created.
+- Tests assert that `BillingDocument`, `SupplierPaymentRecord`, and `StockMovement` counts remain unchanged through record and acknowledgement transitions.
+- The feature is exposed only under `/work-reports/`; customer pages, Sales-owned views, billing print templates, exports, finance reports, and public integration APIs are unchanged.
+
+Migration `work_reports.0003` is additive: it creates the payment table and widens history event/status fields. Cross-row tenant and replacement consistency is enforced by model validation and locked lifecycle services because portable SQL check constraints cannot reference related rows.

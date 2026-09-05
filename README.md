@@ -102,7 +102,7 @@ Only active, non-deleted customers from the integration consumer's organization 
 
 ## Inventory Module
 
-The tenant-scoped inventory module is available at `/inventory/`. It reuses JIMS customers, quotations, invoices, receipts, token authentication, permissions, and audit logs.
+The tenant-scoped inventory module is available at `/inventory/`. It reuses JBMS customers, quotations, invoices, receipts, token authentication, permissions, and audit logs.
 
 Key lifecycle rules:
 

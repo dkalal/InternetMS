@@ -44,7 +44,7 @@ Browser
 
 `messaging` owns message templates, previews, and delivery workflows.
 
-`work_reports` owns technician work reports, approval transitions, and immutable report history.
+`work_reports` owns technician work reports, approval transitions, manual Technician payment acknowledgements, and immutable report/payment history. It does not own billing, payroll, accounting, or money movement.
 
 `templates` owns shared templates and cross-app UI fragments.
 
