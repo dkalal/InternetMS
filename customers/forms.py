@@ -231,7 +231,13 @@ class InternetServiceCreateForm(forms.ModelForm):
         ).order_by("name", "id")
         self.fields["package"].label_from_instance = CustomerForm._package_choice_label
         self.fields["name"].initial = "Primary Internet Service"
-        self.fields["service_code"].help_text = "Stable tenant-unique reference, for example CUST-104-FIBRE-01."
+        self.fields["service_code"].required = False
+        self.fields["service_code"].label = "Service code (optional)"
+        self.fields["service_code"].help_text = (
+            "Leave blank to generate a stable tenant-unique code automatically. "
+            "You may enter your own reference, for example CUST-104-FIBRE-01."
+        )
+        self.fields["service_code"].widget.attrs.setdefault("placeholder", "Generated automatically if blank")
         apply_tailwind(self)
 
     def clean(self):

@@ -6,7 +6,13 @@ from django.forms import BaseInlineFormSet, inlineformset_factory
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
 from products.models import Product, ProductCategory, UnitOfMeasure
-from users.permissions import PermissionCode, has_tenant_permission, permission_grant_for
+from users.permissions import (
+    PermissionCode,
+    discount_authorization_error,
+    has_tenant_permission,
+    maximum_discount_for,
+    permission_grant_for,
+)
 
 from .models import Cart, CartLine, InventorySettings, Purchase, PurchaseLine, StockAdjustment, StockUnit, Supplier, SupplierPaymentRecord
 
@@ -16,6 +22,13 @@ class TenantFormMixin:
         self.organization = organization
         super().__init__(*args, **kwargs)
         apply_tailwind(self)
+
+
+class PurchaseProductChoiceField(forms.ModelChoiceField):
+    """Tenant-scoped purchase choice with a useful, searchable display label."""
+
+    def label_from_instance(self, product):
+        return f'{product.name} · {product.sku}' if product.sku else product.name
 
 
 class ProductCategoryForm(TenantFormMixin, forms.ModelForm):
@@ -159,6 +172,11 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
+    product = PurchaseProductChoiceField(
+        queryset=Product.objects.none(),
+        empty_label='Select a product',
+    )
+
     class Meta:
         model = PurchaseLine
         fields = ['product', 'quantity', 'unit_cost', 'batch_reference', 'expiry_date', 'serial_numbers']
@@ -173,7 +191,12 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['product'].queryset = Product.objects.filter(
             tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
-        )
+        ).order_by('name', 'sku')
+        self.fields['product'].widget.attrs.update({
+            'data-search-label': 'Product',
+            'data-search-placeholder': 'Search products by name or SKU...',
+            'data-empty-label': 'Select a product',
+        })
 
     def clean(self):
         cleaned = super().clean()
@@ -202,7 +225,7 @@ class PurchaseLineFormSet(BaseInlineFormSet):
             form.organization = organization
             form.fields['product'].queryset = Product.objects.filter(
                 tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
-            )
+            ).order_by('name', 'sku')
 
     def get_form_kwargs(self, index):
         kwargs = super().get_form_kwargs(index)
@@ -299,7 +322,19 @@ class CartForm(TenantFormMixin, forms.ModelForm):
         for name in ('sale_pricing_category', 'discount_amount', 'tax_rate'):
             if self.fields[name].disabled:
                 self.fields[name].help_text += ' Admin controlled.'
-        self.discount_grant = permission_grant_for(membership, PermissionCode.CART_DISCOUNT_APPLY)
+        lines = list(self.instance.lines.all()) if self.instance.pk else []
+        gross_subtotal = sum(
+            (line.quantity * line.unit_price for line in lines), Decimal('0.00')
+        )
+        permitted_discount = maximum_discount_for(membership, gross_subtotal)
+        if can_discount and permitted_discount is not None:
+            line_discounts = sum((line.discount_amount for line in lines), Decimal('0.00'))
+            remaining_cart_discount = max(permitted_discount - line_discounts, Decimal('0.00'))
+            self.fields['discount_amount'].widget.attrs['max'] = f'{remaining_cart_discount:.2f}'
+            self.fields['discount_amount'].help_text += (
+                f' Your current total discount limit is TZS {permitted_discount:,.2f}, '
+                f'including item discounts; up to TZS {remaining_cart_discount:,.2f} remains here.'
+            )
 
     def clean(self):
         cleaned = super().clean()
@@ -311,15 +346,16 @@ class CartForm(TenantFormMixin, forms.ModelForm):
         if (cleaned.get('tax_rate') or 0) < 0:
             self.add_error('tax_rate', 'VAT/tax rate cannot be negative.')
         discount = cleaned.get('discount_amount') or Decimal('0.00')
-        if self.discount_grant is not None:
-            limits = []
-            if self.discount_grant.max_discount_percent is not None:
-                limits.append((self.instance.subtotal * self.discount_grant.max_discount_percent / Decimal('100.00')).quantize(Decimal('0.01')))
-            if self.discount_grant.max_discount_amount is not None:
-                limits.append(self.discount_grant.max_discount_amount)
-            permitted = min(limits) if limits else Decimal('0.00')
-            if discount > permitted and discount != self.instance.discount_amount:
-                self.add_error('discount_amount', f'Your discount limit for this cart is TZS {permitted:,.2f}. Request manager approval for a higher amount.')
+        lines = list(self.instance.lines.all()) if self.instance.pk else []
+        gross_subtotal = sum((line.quantity * line.unit_price for line in lines), Decimal('0.00'))
+        line_discounts = sum((line.discount_amount for line in lines), Decimal('0.00'))
+        error = discount_authorization_error(
+            self.membership,
+            gross_subtotal=gross_subtotal,
+            total_discount=line_discounts + discount,
+        )
+        if error:
+            self.add_error('discount_amount', error)
         return cleaned
 
 
@@ -330,8 +366,11 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         model = CartLine
         fields = ['product', 'quantity', 'discount_amount']
 
-    def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD, **kwargs):
+    def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD,
+                 cart=None, membership=None, **kwargs):
         self.sale_pricing_category = sale_pricing_category
+        self.cart = cart
+        self.membership = membership
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['product'].queryset = Product.objects.filter(tenant=organization, is_active=True).order_by('name')
         product_id = self.data.get('product') if self.is_bound else (
@@ -345,6 +384,14 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             self.fields['serial_units'].initial = [
                 str(value) for value in self.instance.serial_selections.values_list('stock_unit_id', flat=True)
             ]
+        can_discount = (
+            has_tenant_permission(
+                membership.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership
+            ) if membership else False
+        )
+        self.fields['discount_amount'].disabled = not can_discount
+        if not can_discount:
+            self.fields['discount_amount'].help_text = 'Administrator controlled.'
 
     def clean(self):
         cleaned = super().clean()
@@ -368,6 +415,29 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             sale_pricing_category=self.sale_pricing_category, quantity=quantity,
         ) * quantity:
             self.add_error('discount_amount', 'Discount cannot exceed the line amount.')
+        if product and self.cart is not None:
+            from .services import CartService
+
+            unit_price, _ = CartService.line_pricing(
+                product=product,
+                quantity=quantity,
+                customer=self.cart.customer,
+                sale_pricing_category=self.cart.sale_pricing_category,
+            )
+            other_lines = self.cart.lines.exclude(pk=self.instance.pk) if self.instance.pk else self.cart.lines.all()
+            gross_subtotal = sum(
+                (line.quantity * line.unit_price for line in other_lines), Decimal('0.00')
+            ) + quantity * unit_price
+            total_discount = sum(
+                (line.discount_amount for line in other_lines), Decimal('0.00')
+            ) + discount + self.cart.discount_amount
+            error = discount_authorization_error(
+                self.membership,
+                gross_subtotal=gross_subtotal,
+                total_discount=total_discount,
+            )
+            if error:
+                self.add_error('discount_amount', error)
         return cleaned
 
 

@@ -64,9 +64,6 @@
       {% if can_register_payment %}
         <a href="{% url 'billing:create_receipt_from_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create receipt</a>
       {% endif %}
-      {% if can_resolve_subscription_issue %}
-        <a href="{% url 'billing:resolve_subscription_invoice_issue' period_id=linked_subscription_period.id %}" class="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100">Resolve issue</a>
-      {% endif %}
       {% if can_void_invoice %}
         <a href="{% url 'billing:void_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Void</a>
       {% endif %}

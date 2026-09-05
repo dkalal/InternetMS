@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from audit.models import AuditLog
@@ -56,39 +56,65 @@ class InternetServiceDomainService:
         )
 
     @classmethod
+    def _next_service_code(cls, *, organization, customer: Customer) -> str:
+        """Return the next readable code while the customer row is locked."""
+        prefix = f"CUST-{customer.id}-SVC-"
+        existing_codes = InternetService.objects.unscoped().filter(
+            tenant=organization,
+            service_code__startswith=prefix,
+        ).values_list("service_code", flat=True)
+        used_numbers = set()
+        for code in existing_codes:
+            suffix = code[len(prefix):]
+            if suffix.isdigit():
+                used_numbers.add(int(suffix))
+        sequence = 1
+        while sequence in used_numbers:
+            sequence += 1
+        return f"{prefix}{sequence:02d}"
+
+    @classmethod
     def add_internet_service(
         cls, *, organization, actor, customer_id: int, site_id: int,
-        service_code: str, name: str, ip_address=None, vlan_id=None,
+        service_code: str | None, name: str, ip_address=None, vlan_id=None,
         installed_at=None, technical_notes="",
     ) -> InternetService:
         cls._require_update_permission(organization=organization, actor=actor)
         service_code = (service_code or "").strip()
-        if not service_code:
-            raise CustomerServiceError("Service code is required.")
-        with transaction.atomic():
-            customer = Customer.all_objects.select_for_update().filter(
-                tenant=organization, id=customer_id, is_deleted=False,
-            ).first()
-            site = CustomerSite.objects.select_for_update().filter(
-                tenant=organization, customer_id=customer_id, id=site_id,
-            ).first()
-            if customer is None or site is None:
-                raise CustomerServiceError("Customer site not found.")
-            if not customer.is_internet_customer:
-                raise CustomerServiceError("Internet services can only be added to Internet customers.")
-            if InternetService.objects.filter(tenant=organization, service_code=service_code).exists():
-                raise CustomerServiceError("Service code already exists in this tenant.")
-            service = InternetService.objects.create(
-                organization=organization, tenant=organization, customer=customer, site=site,
-                service_code=service_code, name=(name or "Primary Internet Service").strip(),
-                ip_address=ip_address or None, vlan_id=vlan_id or None,
-                installed_at=installed_at, technical_notes=(technical_notes or "").strip(),
-            )
-            cls._audit(
-                organization=organization, actor=actor, action="internet_service.created", service=service,
-                new_value={"status": service.operational_status}, metadata={"customer_id": customer.id, "site_id": site.id},
-            )
-            return service
+        try:
+            with transaction.atomic():
+                customer = Customer.all_objects.select_for_update().filter(
+                    tenant=organization, id=customer_id, is_deleted=False,
+                ).first()
+                site = CustomerSite.objects.select_for_update().filter(
+                    tenant=organization, customer_id=customer_id, id=site_id,
+                ).first()
+                if customer is None or site is None:
+                    raise CustomerServiceError("Customer site not found.")
+                if not customer.is_internet_customer:
+                    raise CustomerServiceError("Internet services can only be added to Internet customers.")
+                if not service_code:
+                    service_code = cls._next_service_code(
+                        organization=organization,
+                        customer=customer,
+                    )
+                if InternetService.objects.filter(tenant=organization, service_code=service_code).exists():
+                    raise CustomerServiceError("Service code already exists in this tenant.")
+                service = InternetService.objects.create(
+                    organization=organization, tenant=organization, customer=customer, site=site,
+                    service_code=service_code, name=(name or "Primary Internet Service").strip(),
+                    ip_address=ip_address or None, vlan_id=vlan_id or None,
+                    installed_at=installed_at, technical_notes=(technical_notes or "").strip(),
+                )
+                cls._audit(
+                    organization=organization, actor=actor, action="internet_service.created", service=service,
+                    new_value={"status": service.operational_status}, metadata={"customer_id": customer.id, "site_id": site.id},
+                )
+                return service
+        except IntegrityError as exc:
+            raise CustomerServiceError(
+                "Unable to reserve a unique service code. Retry or enter a different service code."
+            ) from exc
 
     @classmethod
     def assign_initial_subscription(

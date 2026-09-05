@@ -1,13 +1,15 @@
 from django import forms
+from django.forms import BaseFormSet, formset_factory
+from django.utils import timezone
 
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
 
-from .models import TechnicianWorkReport
+from .models import TechnicianPaymentRecord, TechnicianWorkReport
 
 
 REPORT_FIELDS = (
-    "work_title", "client_name", "customer", "service_date", "work_location",
+    "work_title", "client_name", "customer", "work_location",
     "activity_description", "agreed_amount", "internal_notes",
 )
 
@@ -17,7 +19,6 @@ class WorkReportForm(forms.ModelForm):
         model = TechnicianWorkReport
         fields = REPORT_FIELDS
         widgets = {
-            "service_date": forms.DateInput(attrs={"type": "date"}),
             "activity_description": forms.Textarea(attrs={"rows": 6}),
             "internal_notes": forms.Textarea(attrs={"rows": 3}),
             "agreed_amount": forms.NumberInput(attrs={"min": "0", "step": "0.01"}),
@@ -26,12 +27,14 @@ class WorkReportForm(forms.ModelForm):
             "work_title": "Work title or type",
             "client_name": "Client or company name",
             "customer": "Linked customer (optional)",
-            "activity_description": "Work completed",
-            "agreed_amount": "Agreed Technician amount",
+            "activity_description": "Work description",
+            "agreed_amount": "Total agreed amount for the complete job",
         }
         help_texts = {
+            "client_name": "Optional. Add a client or company when there is one.",
             "customer": "Choose a customer only when this work relates to an existing tenant customer.",
-            "agreed_amount": "Private: visible only to you and authorized Managers.",
+            "activity_description": "Describe the complete job. Work-date notes can add optional daily detail.",
+            "agreed_amount": "One private total for the complete job; visible only to you and authorized Managers.",
             "internal_notes": "Optional internal context for the reviewer.",
         }
 
@@ -48,6 +51,64 @@ class WorkReportForm(forms.ModelForm):
         self.fields["client_name"].widget.attrs.setdefault("placeholder", "Customer or company")
         self.fields["work_location"].widget.attrs.setdefault("placeholder", "Site, branch, area, or address")
         apply_tailwind(self)
+
+
+class WorkDateForm(forms.Form):
+    service_date = forms.DateField(
+        required=False,
+        label="Work date",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    activity_note = forms.CharField(
+        required=False,
+        max_length=500,
+        label="Work done that day (optional)",
+        widget=forms.TextInput(attrs={"placeholder": "Optional daily detail"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["service_date"].widget.attrs["max"] = timezone.localdate().isoformat()
+        apply_tailwind(self)
+
+
+class BaseWorkDateFormSet(BaseFormSet):
+    def add_fields(self, form, index):
+        super().add_fields(form, index)
+        form.fields["DELETE"].widget = forms.HiddenInput()
+
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+        seen = set()
+        valid_dates = 0
+        today = timezone.localdate()
+        for form in self.forms:
+            if not hasattr(form, "cleaned_data") or form.cleaned_data.get("DELETE"):
+                continue
+            service_date = form.cleaned_data.get("service_date")
+            activity_note = (form.cleaned_data.get("activity_note") or "").strip()
+            if not service_date:
+                if activity_note:
+                    form.add_error("service_date", "Choose a work date for this note.")
+                continue
+            valid_dates += 1
+            if service_date > today:
+                form.add_error("service_date", "Work dates cannot be in the future.")
+            if service_date in seen:
+                form.add_error("service_date", "This work date is already listed.")
+            seen.add(service_date)
+        if valid_dates == 0:
+            raise forms.ValidationError("Add at least one work date.")
+
+
+WorkDateFormSet = formset_factory(
+    WorkDateForm,
+    formset=BaseWorkDateFormSet,
+    extra=0,
+    can_delete=True,
+)
 
 class RejectionForm(forms.Form):
     reason = forms.CharField(
@@ -66,3 +127,82 @@ class ApprovedCorrectionForm(WorkReportForm):
         help_text="Required. The prior approved values and this reason remain in immutable history.",
         widget=forms.Textarea(attrs={"rows": 3}),
     )
+
+
+class TechnicianPaymentForm(forms.ModelForm):
+    confirm_adjusted_amount = forms.BooleanField(
+        required=False,
+        label="I approve this adjusted final amount",
+    )
+
+    class Meta:
+        model = TechnicianPaymentRecord
+        fields = (
+            "amount_paid", "payment_date", "payment_method", "reference",
+            "manager_note", "adjustment_reason",
+        )
+        widgets = {
+            "amount_paid": forms.NumberInput(attrs={"min": "0.01", "step": "0.01"}),
+            "payment_date": forms.DateInput(attrs={"type": "date"}),
+            "manager_note": forms.Textarea(attrs={"rows": 3}),
+            "adjustment_reason": forms.Textarea(attrs={"rows": 3}),
+        }
+        labels = {
+            "amount_paid": "Amount paid",
+            "reference": "Reference (optional)",
+            "manager_note": "Manager note (optional)",
+            "adjustment_reason": "Adjustment reason",
+        }
+        help_texts = {
+            "payment_method": "Descriptive label only; JBMS does not validate or transfer money.",
+            "adjustment_reason": "Required when the final amount differs from the approved agreed amount.",
+        }
+
+    def __init__(self, *args, report, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.report = report
+        self.fields["amount_paid"].initial = report.agreed_amount
+        apply_tailwind(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        amount = cleaned.get("amount_paid")
+        if amount is not None and amount != self.report.agreed_amount:
+            reason = (cleaned.get("adjustment_reason") or "").strip()
+            if not reason:
+                self.add_error("adjustment_reason", "Explain why the final paid amount differs.")
+            if cleaned.get("confirm_adjusted_amount") is not True:
+                self.add_error(
+                    "confirm_adjusted_amount",
+                    "Explicitly approve the adjusted final amount.",
+                )
+        return cleaned
+
+
+class PaymentDisputeForm(forms.Form):
+    reason = forms.CharField(
+        label="Dispute reason",
+        min_length=5,
+        strip=True,
+        widget=forms.Textarea(attrs={
+            "rows": 4,
+            "placeholder": "Explain what is incorrect about this payment record.",
+        }),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+
+
+class PaymentVoidForm(forms.Form):
+    reason = forms.CharField(
+        label="Reason for voiding",
+        min_length=5,
+        strip=True,
+        widget=forms.Textarea(attrs={"rows": 4}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)

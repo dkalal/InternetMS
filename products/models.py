@@ -3,6 +3,8 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.db.models.signals import m2m_changed
+from django.dispatch import receiver
 from django.urls import reverse
 from django.contrib.humanize.templatetags.humanize import intcomma
 from users.tenant_models import TenantScopedManager
@@ -145,6 +147,23 @@ class ProductCategory(models.Model):
             raise ValidationError({'default_unit': 'Default unit must belong to the active tenant.'})
         if self.pk and self.default_unit_id and not self.allowed_units.filter(pk=self.default_unit_id).exists():
             raise ValidationError({'default_unit': 'Default unit must be one of the category allowed units.'})
+
+
+@receiver(m2m_changed, sender=ProductCategory.allowed_units.through)
+def protect_category_unit_tenant_boundary(sender, instance, action, reverse, pk_set, **kwargs):
+    """Reject cross-tenant category/unit links from every ORM write path."""
+    if action != 'pre_add' or not pk_set:
+        return
+    if reverse:
+        has_foreign_link = ProductCategory.objects.unscoped().filter(pk__in=pk_set).exclude(
+            tenant_id=instance.tenant_id,
+        ).exists()
+    else:
+        has_foreign_link = UnitOfMeasure.objects.unscoped().filter(pk__in=pk_set).exclude(
+            tenant_id=instance.tenant_id,
+        ).exists()
+    if has_foreign_link:
+        raise ValidationError('Allowed units and product categories must belong to the same tenant.')
 
 
 class Product(models.Model):

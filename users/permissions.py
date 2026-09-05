@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
+
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 
@@ -73,6 +75,12 @@ class PermissionCode:
     TECHNICIAN_WORK_REPORTS_APPROVE = "technician_work_reports.approve"
     TECHNICIAN_WORK_REPORTS_REJECT = "technician_work_reports.reject"
     TECHNICIAN_WORK_REPORTS_CORRECT_APPROVED = "technician_work_reports.correct_approved"
+    TECHNICIAN_PAYMENTS_VIEW_OWN = "technician_payments.view_own"
+    TECHNICIAN_PAYMENTS_VIEW_ALL = "technician_payments.view_all"
+    TECHNICIAN_PAYMENTS_RECORD = "technician_payments.record"
+    TECHNICIAN_PAYMENTS_CONFIRM_OWN = "technician_payments.confirm_own"
+    TECHNICIAN_PAYMENTS_DISPUTE_OWN = "technician_payments.dispute_own"
+    TECHNICIAN_PAYMENTS_VOID = "technician_payments.void"
 
     # Compatibility aliases used by existing views while they are migrated.
     TENANT_READ = CUSTOMERS_VIEW
@@ -135,6 +143,9 @@ TECHNICIAN_BASELINE = frozenset({
     PermissionCode.TECHNICIAN_WORK_REPORTS_VIEW_OWN,
     PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN,
     PermissionCode.TECHNICIAN_WORK_REPORTS_SUBMIT_OWN,
+    PermissionCode.TECHNICIAN_PAYMENTS_VIEW_OWN,
+    PermissionCode.TECHNICIAN_PAYMENTS_CONFIRM_OWN,
+    PermissionCode.TECHNICIAN_PAYMENTS_DISPUTE_OWN,
 })
 
 WORK_REPORT_MANAGEMENT_PERMISSIONS = frozenset({
@@ -142,6 +153,9 @@ WORK_REPORT_MANAGEMENT_PERMISSIONS = frozenset({
     PermissionCode.TECHNICIAN_WORK_REPORTS_APPROVE,
     PermissionCode.TECHNICIAN_WORK_REPORTS_REJECT,
     PermissionCode.TECHNICIAN_WORK_REPORTS_CORRECT_APPROVED,
+    PermissionCode.TECHNICIAN_PAYMENTS_VIEW_ALL,
+    PermissionCode.TECHNICIAN_PAYMENTS_RECORD,
+    PermissionCode.TECHNICIAN_PAYMENTS_VOID,
 })
 
 TENANT_OPERATION_PERMISSIONS = frozenset({
@@ -220,6 +234,51 @@ def permission_grant_for(membership, action_code: str):
     }:
         return None
     return membership.permission_grants.filter(action_code=action_code).first()
+
+
+def maximum_discount_for(membership, gross_subtotal) -> Decimal | None:
+    """Return the member's total transaction-discount cap; ``None`` means unlimited."""
+    gross_subtotal = max(Decimal(gross_subtotal or 0), Decimal("0.00"))
+    if membership is None or not membership.is_active:
+        return Decimal("0.00")
+    if membership.base_role in {
+        TenantMembership.BaseRole.SUPER_ADMIN,
+        TenantMembership.BaseRole.ADMIN_MANAGER,
+    }:
+        return None
+    if PermissionCode.CART_DISCOUNT_APPLY not in permissions_for_membership(membership):
+        return Decimal("0.00")
+
+    grant = permission_grant_for(membership, PermissionCode.CART_DISCOUNT_APPLY)
+    if grant is None:
+        return Decimal("0.00")
+    limits = []
+    if grant.max_discount_percent is not None:
+        limits.append(gross_subtotal * grant.max_discount_percent / Decimal("100.00"))
+    if grant.max_discount_amount is not None:
+        limits.append(grant.max_discount_amount)
+    # A grant without a configured financial boundary is deliberately fail-closed.
+    permitted = min(limits) if limits else Decimal("0.00")
+    return max(permitted, Decimal("0.00")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def discount_authorization_error(membership, *, gross_subtotal, total_discount) -> str | None:
+    """Describe why a combined line/cart discount is not authorized, if applicable."""
+    total_discount = Decimal(total_discount or 0)
+    if total_discount <= 0:
+        return None
+    permitted = maximum_discount_for(membership, gross_subtotal)
+    if permitted is None or total_discount <= permitted:
+        return None
+    if permitted == 0 and (
+        membership is None
+        or PermissionCode.CART_DISCOUNT_APPLY not in permissions_for_membership(membership)
+    ):
+        return "You do not have permission to apply discounts."
+    return (
+        f"The total discount is above your authorized limit of TZS {permitted:,.2f}. "
+        "Reduce the line or cart discount, or ask an Administrator / Manager to complete the sale."
+    )
 
 
 def user_has_permission(user, permission: str) -> bool:

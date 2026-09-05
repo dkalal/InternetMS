@@ -4,6 +4,7 @@
 
 {% block title %}{{ doc_type_display }}{% endblock %}
 {% block body_class %}jims-list-shell{% endblock %}
+{% block topbar_new_invoice %}{% if doc_type != "invoice" %}{{ block.super }}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="jims-list-page space-y-6">

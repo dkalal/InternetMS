@@ -11,6 +11,7 @@ from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
+from audit.models import AuditLog
 from billing.models import BillingDocument, CustomerSubscription, SubscriptionPeriod
 from billing.services import BillingService, LineItemInput, SubscriptionBillingService
 from customers.models import Customer, CustomerSite, InternetCustomer, InternetService
@@ -308,6 +309,47 @@ class InternetServiceCommandTests(TestCase):
             package_id=self.old_package.id, start_date=date(2026, 2, 1),
         )
         self.assertNotEqual(second.internet_service_id, self.subscription.internet_service_id)
+
+    def test_blank_service_code_is_generated_and_audited(self):
+        generated = InternetServiceDomainService.add_internet_service(
+            organization=self.org,
+            actor=self.user,
+            customer_id=self.customer.id,
+            site_id=self.site.id,
+            service_code="",
+            name="Automatically identified service",
+        )
+
+        self.assertEqual(generated.service_code, f"CUST-{self.customer.id}-SVC-01")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.org,
+                action_type="internet_service.created",
+                object_id=str(generated.id),
+            ).exists()
+        )
+
+    def test_create_service_post_accepts_blank_code_and_creates_initial_subscription(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["active_tenant_id"] = self.org.id
+        session.save()
+
+        response = self.client.post(
+            reverse("internet-service-create", args=[self.customer.id]),
+            {
+                "site": self.site.id,
+                "service_code": "",
+                "name": "Secondary fibre",
+                "package": self.new_package.id,
+                "subscription_start_date": "2026-08-27",
+            },
+        )
+
+        generated = InternetService.objects.get(name="Secondary fibre")
+        self.assertRedirects(response, reverse("internet-service-detail", args=[generated.id]))
+        self.assertEqual(generated.service_code, f"CUST-{self.customer.id}-SVC-01")
+        self.assertEqual(generated.current_subscription.package_id, self.new_package.id)
 
     def test_customer_and_package_pages_render_service_context(self):
         self.client.force_login(self.user)

@@ -45,7 +45,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _render_text(report):
-        lines = ["JIMS domain ownership audit (read only)", ""]
+        lines = ["JBMS domain ownership audit (read only)", ""]
         lines.append("Counts:")
         for key, value in report["counts"].items():
             lines.append(f"  {key}: {value}")

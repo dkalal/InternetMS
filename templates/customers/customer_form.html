@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block topbar_new_customer %}{% if form.instance.pk %}{{ block.super }}{% endif %}{% endblock %}
 {% load humanize %}
 
 {% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}

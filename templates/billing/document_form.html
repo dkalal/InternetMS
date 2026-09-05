@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block topbar_new_invoice %}{% if doc_type != "invoice" %}{{ block.super }}{% endif %}{% endblock %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
 

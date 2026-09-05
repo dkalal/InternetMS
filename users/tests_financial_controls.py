@@ -4,6 +4,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
+from audit.models import AuditLog
+
 from .models import Organization, TenantMembership, TenantPermissionGrant
 from .permissions import PermissionCode
 
@@ -38,3 +40,33 @@ class TeamFinancialControlGrantTests(TestCase):
         self.assertEqual(discount.max_discount_amount, Decimal('50000.00'))
         self.assertEqual(pricing.allowed_pricing_categories, ['technician', 'wholesale'])
         self.assertTrue(self.seller_membership.permission_grants.filter(action_code=PermissionCode.CART_TAX_RATE_EDIT).exists())
+        audit = AuditLog.objects.get(
+            action='security.member.access_changed', object_id=str(self.seller_membership.pk),
+        )
+        discount_snapshot = next(
+            item for item in audit.new_value['permission_grants']
+            if item['action_code'] == PermissionCode.CART_DISCOUNT_APPLY
+        )
+        self.assertEqual(discount_snapshot['max_discount_percent'], '5.00')
+        self.assertEqual(discount_snapshot['max_discount_amount'], '50000.00')
+
+    def test_invalid_discount_limit_fails_safely_without_erasing_existing_grants(self):
+        existing = TenantPermissionGrant.objects.create(
+            membership=self.seller_membership,
+            granted_by=self.admin_membership,
+            action_code=PermissionCode.CART_DISCOUNT_APPLY,
+            scope=TenantPermissionGrant.Scope.ASSIGNED,
+            max_discount_percent=Decimal('5.00'),
+        )
+        self.client.login(username='access-admin', password='pass')
+
+        response = self.client.post(reverse('update_member_access', args=[self.seller_membership.pk]), {
+            'base_role': TenantMembership.BaseRole.SALES,
+            'scope': TenantPermissionGrant.Scope.ASSIGNED,
+            'permissions': [PermissionCode.CART_DISCOUNT_APPLY],
+            'max_discount_percent': '101.00',
+        })
+
+        self.assertRedirects(response, reverse('team_access'))
+        existing.refresh_from_db()
+        self.assertEqual(existing.max_discount_percent, Decimal('5.00'))

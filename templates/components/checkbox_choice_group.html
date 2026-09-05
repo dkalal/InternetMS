@@ -1,0 +1,30 @@
+<fieldset class="jims-choice-group{% if field.errors %} is-invalid{% endif %}" data-choice-group{% if field.help_text and not hide_help %} aria-describedby="{{ field.auto_id }}_helptext{% if field.errors %} {{ field.auto_id }}_errors{% endif %}"{% elif field.errors %} aria-describedby="{{ field.auto_id }}_errors"{% endif %}>
+  <legend class="jims-choice-legend text-sm font-medium text-slate-700">
+    {{ field.label }}{% if field.field.required %}<span class="text-rose-600"> *</span>{% endif %}
+  </legend>
+  <span class="jims-choice-count" data-choice-count aria-live="polite">0 selected</span>
+
+  {% if field.help_text and not hide_help %}
+    <p id="{{ field.auto_id }}_helptext" class="mt-1 text-xs leading-5 text-slate-500">{{ field.help_text }}</p>
+  {% endif %}
+
+  <div class="jims-choice-grid mt-3">
+    {% for choice in field %}
+      <label class="jims-choice-card" for="{{ choice.id_for_label }}">
+        {{ choice.tag }}
+        <span class="jims-choice-card-copy">{{ choice.choice_label }}</span>
+        <span class="jims-choice-check" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none"><path d="m5 10 3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </label>
+    {% empty %}
+      <div class="jims-choice-empty">No choices are currently available.</div>
+    {% endfor %}
+  </div>
+
+  {% if field.errors %}
+    <div id="{{ field.auto_id }}_errors" class="mt-2 space-y-1 text-sm text-rose-700" role="alert">
+      {% for error in field.errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+</fieldset>

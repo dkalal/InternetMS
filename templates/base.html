@@ -40,11 +40,12 @@
                     </div>
                     <div class="flex items-center gap-2">
                         {% if SUPPORT_ACCESS %}<form method="post" action="{% url 'exit_support_access' %}">{% csrf_token %}<button type="submit" class="jims-btn jims-btn-secondary">Exit support</button></form>{% endif %}
-                        {% if "customers.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-create' %}" class="jims-btn jims-btn-secondary jims-btn-compact hidden sm:inline-flex">New customer</a>{% endif %}
-                        {% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}" class="jims-btn jims-btn-primary jims-btn-compact">New invoice</a>
-                        <form method="post" action="{% url 'inventory:cart_create' %}">
+                        {# A page overrides only the shortcut it already exposes contextually. #}
+                        {% block topbar_new_customer %}{% if "customers.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-create' %}" class="jims-btn jims-btn-secondary jims-btn-compact hidden sm:inline-flex">New customer</a>{% endif %}{% endblock %}
+                        {% block topbar_new_invoice %}{% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}" class="jims-btn jims-btn-primary jims-btn-compact">New invoice</a>{% endif %}{% endblock %}
+                        {% block topbar_start_sale %}{% if INVENTORY_CAN_MANAGE_CARTS %}<form method="post" action="{% url 'inventory:cart_create' %}">
                             {% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary">Start sale</button>
-                        </form>{% endif %}
+                        </form>{% endif %}{% endblock %}
                     </div>
                 </header>
     {% else %}

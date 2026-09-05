@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta, date
+from unittest.mock import patch
 
 from audit.models import AuditLog
 from billing.models import BillingDocument, BillingLineItem, SubscriptionPeriod
@@ -975,7 +976,8 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(response, "50,000.00 TZS")
         self.assertContains(response, "Confirmed paid coverage")
 
-        list_response = self.client.get(reverse("customer-list"))
+        with patch("customers.views.timezone.localdate", return_value=date(2026, 8, 15)):
+            list_response = self.client.get(reverse("customer-list"))
         self.assertEqual(list_response.status_code, 200)
         listed_customer = list(list_response.context["customers"])[0]
         self.assertNotEqual(listed_customer.billing_label, "Expired")
@@ -1106,8 +1108,9 @@ class CustomerRBACIsolationTests(TestCase):
         session["active_org_id"] = self.org1.id
         session.save()
 
-        detail_response = self.client.get(reverse("customer-detail", args=[self.customer_a.id]))
-        list_response = self.client.get(reverse("customer-list"))
+        with patch("customers.views.timezone.localdate", return_value=date(2026, 8, 15)):
+            detail_response = self.client.get(reverse("customer-detail", args=[self.customer_a.id]))
+            list_response = self.client.get(reverse("customer-list"))
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Billed service period")

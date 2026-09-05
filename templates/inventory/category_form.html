@@ -12,7 +12,7 @@
     <a href="{% url cancel_url %}" class="jims-btn jims-btn-secondary">Back to categories</a>
   </header>
 
-  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
+  <form method="post" class="space-y-5" data-category-unit-form data-unsaved-form data-submit-lock>
     {% csrf_token %}
     {% if form.non_field_errors %}<div class="jims-error-summary" role="alert">{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -20,12 +20,29 @@
         <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Category details</p><h2 class="mt-1 font-semibold text-slate-950">Make the category instantly recognizable</h2></div>
         <div class="space-y-6 p-5">
           <div class="grid gap-4 sm:grid-cols-2">
-            {% include "components/form_field.html" with field=form.name %}
-            {% include "components/form_field.html" with field=form.default_unit %}
-            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.allowed_units %}</div>
-            {{ form.measure_unit }}
+            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
             <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.description %}</div>
           </div>
+          <section class="jims-unit-rules" aria-labelledby="unit-rules-title">
+            <div class="jims-unit-rules-header">
+              <div><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Sales units</p><h3 id="unit-rules-title" class="mt-1 text-sm font-semibold text-slate-950">Choose allowed units, then the default</h3></div>
+              <span class="jims-step-badge">Required setup</span>
+            </div>
+            <div class="p-4 sm:p-5">
+              <div class="jims-unit-allowed">
+                <div class="jims-unit-step" aria-hidden="true">1</div>
+                <div class="min-w-0 flex-1">{% include "components/form_field.html" with field=form.allowed_units %}</div>
+              </div>
+              <div class="jims-unit-default mt-5">
+                <div class="jims-unit-step" aria-hidden="true">2</div>
+                <div class="min-w-0 flex-1">
+                  {% include "components/form_field.html" with field=form.default_unit %}
+                  <p class="mt-2 text-xs leading-5 text-slate-500">Only units selected above are available here. If you leave one allowed unit, it becomes the default automatically.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+          {{ form.measure_unit }}
           <fieldset>
             <legend class="text-sm font-medium text-slate-700">Category icon</legend>
             <p class="mt-1 text-xs leading-5 text-slate-500">Used on the catalog setup page to improve recognition. It does not change product data.</p>

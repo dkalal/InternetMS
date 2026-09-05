@@ -436,6 +436,25 @@ class InventoryService:
 
 
 class CartService:
+    @classmethod
+    def validate_discount_authority(cls, *, cart, actor, membership=None):
+        """Enforce the actor's current cap over all line and cart discounts."""
+        from users.permissions import discount_authorization_error, membership_for
+
+        membership = membership or membership_for(actor, cart.tenant)
+        lines = list(cart.lines.all())
+        gross_subtotal = sum((line.quantity * line.unit_price for line in lines), Decimal('0.00'))
+        total_discount = cart.discount_amount + sum(
+            (line.discount_amount for line in lines), Decimal('0.00')
+        )
+        error = discount_authorization_error(
+            membership,
+            gross_subtotal=gross_subtotal,
+            total_discount=total_discount,
+        )
+        if error:
+            raise InventoryError(error)
+
     WHOLESALE_TIERS = {
         Customer.PricingTier.WHOLESALE,
     }
@@ -583,6 +602,9 @@ class CartService:
                     pricing_mode=pricing_mode,
                 )
             )
+        # This execution-time gate catches stale drafts, revoked/reduced grants,
+        # and any write path that did not pass through the browser forms.
+        cls.validate_discount_authority(cart=cart, actor=actor)
         document = BillingService.create_document(
             organization=organization,
             created_by=actor,

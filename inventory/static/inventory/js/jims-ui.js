@@ -24,81 +24,153 @@
       if (!header.hasAttribute("scope")) header.setAttribute("scope", "col");
     });
 
+    var searchableSelectSequence = 0;
+
+    function initNativeSelect(select) {
+      if (!select || select.multiple) return;
+      select.classList.add("jims-select");
+    }
+
     function initSearchableSelect(select) {
       if (!select || select.dataset.searchableReady === "true" || select.multiple || select.disabled) return;
       select.dataset.searchableReady = "true";
 
-      var options = Array.prototype.slice.call(select.options);
       var selected = select.options[select.selectedIndex] || null;
+      var fieldLabel = select.dataset.searchLabel || "Options";
+      searchableSelectSequence += 1;
+      var controlId = select.id || "jims-searchable-select-" + searchableSelectSequence;
       var wrapper = document.createElement("div");
       wrapper.className = "jims-combobox";
       var input = document.createElement("input");
       input.type = "text";
       input.className = "jims-combobox-input";
+      input.id = controlId + "-search";
       input.autocomplete = "off";
       input.spellcheck = false;
       input.setAttribute("role", "combobox");
       input.setAttribute("aria-autocomplete", "list");
       input.setAttribute("aria-expanded", "false");
-      input.setAttribute("aria-label", select.dataset.searchLabel || "Search options");
+      input.setAttribute("aria-required", String(select.required));
       input.placeholder = select.dataset.searchPlaceholder || "Search options...";
-      input.value = selected ? selected.text.trim() : "";
+
+      function optionLabel(option) {
+        var label = option ? option.text.trim() : "";
+        if (option && !option.value && (!label || /^[-\u2013\u2014\s]+$/.test(label))) {
+          return select.dataset.emptyLabel || "Select " + fieldLabel.toLocaleLowerCase();
+        }
+        return label;
+      }
+
+      function selectedInputValue(option) {
+        return option && option.value ? optionLabel(option) : "";
+      }
+
+      input.value = selectedInputValue(selected);
+      var visibleLabel = select.id ? document.querySelector('label[for="' + CSS.escape(select.id) + '"]') : null;
+      if (visibleLabel) {
+        if (!visibleLabel.id) visibleLabel.id = input.id + "-label";
+        input.setAttribute("aria-labelledby", visibleLabel.id);
+      } else {
+        input.setAttribute("aria-label", fieldLabel);
+      }
+      if (select.getAttribute("aria-describedby")) input.setAttribute("aria-describedby", select.getAttribute("aria-describedby"));
+      if (select.getAttribute("aria-invalid")) input.setAttribute("aria-invalid", "true");
 
       var menu = document.createElement("div");
-      menu.className = "jims-combobox-menu";
+      menu.className = "jims-combobox-menu jims-combobox-menu-portal";
       menu.hidden = true;
       menu.setAttribute("role", "listbox");
-      menu.id = (select.id || "searchable-select") + "-options";
+      menu.setAttribute("aria-label", fieldLabel + " options");
+      menu.id = controlId + "-options";
       input.setAttribute("aria-controls", menu.id);
+      var status = document.createElement("div");
+      status.className = "jims-combobox-status";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      status.setAttribute("aria-atomic", "true");
       var activeIndex = -1;
-      var visibleButtons = [];
+      var visibleOptions = [];
+      var positionFrame = null;
+
+      function positionMenu() {
+        positionFrame = null;
+        if (menu.hidden) return;
+        if (!document.contains(input)) {
+          closeMenu();
+          menu.remove();
+          return;
+        }
+        var rect = input.getBoundingClientRect();
+        var viewportGap = 12;
+        var popupGap = 6;
+        var preferredHeight = 288;
+        var below = window.innerHeight - rect.bottom - viewportGap - popupGap;
+        var above = rect.top - viewportGap - popupGap;
+        var openAbove = below < 176 && above > below;
+        var available = Math.max(120, Math.min(preferredHeight, openAbove ? above : below));
+        var width = Math.min(Math.max(rect.width, 240), window.innerWidth - (viewportGap * 2));
+        var left = Math.max(viewportGap, Math.min(rect.left, window.innerWidth - width - viewportGap));
+
+        menu.style.left = left + "px";
+        menu.style.width = width + "px";
+        menu.style.maxHeight = available + "px";
+        var renderedHeight = Math.min(menu.scrollHeight, available);
+        menu.style.top = openAbove
+          ? Math.max(viewportGap, rect.top - renderedHeight - popupGap) + "px"
+          : Math.min(window.innerHeight - viewportGap, rect.bottom + popupGap) + "px";
+        menu.dataset.placement = openAbove ? "top" : "bottom";
+      }
+
+      function queuePosition() {
+        if (!positionFrame) positionFrame = window.requestAnimationFrame(positionMenu);
+      }
 
       function closeMenu() {
         menu.hidden = true;
         input.setAttribute("aria-expanded", "false");
         activeIndex = -1;
         input.removeAttribute("aria-activedescendant");
+        wrapper.classList.remove("is-open");
       }
 
       function setActive(index) {
-        if (!visibleButtons.length) return;
-        activeIndex = Math.max(0, Math.min(index, visibleButtons.length - 1));
-        visibleButtons.forEach(function (button, buttonIndex) {
-          var active = buttonIndex === activeIndex;
-          button.classList.toggle("is-active", active);
+        if (!visibleOptions.length) return;
+        activeIndex = Math.max(0, Math.min(index, visibleOptions.length - 1));
+        visibleOptions.forEach(function (optionNode, optionIndex) {
+          optionNode.classList.toggle("is-active", optionIndex === activeIndex);
         });
-        var activeButton = visibleButtons[activeIndex];
-        input.setAttribute("aria-activedescendant", activeButton.id);
-        activeButton.scrollIntoView({ block: "nearest" });
+        var activeOption = visibleOptions[activeIndex];
+        input.setAttribute("aria-activedescendant", activeOption.id);
+        activeOption.scrollIntoView({ block: "nearest" });
       }
 
       function choose(option) {
         select.value = option.value;
-        input.value = option.text.trim();
+        input.value = selectedInputValue(option);
         select.dispatchEvent(new Event("change", { bubbles: true }));
         closeMenu();
         input.focus();
       }
 
       function renderOptions(query) {
+        var options = Array.prototype.slice.call(select.options);
         var normalized = (query || "").trim().toLocaleLowerCase();
         var matches = options.filter(function (option) {
-          return !normalized || option.text.toLocaleLowerCase().indexOf(normalized) !== -1;
+          return !option.disabled && !option.hidden && (!normalized || optionLabel(option).toLocaleLowerCase().indexOf(normalized) !== -1);
         });
         menu.replaceChildren();
-        visibleButtons = [];
+        visibleOptions = [];
         matches.slice(0, 50).forEach(function (option, index) {
-          var button = document.createElement("button");
-          button.type = "button";
-          button.className = "jims-combobox-option";
-          button.id = menu.id + "-" + index;
-          button.setAttribute("role", "option");
-          button.setAttribute("aria-selected", String(option.value === select.value));
-          button.textContent = option.text.trim();
-          button.addEventListener("mousedown", function (event) { event.preventDefault(); });
-          button.addEventListener("click", function () { choose(option); });
-          menu.appendChild(button);
-          visibleButtons.push(button);
+          var optionNode = document.createElement("div");
+          optionNode.className = "jims-combobox-option";
+          optionNode.id = menu.id + "-" + index;
+          optionNode.setAttribute("role", "option");
+          optionNode.setAttribute("aria-selected", String(option.value === select.value));
+          optionNode.textContent = optionLabel(option);
+          optionNode.addEventListener("mousedown", function (event) { event.preventDefault(); });
+          optionNode.addEventListener("click", function () { choose(option); });
+          menu.appendChild(optionNode);
+          visibleOptions.push(optionNode);
         });
         if (!matches.length) {
           var empty = document.createElement("div");
@@ -111,26 +183,40 @@
           hint.textContent = "Keep typing to narrow " + matches.length + " results";
           menu.appendChild(hint);
         }
+        status.textContent = !matches.length
+          ? "No matching " + fieldLabel.toLocaleLowerCase() + " options"
+          : matches.length + " " + fieldLabel.toLocaleLowerCase() + " option" + (matches.length === 1 ? "" : "s") + " available";
         menu.hidden = false;
         input.setAttribute("aria-expanded", "true");
-        var selectedIndex = visibleButtons.findIndex(function (_button, index) {
+        wrapper.classList.add("is-open");
+        positionMenu();
+        var selectedIndex = visibleOptions.findIndex(function (_optionNode, index) {
           return matches[index] && matches[index].value === select.value;
         });
-        if (visibleButtons.length) setActive(selectedIndex >= 0 ? selectedIndex : 0);
+        if (visibleOptions.length) setActive(selectedIndex >= 0 ? selectedIndex : 0);
       }
 
       select.parentNode.insertBefore(wrapper, select);
       wrapper.appendChild(select);
       wrapper.appendChild(input);
-      wrapper.appendChild(menu);
+      wrapper.appendChild(status);
+      document.body.appendChild(menu);
       select.classList.add("jims-searchable-native");
+      select.tabIndex = -1;
+      select.setAttribute("aria-hidden", "true");
 
       input.addEventListener("focus", function () {
         var current = select.options[select.selectedIndex];
-        input.value = current ? current.text.trim() : "";
+        input.value = selectedInputValue(current);
         renderOptions("");
       });
-      input.addEventListener("input", function () { renderOptions(input.value); });
+      input.addEventListener("input", function () {
+        if (select.value) {
+          select.value = "";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        renderOptions(input.value);
+      });
       input.addEventListener("keydown", function (event) {
         if (event.key === "ArrowDown") {
           event.preventDefault();
@@ -139,40 +225,131 @@
         } else if (event.key === "ArrowUp") {
           event.preventDefault();
           if (menu.hidden) renderOptions(input.value);
-          else setActive(activeIndex - 1);
-        } else if (event.key === "Enter" && !menu.hidden && visibleButtons[activeIndex]) {
+          else setActive(activeIndex < 0 ? visibleOptions.length - 1 : activeIndex - 1);
+        } else if (event.key === "Enter" && !menu.hidden && visibleOptions[activeIndex]) {
           event.preventDefault();
-          visibleButtons[activeIndex].click();
+          visibleOptions[activeIndex].click();
         } else if (event.key === "Escape") {
-          event.preventDefault();
+          if (!menu.hidden) {
+            event.preventDefault();
+            closeMenu();
+            var current = select.options[select.selectedIndex];
+            input.value = selectedInputValue(current);
+          }
+        } else if (event.key === "Tab") {
           closeMenu();
         }
       });
       select.addEventListener("focus", function () { input.focus(); });
       select.addEventListener("change", function () {
         var current = select.options[select.selectedIndex];
-        input.value = current ? current.text.trim() : "";
+        input.value = selectedInputValue(current);
+        input.setAttribute("aria-invalid", "false");
       });
-      select.addEventListener("invalid", function () { input.focus(); });
+      select.addEventListener("invalid", function () {
+        input.setAttribute("aria-invalid", "true");
+        input.focus();
+      });
+      input.addEventListener("blur", function () {
+        window.setTimeout(function () {
+          if (document.activeElement !== input && !menu.contains(document.activeElement)) {
+            closeMenu();
+            var current = select.options[select.selectedIndex];
+            input.value = selectedInputValue(current);
+          }
+        }, 0);
+      });
       document.addEventListener("click", function (event) {
-        if (!wrapper.contains(event.target)) {
+        if (!wrapper.contains(event.target) && !menu.contains(event.target)) {
           closeMenu();
           var current = select.options[select.selectedIndex];
-          input.value = current ? current.text.trim() : "";
+          input.value = selectedInputValue(current);
         }
       });
+      window.addEventListener("resize", queuePosition);
+      window.addEventListener("scroll", queuePosition, true);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", queuePosition);
+        window.visualViewport.addEventListener("scroll", queuePosition);
+      }
+
+      new MutationObserver(function () {
+        var current = select.options[select.selectedIndex];
+        if (document.activeElement !== input) input.value = selectedInputValue(current);
+        if (!menu.hidden) renderOptions(input.value);
+      }).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "hidden", "label"] });
+    }
+
+    function initChoiceGroup(group) {
+      if (!group || group.dataset.choiceReady === "true") return;
+      group.dataset.choiceReady = "true";
+      var inputs = Array.prototype.slice.call(group.querySelectorAll('input[type="checkbox"]'));
+      var count = group.querySelector("[data-choice-count]");
+      function syncChoiceCount() {
+        var selectedCount = inputs.filter(function (input) { return input.checked; }).length;
+        if (count) count.textContent = selectedCount + " selected";
+      }
+      inputs.forEach(function (input) { input.addEventListener("change", syncChoiceCount); });
+      syncChoiceCount();
+    }
+
+    function initChoiceGroups(root) {
+      if (root.matches && root.matches("[data-choice-group]")) initChoiceGroup(root);
+      if (root.querySelectorAll) root.querySelectorAll("[data-choice-group]").forEach(initChoiceGroup);
+    }
+
+    function initCategoryUnitRules(form) {
+      if (!form || form.dataset.categoryUnitsReady === "true") return;
+      form.dataset.categoryUnitsReady = "true";
+      var allowedInputs = Array.prototype.slice.call(form.querySelectorAll('input[name="allowed_units"]'));
+      var defaultSelect = form.querySelector('select[name="default_unit"]');
+      if (!allowedInputs.length || !defaultSelect) return;
+
+      function syncUnitRules(userInitiated) {
+        var allowedValues = new Set(allowedInputs.filter(function (input) {
+          return input.checked && !input.disabled;
+        }).map(function (input) { return input.value; }));
+        Array.prototype.slice.call(defaultSelect.options).forEach(function (option) {
+          if (option.value) option.disabled = !allowedValues.has(option.value);
+        });
+
+        var changed = false;
+        if (defaultSelect.value && !allowedValues.has(defaultSelect.value)) {
+          defaultSelect.value = "";
+          changed = true;
+        }
+        if (userInitiated && !defaultSelect.value && allowedValues.size === 1) {
+          defaultSelect.value = Array.from(allowedValues)[0];
+          changed = true;
+        }
+        if (changed) defaultSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      allowedInputs.forEach(function (input) {
+        input.addEventListener("change", function () { syncUnitRules(true); });
+      });
+      syncUnitRules(false);
     }
 
     function initSearchableSelects(root) {
+      if (root.matches && root.matches("select")) initNativeSelect(root);
+      if (root.querySelectorAll) root.querySelectorAll("select").forEach(initNativeSelect);
       if (root.matches && root.matches("select[data-searchable-select]")) initSearchableSelect(root);
       if (root.querySelectorAll) root.querySelectorAll("select[data-searchable-select]").forEach(initSearchableSelect);
     }
 
     initSearchableSelects(document);
+    initChoiceGroups(document);
+    document.querySelectorAll("[data-category-unit-form]").forEach(initCategoryUnitRules);
     new MutationObserver(function (mutations) {
       mutations.forEach(function (mutation) {
         mutation.addedNodes.forEach(function (node) {
-          if (node.nodeType === 1) initSearchableSelects(node);
+          if (node.nodeType === 1) {
+            initSearchableSelects(node);
+            initChoiceGroups(node);
+            if (node.matches && node.matches("[data-category-unit-form]")) initCategoryUnitRules(node);
+            if (node.querySelectorAll) node.querySelectorAll("[data-category-unit-form]").forEach(initCategoryUnitRules);
+          }
         });
       });
     }).observe(document.body, { childList: true, subtree: true });
@@ -274,6 +451,7 @@
     var confirmAccept = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-accept]");
     var confirmCancel = confirmLayer && confirmLayer.querySelector("[data-confirm-dialog-cancel]");
     var pendingForm = null;
+    var pendingSubmitter = null;
     var confirmReturnFocus = null;
 
     function getCsrfToken() {
@@ -306,25 +484,37 @@
       confirmLayer.hidden = true;
       document.body.classList.remove("overflow-hidden");
       pendingForm = null;
+      pendingSubmitter = null;
       if (confirmReturnFocus && document.contains(confirmReturnFocus)) confirmReturnFocus.focus();
       confirmReturnFocus = null;
     }
 
-    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
-      form.addEventListener("submit", function (event) {
+    function requestConfirmation(event, form, source) {
         if (form.dataset.confirmed === "true" || !confirmLayer || !confirmTitle || !confirmMessage || !confirmAccept || !confirmCancel) return;
         event.preventDefault();
         ensureCsrfToken(form);
         pendingForm = form;
+        pendingSubmitter = source === form ? null : source;
         confirmReturnFocus = document.activeElement;
-        confirmTitle.textContent = form.dataset.confirmTitle || "Confirm action";
-        confirmMessage.textContent = form.dataset.confirm || "Are you sure you want to continue?";
-        confirmAccept.textContent = form.dataset.confirmAction || "Confirm";
-        confirmAccept.className = "jims-btn " + (form.dataset.confirmTone === "danger" ? "jims-btn-danger" : "jims-btn-primary");
+        confirmTitle.textContent = source.dataset.confirmTitle || "Confirm action";
+        confirmMessage.textContent = source.dataset.confirm || "Are you sure you want to continue?";
+        confirmAccept.textContent = source.dataset.confirmAction || "Confirm";
+        confirmAccept.className = "jims-btn " + (source.dataset.confirmTone === "danger" ? "jims-btn-danger" : "jims-btn-primary");
         confirmLayer.hidden = false;
         document.body.classList.add("overflow-hidden");
         confirmCancel.focus();
+    }
+
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        requestConfirmation(event, form, form);
       });
+    });
+
+    document.addEventListener("submit", function (event) {
+      var submitter = event.submitter;
+      if (!submitter || !submitter.matches("[data-confirm]")) return;
+      requestConfirmation(event, event.target, submitter);
     });
 
     if (confirmAccept) {
@@ -332,7 +522,7 @@
         if (!pendingForm) return;
         ensureCsrfToken(pendingForm);
         pendingForm.dataset.confirmed = "true";
-        pendingForm.requestSubmit();
+        pendingForm.requestSubmit(pendingSubmitter || undefined);
       });
     }
     if (confirmCancel) confirmCancel.addEventListener("click", closeConfirm);

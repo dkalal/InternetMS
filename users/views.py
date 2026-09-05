@@ -24,7 +24,7 @@ from .models import (
     TenantMembership, TenantPermissionGrant, SupportAccessSession,
 )
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -157,6 +157,23 @@ def _access_change_description(log):
             return f"Changed role from {previous} to {current}"
         return "Updated additional permissions"
     return "Updated workspace access"
+
+
+def _permission_grant_snapshot(grants):
+    return [
+        {
+            "action_code": grant.action_code,
+            "scope": grant.scope,
+            "max_discount_percent": (
+                str(grant.max_discount_percent) if grant.max_discount_percent is not None else None
+            ),
+            "max_discount_amount": (
+                str(grant.max_discount_amount) if grant.max_discount_amount is not None else None
+            ),
+            "allowed_pricing_categories": list(grant.allowed_pricing_categories or []),
+        }
+        for grant in sorted(grants, key=lambda item: item.action_code)
+    ]
 
 
 def _team_access_context(request, *, invite_form=None, invite_open=False):
@@ -482,14 +499,13 @@ def update_member_access(request, membership_id):
     if role not in {TenantMembership.BaseRole.ADMIN_MANAGER, TenantMembership.BaseRole.SALES, TenantMembership.BaseRole.TECHNICIAN}:
         raise PermissionDenied("That role cannot be assigned by a tenant manager.")
     requested = set(request.POST.getlist("permissions"))
+    if role == TenantMembership.BaseRole.ADMIN_MANAGER:
+        # Manager authority comes exclusively from the base role; exception
+        # grants must not linger invisibly after a promotion.
+        requested = set()
     scope = request.POST.get("scope", TenantPermissionGrant.Scope.OWN)
     for action in requested:
         validate_delegated_grant(actor_membership=actor, target_membership=target, action_code=action, scope=scope)
-    before = {"base_role": target.base_role, "permissions": sorted(target.permission_grants.values_list("action_code", flat=True))}
-    target.base_role = role
-    target.full_clean()
-    target.save(update_fields=["base_role", "updated_at"])
-    target.permission_grants.all().delete()
     grants = []
     for action in sorted(requested):
         grant = TenantPermissionGrant(membership=target, action_code=action, scope=scope, granted_by=actor)
@@ -501,13 +517,35 @@ def update_member_access(request, membership_id):
                 value for value in request.POST.getlist("allowed_pricing_categories")
                 if value in {"standard", "technician", "wholesale"}
             ]
-        grant.full_clean()
+        try:
+            # Existing grants are replaced atomically below, so validate the
+            # submitted fields and policy without treating that row as a clash.
+            grant.full_clean(validate_unique=False, validate_constraints=False)
+        except ValidationError as exc:
+            messages.error(request, "Access was not changed: " + " ".join(exc.messages))
+            return redirect("team_access")
         grants.append(grant)
+    existing_grants = list(target.permission_grants.all())
+    before = {
+        "base_role": target.base_role,
+        "permissions": sorted(grant.action_code for grant in existing_grants),
+        "permission_grants": _permission_grant_snapshot(existing_grants),
+    }
+    target.base_role = role
+    target.full_clean()
+    target.save(update_fields=["base_role", "updated_at"])
+    target.permission_grants.all().delete()
     TenantPermissionGrant.objects.bulk_create(grants)
     AuditLog.objects.create(
         organization=tenant, tenant=tenant, actor=request.user,
         action="security.member.access_changed", object_type="TenantMembership", object_id=str(target.pk),
-        old_value=before, new_value={"base_role": role, "permissions": sorted(requested), "scope": scope},
+        old_value=before,
+        new_value={
+            "base_role": role,
+            "permissions": sorted(requested),
+            "scope": scope,
+            "permission_grants": _permission_grant_snapshot(grants),
+        },
         metadata=_request_metadata(request),
     )
     messages.success(request, "Access updated.")

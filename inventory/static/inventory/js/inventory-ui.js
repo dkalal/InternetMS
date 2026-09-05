@@ -336,6 +336,10 @@
           return response.json().then(function (data) { return { response: response, data: data }; });
         }).then(function (result) {
           if (!result.response.ok) {
+            if (result.data.cart_html) updatePos(result.data);
+            setCheckoutPending(true);
+            var detailsPanel = detailsForm.closest("details");
+            if (detailsPanel) detailsPanel.open = true;
             showPosFeedback(result.data.message || "Sale details could not be saved.", "warning");
             return;
           }
@@ -358,6 +362,11 @@
         detailsForm.addEventListener("input", queuePosDetailsSave);
         detailsForm.addEventListener("change", queuePosDetailsSave);
         detailsForm.addEventListener("submit", function (event) {
+          if (event.submitter && event.submitter.matches("[data-pos-convert]")) {
+            window.clearTimeout(detailsTimer);
+            if (detailsRequest) detailsRequest.abort();
+            return;
+          }
           event.preventDefault();
           window.clearTimeout(detailsTimer);
           savePosDetails();

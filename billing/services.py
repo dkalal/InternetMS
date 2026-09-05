@@ -291,7 +291,7 @@ class BillingService:
 
     @classmethod
     def invoice_credit_capacity(cls, *, organization: Organization, invoice: BillingDocument) -> Decimal:
-        # JIMS does not yet model post-payment refunds or customer credit
+        # JBMS does not yet model post-payment refunds or customer credit
         # balances. A credit note therefore may only reduce the amount that is
         # currently unpaid on this invoice; it must never over-settle it.
         return cls.invoice_remaining_balance(organization=organization, invoice=invoice)
@@ -2422,6 +2422,43 @@ class SubscriptionBillingService:
                 period_start=period_start,
             ).first()
             if existing is not None:
+                if existing.status == SubscriptionPeriod.Status.CANCELLED:
+                    replaced_invoice_id = existing.invoice_id
+                    if replaced_invoice_id is not None:
+                        replaced_status = (
+                            BillingDocument.objects.unscoped()
+                            .filter(
+                                pk=replaced_invoice_id,
+                                organization=organization,
+                                document_type=BillingDocument.DocumentType.INVOICE,
+                            )
+                            .values_list("status", flat=True)
+                            .first()
+                        )
+                        if replaced_status != BillingDocument.Status.VOID:
+                            raise BillingServiceError(
+                                "This cancelled billing period is linked to an invoice that is not void. "
+                                "Resolve the invoice state before retrying the renewal."
+                            )
+
+                    # A void invoice is immutable, but the intended coverage period can be
+                    # retried. Re-open the same period so its unique business key remains
+                    # stable and the replacement invoice can take over the active link.
+                    SubscriptionPeriod.objects.unscoped().filter(pk=existing.pk).update(
+                        period_end=period_end,
+                        months=months,
+                        free_months=amount["free_months"],
+                        original_amount=amount["original"],
+                        discount_amount=amount["discount"],
+                        final_amount=amount["final"],
+                        status=SubscriptionPeriod.Status.PENDING,
+                        invoice=None,
+                        receipt=None,
+                        promotion=promotion,
+                        paid_at=None,
+                    )
+                    existing.refresh_from_db()
+                    existing._replaced_void_invoice_id = replaced_invoice_id
                 return existing
             overlap = (
                 SubscriptionPeriod.objects.unscoped()
@@ -2585,6 +2622,7 @@ class SubscriptionBillingService:
             return subscription
 
     @classmethod
+    @transaction.atomic
     def renew(
         cls,
         *,
@@ -2627,12 +2665,43 @@ class SubscriptionBillingService:
             promotion=promotion,
         )
         if issue_invoice:
-            cls.create_invoice_for_period(
+            replacement_invoice = cls.create_invoice_for_period(
                 organization=organization,
                 created_by=created_by,
                 period=period,
                 due_date=due_date,
             )
+            replaced_invoice_id = getattr(period, "_replaced_void_invoice_id", None)
+            if replaced_invoice_id:
+                BillingDocument.objects.unscoped().filter(
+                    pk=replacement_invoice.pk,
+                    organization=organization,
+                ).update(original_invoice_id=replaced_invoice_id)
+                AuditLog.objects.create(
+                    organization=organization,
+                    tenant=organization,
+                    actor=created_by,
+                    performed_by=created_by,
+                    action="subscription.period_reopened",
+                    action_type="subscription.period_reopened",
+                    object_type="SubscriptionPeriod",
+                    object_id=str(period.id),
+                    document_id=str(replacement_invoice.id),
+                    old_value={
+                        "status": SubscriptionPeriod.Status.CANCELLED,
+                        "invoice_id": replaced_invoice_id,
+                    },
+                    new_value={
+                        "status": SubscriptionPeriod.Status.INVOICED,
+                        "invoice_id": replacement_invoice.id,
+                    },
+                    metadata={
+                        "subscription_id": subscription.id,
+                        "replaced_void_invoice_id": replaced_invoice_id,
+                        "replacement_invoice_id": replacement_invoice.id,
+                    },
+                    performed_at=timezone.now(),
+                )
             period.refresh_from_db()
         return period
 

@@ -11,7 +11,14 @@ from billing.services import BillingService, BillingServiceError, LineItemInput
 from customers.models import Customer
 from integrations.services import resolve_integration_consumer
 from products.models import Product, ProductCategory
-from users.permissions import PermissionCode, has_tenant_permission, membership_for, permission_grant_for, sales_document_queryset_for
+from users.permissions import (
+    PermissionCode,
+    discount_authorization_error,
+    has_tenant_permission,
+    membership_for,
+    permission_grant_for,
+    sales_document_queryset_for,
+)
 
 from .models import DocumentSerialSelection, InventoryBalance, StockMovement, StockUnit, Supplier
 from .services import CartService
@@ -206,20 +213,14 @@ class InvoiceCreateSerializer(serializers.Serializer):
             ))
             products.append((product, item.get('serial_numbers', [])))
         requested_discount = validated_data['discount_amount'] + sum((item.discount_amount for item in inputs), Decimal('0.00'))
-        if requested_discount:
-            if not has_tenant_permission(request.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership):
-                raise serializers.ValidationError({'discount_amount': 'You cannot apply discounts.'})
-            discount_grant = permission_grant_for(membership, PermissionCode.CART_DISCOUNT_APPLY)
-            if discount_grant is not None:
-                subtotal = sum((item.quantity * item.unit_price for item in inputs), Decimal('0.00'))
-                limits = []
-                if discount_grant.max_discount_percent is not None:
-                    limits.append(subtotal * discount_grant.max_discount_percent / Decimal('100.00'))
-                if discount_grant.max_discount_amount is not None:
-                    limits.append(discount_grant.max_discount_amount)
-                permitted = min(limits) if limits else Decimal('0.00')
-                if requested_discount > permitted:
-                    raise serializers.ValidationError({'discount_amount': 'Discount exceeds your authorized limit.'})
+        subtotal = sum((item.quantity * item.unit_price for item in inputs), Decimal('0.00'))
+        discount_error = discount_authorization_error(
+            membership,
+            gross_subtotal=subtotal,
+            total_discount=requested_discount,
+        )
+        if discount_error:
+            raise serializers.ValidationError({'discount_amount': discount_error})
         try:
             invoice = BillingService.create_document(
                 organization=organization, created_by=request.user, document_type=BillingDocument.DocumentType.INVOICE,

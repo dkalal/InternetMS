@@ -9,7 +9,64 @@
     <div class="grid gap-5 sm:grid-cols-2">
       {% for field in form %}<div class="{% if field.name == 'activity_description' or field.name == 'internal_notes' or field.name == 'correction_reason' %}sm:col-span-2{% endif %}">{% include "components/form_field.html" with field=field %}</div>{% endfor %}
     </div>
+    <fieldset class="mt-7 border-t border-slate-200 pt-6" aria-describedby="work-dates-help">
+      <legend class="text-base font-bold text-slate-950">Work dates</legend>
+      <p id="work-dates-help" class="mt-1 text-sm text-slate-600">Add each date on which work was actually performed. Daily notes are optional.</p>
+      {{ work_date_formset.management_form }}
+      {% if work_date_formset.non_form_errors %}<div class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">{% for error in work_date_formset.non_form_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+      <div id="work-date-rows" class="mt-4 space-y-3">
+        {% for date_form in work_date_formset %}
+          <div class="work-date-row rounded-lg border border-slate-200 bg-slate-50 p-4 {% if date_form.DELETE.value %}hidden{% endif %}">
+            {{ date_form.DELETE }}
+            <div class="grid gap-4 sm:grid-cols-[11rem_minmax(0,1fr)_auto] sm:items-start">
+              <div>{% include "components/form_field.html" with field=date_form.service_date %}</div>
+              <div>{% include "components/form_field.html" with field=date_form.activity_note %}</div>
+              <button type="button" class="remove-work-date jims-btn jims-btn-secondary sm:mt-6" aria-label="Remove work date {{ forloop.counter }}">Remove</button>
+            </div>
+            {% if date_form.non_field_errors %}<div class="mt-2 text-sm text-rose-600" role="alert">{{ date_form.non_field_errors }}</div>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="add-work-date" class="jims-btn jims-btn-secondary mt-4">+ Add another work date</button>
+    </fieldset>
     <div class="mt-7 flex justify-end gap-3"><a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a><button type="submit" class="jims-btn jims-btn-primary">{% if approved_correction %}Save controlled correction{% else %}Save draft{% endif %}</button></div>
   </form>
 </div>
+<template id="empty-work-date-form">
+  <div class="work-date-row rounded-lg border border-slate-200 bg-slate-50 p-4">
+    {{ work_date_formset.empty_form.DELETE }}
+    <div class="grid gap-4 sm:grid-cols-[11rem_minmax(0,1fr)_auto] sm:items-start">
+      <div>{% include "components/form_field.html" with field=work_date_formset.empty_form.service_date %}</div>
+      <div>{% include "components/form_field.html" with field=work_date_formset.empty_form.activity_note %}</div>
+      <button type="button" class="remove-work-date jims-btn jims-btn-secondary sm:mt-6" aria-label="Remove work date">Remove</button>
+    </div>
+  </div>
+</template>
+<script>
+  (() => {
+    const rows = document.getElementById('work-date-rows');
+    const total = document.getElementById('id_work_dates-TOTAL_FORMS');
+    const template = document.getElementById('empty-work-date-form');
+    const add = document.getElementById('add-work-date');
+    if (!rows || !total || !template || !add) return;
+
+    const wireRemove = (button) => button.addEventListener('click', () => {
+      const row = button.closest('.work-date-row');
+      const deletion = row.querySelector('[name$="-DELETE"]');
+      if (deletion) deletion.value = 'on';
+      row.classList.add('hidden');
+    });
+    rows.querySelectorAll('.remove-work-date').forEach(wireRemove);
+    add.addEventListener('click', () => {
+      const index = Number(total.value);
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = template.innerHTML.replaceAll('__prefix__', index).trim();
+      const row = wrapper.firstElementChild;
+      rows.appendChild(row);
+      total.value = index + 1;
+      wireRemove(row.querySelector('.remove-work-date'));
+      row.querySelector('input[type="date"]')?.focus();
+    });
+  })();
+</script>
 {% endblock %}

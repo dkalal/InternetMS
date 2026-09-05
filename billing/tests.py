@@ -1730,6 +1730,58 @@ class BillingServiceTests(TestCase):
         self.assertEqual(subscription.paid_through_date, period.period_end)
         self.assertEqual(period.invoice.receipts.count(), 2)
 
+    def test_renewing_cancelled_period_creates_replacement_invoice(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 4, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 4, 1),
+            months=3,
+        )
+        void_invoice_id = period.invoice_id
+        BillingService.void_subscription_invoice(
+            organization=self.org1,
+            performed_by=self.user,
+            period_id=period.id,
+            reason="The original invoice contained a billing error.",
+        )
+
+        retried = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 4, 1),
+            months=3,
+        )
+
+        self.assertEqual(retried.id, period.id)
+        self.assertEqual(retried.status, SubscriptionPeriod.Status.INVOICED)
+        self.assertNotEqual(retried.invoice_id, void_invoice_id)
+        self.assertEqual(retried.invoice.original_invoice_id, void_invoice_id)
+        self.assertEqual(
+            BillingDocument.objects.get(pk=void_invoice_id).status,
+            BillingDocument.Status.VOID,
+        )
+        self.assertEqual(
+            SubscriptionPeriod.objects.filter(
+                subscription=subscription,
+                period_start=date(2026, 4, 1),
+            ).count(),
+            1,
+        )
+        log = AuditLog.objects.get(
+            action_type="subscription.period_reopened",
+            object_id=str(period.id),
+        )
+        self.assertEqual(log.metadata["replaced_void_invoice_id"], void_invoice_id)
+        self.assertEqual(log.metadata["replacement_invoice_id"], retried.invoice_id)
+
     def test_paying_an_older_subscription_period_cannot_reduce_paid_through_date(self):
         subscription = SubscriptionBillingService.get_or_create_subscription(
             organization=self.org1,

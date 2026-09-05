@@ -3,6 +3,7 @@ import importlib
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.test import TestCase
 from django.urls import reverse
 
@@ -41,6 +42,22 @@ class UnitOfMeasureTests(TestCase):
         category.default_unit = foreign
         with self.assertRaises(ValidationError):
             category.full_clean()
+
+    def test_category_allowed_units_reject_cross_tenant_orm_assignments(self):
+        category = ProductCategory.objects.create(
+            organization=self.organization, tenant=self.organization, name='Tenant boundary', default_unit=self.piece,
+        )
+        foreign = UnitOfMeasure.objects.create(
+            organization=self.other, tenant=self.other, name='Foreign unit',
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError, 'Allowed units and product categories must belong to the same tenant.',
+        ):
+            with transaction.atomic():
+                category.allowed_units.add(foreign)
+
+        self.assertFalse(category.allowed_units.filter(pk=foreign.pk).exists())
 
     def test_product_form_defaults_and_restricts_units_by_category(self):
         category = ProductCategory.objects.create(

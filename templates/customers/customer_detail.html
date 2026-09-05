@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block topbar_new_invoice %}{% endblock %}
 {% load humanize tz %}
 
 {% block title %}{{ customer.name }}{% endblock %}
@@ -60,7 +61,6 @@
                 <h2 class="text-sm font-semibold text-slate-900">Internet package subscriptions</h2>
                 <p class="mt-1 text-sm text-slate-600">Renew packages, track paid-through dates, and see unpaid billing periods.</p>
             </div>
-            {% if can_manage_services %}<a href="{% url 'internet-service-create' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add Internet service</a>{% endif %}
         </div>
 
         <div class="jims-detail-section-body">

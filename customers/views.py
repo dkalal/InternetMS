@@ -9,6 +9,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
+from django.db import transaction
 from django.db.models import Max, OuterRef, Q, Subquery, Sum
 from django.utils import timezone
 
@@ -1313,7 +1314,7 @@ class InternetServiceCreateView(LoginRequiredMixin, FormView):
                     actor=self.request.user,
                     customer_id=self.customer.id,
                     site_id=data["site"].id,
-                    service_code=data["service_code"],
+                    service_code=data.get("service_code"),
                     name=data["name"],
                     ip_address=data.get("ip_address"),
                     vlan_id=data.get("vlan_id"),

@@ -90,9 +90,17 @@ def _is_pos_request(request):
     return request.headers.get('X-Requested-With') == 'XMLHttpRequest' and 'application/json' in request.headers.get('Accept', '')
 
 
-def _pos_response(request, cart, *, message='', level='success', status=200):
+def _form_error_summary(form):
+    messages_list = []
+    for field_name, field_errors in form.errors.items():
+        label = form.fields[field_name].label if field_name in form.fields else 'Sale details'
+        messages_list.extend(f'{label}: {error}' for error in field_errors)
+    return ' '.join(messages_list)
+
+
+def _pos_response(request, cart, *, message='', level='success', status=200, errors=None):
     workspace = _cart_workspace(cart)
-    return JsonResponse({
+    payload = {
         'ok': status < 400,
         'message': message,
         'level': level,
@@ -115,7 +123,10 @@ def _pos_response(request, cart, *, message='', level='success', status=200):
             }
             for line in workspace['lines']
         ],
-    }, status=status)
+    }
+    if errors is not None:
+        payload['errors'] = errors
+    return JsonResponse(payload, status=status)
 
 
 @login_required
@@ -212,16 +223,21 @@ def category_form(request, pk=None):
     category = get_object_or_404(ProductCategory.objects.filter(tenant=organization), pk=pk) if pk else None
     old = {
         'name': category.name, 'description': category.description, 'measure_unit': category.measure_unit,
+        'default_unit_id': category.default_unit_id,
+        'allowed_unit_ids': list(category.allowed_units.order_by('pk').values_list('pk', flat=True)),
         'icon': category.icon, 'is_active': category.is_active,
     } if category else {}
     form = ProductCategoryForm(request.POST or None, instance=category, organization=organization)
     if request.method == 'POST' and form.is_valid():
-        form.instance.organization = form.instance.tenant = organization
-        obj = form.save()
-        audit(organization=organization, actor=request.user, action='inventory.category.saved', obj=obj, old_value=old, new_value={
-            'name': obj.name, 'description': obj.description, 'measure_unit': obj.measure_unit,
-            'icon': obj.icon, 'is_active': obj.is_active,
-        })
+        with transaction.atomic():
+            form.instance.organization = form.instance.tenant = organization
+            obj = form.save()
+            audit(organization=organization, actor=request.user, action='inventory.category.saved', obj=obj, old_value=old, new_value={
+                'name': obj.name, 'description': obj.description, 'measure_unit': obj.measure_unit,
+                'default_unit_id': obj.default_unit_id,
+                'allowed_unit_ids': list(obj.allowed_units.order_by('pk').values_list('pk', flat=True)),
+                'icon': obj.icon, 'is_active': obj.is_active,
+            })
         messages.success(request, 'Category saved.')
         return redirect('inventory:category_list')
     return render(request, 'inventory/category_form.html', {
@@ -601,7 +617,10 @@ def cart_detail(request, pk):
                     CartService.refresh_cart_prices(cart=cart)
                     # Validate the persisted, repriced cart before committing.
                     _cart_workspace(cart)
-            except BillingServiceError as exc:
+                    CartService.validate_discount_authority(
+                        cart=cart, actor=request.user, membership=request.membership,
+                    )
+            except (BillingServiceError, InventoryError) as exc:
                 cart.refresh_from_db()
                 cart_form.add_error('discount_amount', str(exc))
             else:
@@ -610,11 +629,17 @@ def cart_detail(request, pk):
                 messages.success(request, 'Cart draft saved. Stock remains unchanged.')
                 return redirect('inventory:cart_detail', pk=cart.pk)
         if _is_pos_request(request):
-            return JsonResponse({
-                'ok': False,
-                'message': 'Check the highlighted sale details and try again.',
-                'errors': cart_form.errors.get_json_data(),
-            }, status=422)
+            # ModelForm validation mutates its in-memory instance even when it
+            # is invalid. Reload before returning authoritative saved totals.
+            cart.refresh_from_db()
+            return _pos_response(
+                request,
+                cart,
+                message=_form_error_summary(cart_form) or 'Check the sale details and try again.',
+                level='warning',
+                status=422,
+                errors=cart_form.errors.get_json_data(),
+            )
     workspace = _cart_workspace(cart)
     lines = workspace['lines']
     query = request.GET.get('q', '').strip()
@@ -652,7 +677,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
     initial = {'product': request.GET.get('product')} if not line and request.GET.get('product') else None
     form = CartLineForm(
         request.POST or None, instance=line, organization=organization, initial=initial,
-        sale_pricing_category=cart.sale_pricing_category,
+        sale_pricing_category=cart.sale_pricing_category, cart=cart, membership=request.membership,
     )
     selected_product_id = request.POST.get('product') if request.method == 'POST' else (
         request.GET.get('product') or (line.product_id if line else None)
@@ -669,15 +694,25 @@ def cart_line_form(request, cart_pk, line_pk=None):
                 'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
                 'title': 'Edit cart item' if line else 'Add cart item',
             })
-        with transaction.atomic():
-            obj = form.save(commit=False)
-            obj.cart = cart
-            obj.unit_price = unit_price
-            obj.save()
-            CartSerialSelection.objects.filter(cart_line=obj).delete()
-            CartSerialSelection.objects.bulk_create([
-                CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit) for unit in form.cleaned_data.get('serial_units', [])
-            ])
+        try:
+            with transaction.atomic():
+                obj = form.save(commit=False)
+                obj.cart = cart
+                obj.unit_price = unit_price
+                obj.save()
+                CartSerialSelection.objects.filter(cart_line=obj).delete()
+                CartSerialSelection.objects.bulk_create([
+                    CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit) for unit in form.cleaned_data.get('serial_units', [])
+                ])
+                CartService.validate_discount_authority(
+                    cart=cart, actor=request.user, membership=request.membership,
+                )
+        except InventoryError as exc:
+            form.add_error('discount_amount', str(exc))
+            return render(request, 'inventory/cart_line_form.html', {
+                'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
+                'title': 'Edit cart item' if line else 'Add cart item',
+            })
         messages.success(request, 'Cart item saved. Stock remains unchanged until full payment.')
         return redirect('inventory:cart_detail', pk=cart.pk)
     return render(request, 'inventory/cart_line_form.html', {
@@ -778,7 +813,31 @@ def cart_convert(request, pk, target):
     permission = PermissionCode.BILLING_CREATE
     require_permission(request, permission)
     try:
-        document = CartService.convert(organization=organization, cart_id=pk, target=target, actor=request.user)
+        with transaction.atomic():
+            cart = get_object_or_404(
+                Cart.objects.select_for_update().filter(tenant=organization), pk=pk,
+            )
+            # Modern checkout buttons belong to the details form, so the exact
+            # customer and financial values the user confirms arrive here. Keep
+            # accepting legacy CSRF-only posts for backward compatibility.
+            if 'discount_amount' in request.POST:
+                cart_form = CartForm(
+                    request.POST,
+                    instance=cart,
+                    organization=organization,
+                    membership=request.membership,
+                )
+                if not cart_form.is_valid():
+                    raise InventoryError('Sale was not converted. ' + _form_error_summary(cart_form))
+                cart_form.save()
+                CartService.refresh_cart_prices(cart=cart)
+                _cart_workspace(cart)
+                CartService.validate_discount_authority(
+                    cart=cart, actor=request.user, membership=request.membership,
+                )
+            document = CartService.convert(
+                organization=organization, cart_id=pk, target=target, actor=request.user,
+            )
         messages.success(request, f'Cart converted to {target} {document.number}.')
         if target == BillingDocument.DocumentType.INVOICE and has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership):
             return redirect('billing:create_receipt_from_invoice', pk=document.pk)

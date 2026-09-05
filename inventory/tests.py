@@ -19,7 +19,7 @@ from audit.models import AuditLog
 from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
 from customers.models import Customer
-from products.models import Product, ProductCategory
+from products.models import Product, ProductCategory, UnitOfMeasure
 from services.models import Package
 from integrations.models import IntegrationConsumer
 from users.models import Organization, UserAccessProfile
@@ -307,6 +307,62 @@ class InventoryAcceptanceTests(TestCase):
             f'PUR-{date.today():%Y}-00001',
         )
 
+    def test_purchase_product_combobox_is_premium_searchable_and_tenant_scoped(self):
+        other_product = self.make_product('Tenant B Secret Switch', 'SECRET-B', organization=self.other_org)
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:purchase_create'))
+
+        self.assertEqual(response.status_code, 200)
+        product_field = response.context['formset'].forms[0].fields['product']
+        self.assertQuerySetEqual(product_field.queryset, [self.product])
+        self.assertEqual(product_field.empty_label, 'Select a product')
+        self.assertEqual(product_field.label_from_instance(self.product), 'Router · RTR-001')
+        self.assertNotContains(response, other_product.name)
+        self.assertContains(response, 'data-search-placeholder="Search products by name or SKU..."')
+        self.assertContains(response, '>Select a product</option>', html=False)
+
+    def test_purchase_create_rejects_a_product_from_another_tenant(self):
+        other_product = self.make_product('Tenant B Secret Switch', 'SECRET-B', organization=self.other_org)
+        self.client.login(username='inventory-admin', password='pass')
+        preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'supplier': self.supplier.pk,
+            'reference_number': preview,
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': other_product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(Purchase.objects.filter(tenant=self.org, reference_number=preview).exists())
+
+    def test_searchable_select_uses_an_accessible_viewport_portal(self):
+        script_path = finders.find('inventory/js/jims-ui.js')
+        stylesheet_path = finders.find('inventory/css/jims-ui.css')
+        script = Path(script_path).read_text(encoding='utf-8')
+        stylesheet = Path(stylesheet_path).read_text(encoding='utf-8')
+
+        self.assertIn('document.body.appendChild(menu)', script)
+        self.assertIn('input.setAttribute("aria-labelledby", visibleLabel.id)', script)
+        self.assertIn('optionNode.setAttribute("role", "option")', script)
+        self.assertNotIn('button.setAttribute("role", "option")', script)
+        self.assertIn('openAbove = below < 176 && above > below', script)
+        self.assertIn('position: fixed;', stylesheet)
+        self.assertIn('.jims-combobox-option[aria-selected="true"]', stylesheet)
+
     def test_generated_purchase_reference_skips_existing_manual_reference(self):
         Purchase.objects.create(
             organization=self.org,
@@ -471,6 +527,7 @@ class InventoryAcceptanceTests(TestCase):
         script = Path(script_path).read_text(encoding='utf-8')
         self.assertIn('confirmLayer.querySelector("[data-confirm-dialog-title]")', script)
         self.assertNotIn('document.querySelector("[data-confirm-title]")', script)
+        self.assertIn('pendingForm.requestSubmit(pendingSubmitter || undefined)', script)
 
     def test_serialized_cart_line_shows_searchable_available_serials_and_saves_selection(self):
         serialized_product = self.make_product('Managed Router', 'SER-UI-001', serialized=True)
@@ -818,6 +875,86 @@ class InventoryAcceptanceTests(TestCase):
         category = ProductCategory.objects.get(tenant=self.org, name='Cables')
         self.assertEqual(category.measure_unit, 'Meter')
         self.assertEqual(category.icon, ProductCategory.Icon.CABLE)
+
+    def test_category_unit_picker_is_semantic_tenant_scoped_and_saves_audited_rules(self):
+        piece = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Piece', symbol='pc',
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box', symbol='box',
+        )
+        foreign = UnitOfMeasure.objects.create(
+            organization=self.other_org, tenant=self.other_org, name='Foreign unit', symbol='x',
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+
+        response = self.client.get(create_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-choice-group', html=False)
+        self.assertContains(response, 'class="jims-choice-card"', html=False)
+        self.assertContains(response, 'data-category-unit-form', html=False)
+        self.assertContains(response, 'Piece (pc)')
+        self.assertNotContains(response, 'Foreign unit')
+
+        response = self.client.post(create_url, {
+            'name': 'Managed hardware',
+            'description': 'Tenant-safe category rules.',
+            'allowed_units': [piece.pk, box.pk],
+            'default_unit': box.pk,
+            'icon': ProductCategory.Icon.GENERIC,
+            'is_active': 'on',
+        })
+
+        self.assertRedirects(response, reverse('inventory:category_list'))
+        category = ProductCategory.objects.get(tenant=self.org, name='Managed hardware')
+        self.assertEqual(category.default_unit, box)
+        self.assertSetEqual(set(category.allowed_units.all()), {piece, box})
+        log = AuditLog.objects.get(action='inventory.category.saved', object_id=str(category.pk))
+        self.assertEqual(log.new_value['default_unit_id'], box.pk)
+        self.assertEqual(log.new_value['allowed_unit_ids'], sorted([piece.pk, box.pk]))
+        self.assertNotIn(foreign.pk, log.new_value['allowed_unit_ids'])
+
+    def test_category_unit_picker_rejects_cross_tenant_and_inconsistent_unit_ids(self):
+        piece = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Piece', symbol='pc',
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box', symbol='box',
+        )
+        foreign = UnitOfMeasure.objects.create(
+            organization=self.other_org, tenant=self.other_org, name='Foreign unit', symbol='x',
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+        common = {
+            'description': '', 'icon': ProductCategory.Icon.GENERIC, 'is_active': 'on',
+        }
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Forged allowed unit',
+            'allowed_units': [piece.pk, foreign.pk], 'default_unit': piece.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Forged allowed unit').exists())
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Forged default unit',
+            'allowed_units': [piece.pk], 'default_unit': foreign.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Forged default unit').exists())
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Mismatched default unit',
+            'allowed_units': [piece.pk], 'default_unit': box.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Default unit must be selected in Allowed units.')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Mismatched default unit').exists())
 
     def test_movement_list_renders_system_created_movements(self):
         StockMovement.objects.create(

@@ -1,5 +1,7 @@
 {% if field.is_hidden %}
   {{ field }}
+{% elif field.field.widget.allow_multiple_selected and field.field.widget.input_type == "checkbox" %}
+  {% include "components/checkbox_choice_group.html" with field=field %}
 {% else %}
   <div class="space-y-1">
     <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
