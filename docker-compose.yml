@@ -31,8 +31,10 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/js_internetservices
       - DJANGO_DEBUG=1
       - DJANGO_SECRET_KEY=django-insecure-local-development-key-change-for-production
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-10.10.10.254,localhost,127.0.0.1,web}
-      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS:-http://10.10.10.254:8000,http://localhost:8000,http://127.0.0.1:8000,http://web:8000}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-internet.home.arpa,10.10.10.254,localhost,127.0.0.1,web}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS:-http://internet.home.arpa:8000,http://10.10.10.254:8000,http://localhost:8000,http://127.0.0.1:8000,http://web:8000}
+      - DJANGO_SESSION_COOKIE_NAME=${DJANGO_SESSION_COOKIE_NAME:-jsinternet_sessionid}
+      - DJANGO_CSRF_COOKIE_NAME=${DJANGO_CSRF_COOKIE_NAME:-jsinternet_csrftoken}
     volumes:
       - ./media:/app/media
     ports:

@@ -19,7 +19,7 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-secret-key')
 if not DEBUG and SECRET_KEY == 'dev-only-insecure-secret-key':
     raise RuntimeError('DJANGO_SECRET_KEY is required when DJANGO_DEBUG=0.')
 
-ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '10.10.10.254,localhost,127.0.0.1')
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'internet.home.arpa,10.10.10.254,localhost,127.0.0.1')
 
 # Always trust the Railway domain + any extra origins from env
 _extra_origins = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
@@ -33,6 +33,10 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = not DEBUG and os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '1') == '1'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+# Cookies are scoped by host and path, not by port. Application-specific
+# names prevent this service on :8000 from overwriting AssetMS on :8001.
+SESSION_COOKIE_NAME = os.environ.get('DJANGO_SESSION_COOKIE_NAME', 'jsinternet_sessionid')
+CSRF_COOKIE_NAME = os.environ.get('DJANGO_CSRF_COOKIE_NAME', 'jsinternet_csrftoken')
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_SECURE_HSTS_SECONDS', '31536000')) if not DEBUG else 0
