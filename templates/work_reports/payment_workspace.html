@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{% if can_manage %}Technician Payments{% else %}My Payments{% endif %}{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <header class="flex flex-wrap items-end justify-between gap-3">
+    <div><p class="text-sm font-semibold text-brand-700">Payment acknowledgement</p><h1 class="text-2xl font-bold tracking-tight text-slate-950">{% if can_manage %}Technician Payments{% else %}My Payments{% endif %}</h1><p class="mt-1 text-sm text-slate-500">Manual records only. No money is sent and no invoice or receipt is created.</p></div>
+    <a href="{% url 'work_reports:list' %}" class="jims-btn jims-btn-secondary">Work Reports</a>
+  </header>
+
+  {% if can_manage %}
+  <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="Payment status">
+    <a href="?status=READY" class="jims-btn jims-btn-compact {% if selected_tab == 'READY' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}">Ready for payment</a>
+    <a href="?status=AWAITING_CONFIRMATION" class="jims-btn jims-btn-compact {% if selected_tab == 'AWAITING_CONFIRMATION' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}">Awaiting confirmation</a>
+    <a href="?status=CONFIRMED" class="jims-btn jims-btn-compact {% if selected_tab == 'CONFIRMED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}">Confirmed</a>
+    <a href="?status=DISPUTED" class="jims-btn jims-btn-compact {% if selected_tab == 'DISPUTED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}">Disputed</a>
+    <a href="?status=VOIDED" class="jims-btn jims-btn-compact {% if selected_tab == 'VOIDED' %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}">Voided</a>
+  </nav>
+  {% endif %}
+
+  {% if can_manage and selected_tab == 'READY' %}
+    <div class="space-y-5">
+    {% for group in groups %}
+      <form method="post" action="{% url 'work_reports:payment_batch_record' %}" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" data-payment-selection>
+        {% csrf_token %}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <div><h2 class="font-bold text-slate-950">{{ group.technician.user.get_full_name|default:group.technician.user.username }}</h2><p class="text-xs text-slate-500">{{ group.reports|length }} eligible report{{ group.reports|length|pluralize }} · TZS {{ group.total|floatformat:2 }}</p></div>
+          <label class="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" data-select-all> Select all visible</label>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-white text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th class="w-12 px-4 py-3"><span class="sr-only">Select</span></th><th class="px-4 py-3">Work report</th><th class="px-4 py-3">Work dates</th><th class="px-4 py-3">Approved</th><th class="px-4 py-3 text-right">Agreed amount</th><th class="px-4 py-3 text-right">Action</th></tr></thead>
+            <tbody class="divide-y divide-slate-100">{% for report in group.reports %}<tr class="hover:bg-slate-50"><td class="px-4 py-3"><input type="checkbox" name="report_ids" value="{{ report.pk }}" data-report-checkbox data-amount="{{ report.agreed_amount }}" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" aria-label="Select {{ report.work_title }}"></td><td class="px-4 py-3"><p class="font-semibold text-slate-900">{{ report.work_title }}</p><p class="text-xs text-slate-500">{{ report.client_name|default:"Internal / unassigned" }}</p></td><td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ report.service_days_summary }}</td><td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ report.approved_at|date:"d M Y" }}</td><td class="whitespace-nowrap px-4 py-3 text-right font-semibold">TZS {{ report.agreed_amount|floatformat:2 }}</td><td class="px-4 py-3 text-right"><a href="{% url 'work_reports:detail' report.pk %}" class="font-semibold text-brand-700">View report</a></td></tr>{% endfor %}</tbody>
+          </table>
+        </div>
+        <div class="sticky bottom-0 hidden items-center justify-between gap-3 border-t border-brand-200 bg-brand-50 px-4 py-3" data-selection-bar>
+          <div><p class="text-sm font-bold text-slate-900"><span data-count>0</span> selected</p><p class="text-xs text-slate-600">Selected total: TZS <span data-total>0.00</span></p></div>
+          <div class="flex gap-2"><button type="button" class="jims-btn jims-btn-secondary jims-btn-compact" data-clear>Clear selection</button><button class="jims-btn jims-btn-primary">Record payment</button></div>
+        </div>
+      </form>
+    {% empty %}<div class="rounded-xl border border-slate-200 bg-white px-6 py-14 text-center shadow-sm"><p class="font-semibold text-slate-900">No approved reports are ready for payment</p><p class="mt-1 text-sm text-slate-500">Approved unpaid reports for active Technicians will appear here.</p></div>{% endfor %}
+    </div>
+  {% else %}
+    <section class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="divide-y divide-slate-100">{% for batch in batches %}<a href="{% url 'work_reports:payment_batch_detail' batch.pk %}" class="flex flex-col gap-2 p-4 hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"><div><div class="flex flex-wrap items-center gap-2"><p class="font-bold text-slate-950">{% if can_manage %}{{ batch.technician.user.get_full_name|default:batch.technician.user.username }}{% else %}Payment batch #{{ batch.pk }}{% endif %}</p><span class="rounded-full px-2.5 py-1 text-xs font-semibold {% if batch.status == 'CONFIRMED' %}bg-emerald-50 text-emerald-700{% elif batch.status == 'DISPUTED' %}bg-orange-50 text-orange-800{% elif batch.status == 'VOIDED' %}bg-slate-100 text-slate-600{% else %}bg-brand-50 text-brand-700{% endif %}">{% if batch.status == 'AWAITING_CONFIRMATION' and not can_manage %}Awaiting your confirmation{% else %}{{ batch.get_status_display }}{% endif %}</span></div><p class="mt-1 text-sm text-slate-500">{{ batch.allocations.all|length }} Work Report{{ batch.allocations.all|length|pluralize }} · {{ batch.payment_date|date:"d M Y" }} · {{ batch.get_payment_method_display }}</p></div><p class="text-lg font-bold text-slate-950">TZS {{ batch.amount_paid_total|floatformat:2 }}</p></a>{% empty %}<div class="px-6 py-14 text-center"><p class="font-semibold text-slate-900">No payment batches here</p><p class="mt-1 text-sm text-slate-500">Records will appear when they reach this status.</p></div>{% endfor %}</div>
+    </section>
+  {% endif %}
+</div>
+{% if can_manage and selected_tab == 'READY' %}<script>
+document.querySelectorAll('[data-payment-selection]').forEach(function(form){
+  const boxes=[...form.querySelectorAll('[data-report-checkbox]')], all=form.querySelector('[data-select-all]'), bar=form.querySelector('[data-selection-bar]'), count=form.querySelector('[data-count]'), total=form.querySelector('[data-total]');
+  function refresh(){const chosen=boxes.filter(b=>b.checked); count.textContent=chosen.length; total.textContent=chosen.reduce((sum,b)=>sum+Number(b.dataset.amount),0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); bar.classList.toggle('hidden',!chosen.length); bar.classList.toggle('flex',!!chosen.length); all.checked=chosen.length===boxes.length; all.indeterminate=chosen.length>0&&chosen.length<boxes.length;}
+  boxes.forEach(b=>b.addEventListener('change',refresh)); all.addEventListener('change',()=>{boxes.forEach(b=>b.checked=all.checked);refresh();}); form.querySelector('[data-clear]').addEventListener('click',()=>{boxes.forEach(b=>b.checked=false);refresh();}); form.addEventListener('submit',()=>{const button=form.querySelector('button[type="submit"],button:not([type])');if(button){button.disabled=true;button.textContent='Opening review…';}});
+});
+</script>{% endif %}
+{% endblock %}

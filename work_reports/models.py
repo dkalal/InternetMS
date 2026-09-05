@@ -326,6 +326,10 @@ class TechnicianPaymentRecord(models.Model):
         "self", on_delete=models.PROTECT, related_name="replacement",
         null=True, blank=True,
     )
+    batch = models.ForeignKey(
+        "TechnicianPaymentBatch", on_delete=models.PROTECT,
+        related_name="allocations", null=True, blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -424,6 +428,15 @@ class TechnicianPaymentRecord(models.Model):
                 or self.replaces.report.technician_id != self.report.technician_id
             ):
                 errors["replaces"] = "A replacement must reference a voided payment for the same Work Report."
+        if self.batch_id:
+            if (
+                self.batch.tenant_id != self.tenant_id
+                or self.batch.technician_id != self.report.technician_id
+                or self.batch.status != self.status
+                or self.batch.payment_date != self.payment_date
+                or self.batch.payment_method != self.payment_method
+            ):
+                errors["batch"] = "Payment allocation and batch details must remain consistent."
         if errors:
             raise ValidationError(errors)
 
@@ -449,6 +462,185 @@ class TechnicianPaymentRecord(models.Model):
             "reference": self.reference,
             "manager_note": self.manager_note,
             "adjustment_reason": self.adjustment_reason,
+            "status": self.status,
+            "recorded_by_id": self.recorded_by_id,
+            "recorded_at": self.recorded_at.isoformat() if self.recorded_at else None,
+            "confirmed_at": self.confirmed_at.isoformat() if self.confirmed_at else None,
+            "disputed_at": self.disputed_at.isoformat() if self.disputed_at else None,
+            "dispute_reason": self.dispute_reason,
+            "voided_at": self.voided_at.isoformat() if self.voided_at else None,
+            "voided_by_id": self.voided_by_id,
+            "void_reason": self.void_reason,
+            "replaces_id": self.replaces_id,
+            "batch_id": self.batch_id,
+        }
+
+
+class TechnicianPaymentBatch(models.Model):
+    tenant = models.ForeignKey(
+        "users.Organization", on_delete=models.PROTECT,
+        related_name="technician_payment_batches", db_index=True,
+    )
+    technician = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT,
+        related_name="technician_payment_batches", db_index=True,
+    )
+    payment_date = models.DateField(db_index=True)
+    payment_method = models.CharField(
+        max_length=20, choices=TechnicianPaymentRecord.PaymentMethod.choices,
+    )
+    method_description = models.CharField(max_length=120, blank=True, default="")
+    reference = models.CharField(max_length=200, blank=True, default="")
+    manager_note = models.TextField(blank=True, default="")
+    agreed_amount_total_snapshot = models.DecimalField(max_digits=16, decimal_places=2)
+    amount_paid_total = models.DecimalField(max_digits=16, decimal_places=2)
+    status = models.CharField(
+        max_length=24, choices=TechnicianPaymentRecord.Status.choices,
+        default=TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION, db_index=True,
+    )
+    recorded_by = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT,
+        related_name="technician_payment_batches_recorded",
+    )
+    recorded_at = models.DateTimeField(default=timezone.now, db_index=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    disputed_at = models.DateTimeField(null=True, blank=True)
+    dispute_reason = models.TextField(blank=True, default="")
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT,
+        related_name="technician_payment_batches_voided", null=True, blank=True,
+    )
+    void_reason = models.TextField(blank=True, default="")
+    replaces = models.OneToOneField(
+        "self", on_delete=models.PROTECT, related_name="replacement",
+        null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = TenantScopedManager.from_queryset(ImmutablePaymentQuerySet)()
+
+    class Meta:
+        ordering = ["-recorded_at", "-id"]
+        indexes = [
+            models.Index(fields=["tenant", "technician", "status"]),
+            models.Index(fields=["tenant", "status", "payment_date"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(agreed_amount_total_snapshot__gt=0),
+                name="tech_payment_batch_agreed_total_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_paid_total__gt=0),
+                name="tech_payment_batch_paid_total_positive",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(payment_method="OTHER")
+                    | ~models.Q(method_description="")
+                ),
+                name="tech_payment_batch_other_description",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status="CONFIRMED") | models.Q(confirmed_at__isnull=False),
+                name="tech_payment_batch_confirmed_at",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="DISPUTED")
+                    | (models.Q(disputed_at__isnull=False) & ~models.Q(dispute_reason=""))
+                ),
+                name="tech_payment_batch_dispute_fields",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="VOIDED")
+                    | (
+                        models.Q(voided_at__isnull=False)
+                        & models.Q(voided_by__isnull=False)
+                        & ~models.Q(void_reason="")
+                    )
+                ),
+                name="tech_payment_batch_void_fields",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Technician payment batch {self.pk or 'new'}"
+
+    @property
+    def difference(self):
+        return self.amount_paid_total - self.agreed_amount_total_snapshot
+
+    def clean(self):
+        errors = {}
+        if self.agreed_amount_total_snapshot is not None and self.agreed_amount_total_snapshot <= 0:
+            errors["agreed_amount_total_snapshot"] = "The approved total must be greater than zero."
+        if self.amount_paid_total is not None and self.amount_paid_total <= 0:
+            errors["amount_paid_total"] = "The paid total must be greater than zero."
+        if self.technician_id and (
+            self.technician.tenant_id != self.tenant_id
+            or self.technician.base_role != self.technician.BaseRole.TECHNICIAN
+        ):
+            errors["technician"] = "Batch Technician must belong to this tenant."
+        if self.recorded_by_id and self.recorded_by.tenant_id != self.tenant_id:
+            errors["recorded_by"] = "Recording Manager belongs to another tenant."
+        if self.payment_method == TechnicianPaymentRecord.PaymentMethod.OTHER and not self.method_description.strip():
+            errors["method_description"] = "Describe the payment method when Other is selected."
+        if self.status == TechnicianPaymentRecord.Status.CONFIRMED and not self.confirmed_at:
+            errors["confirmed_at"] = "Confirmed batches require a confirmation timestamp."
+        if self.status == TechnicianPaymentRecord.Status.DISPUTED and (
+            not self.disputed_at or not self.dispute_reason.strip()
+        ):
+            errors["dispute_reason"] = "Disputed batches require a timestamp and reason."
+        if self.status == TechnicianPaymentRecord.Status.VOIDED and (
+            not self.voided_at or not self.voided_by_id or not self.void_reason.strip()
+        ):
+            errors["void_reason"] = "Voided batches require an actor, timestamp, and reason."
+        if self.voided_by_id and self.voided_by.tenant_id != self.tenant_id:
+            errors["voided_by"] = "Voiding Manager belongs to another tenant."
+        if self.replaces_id and (
+            self.replaces_id == self.pk
+            or self.replaces.status != TechnicianPaymentRecord.Status.VOIDED
+            or self.replaces.tenant_id != self.tenant_id
+            or self.replaces.technician_id != self.technician_id
+        ):
+            errors["replaces"] = "A replacement must reference a voided batch for this Technician."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk and not getattr(self, "_lifecycle_transition", False):
+            raise ValidationError("Technician payment batches must be changed through lifecycle services.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Technician payment batches are retained as business history and cannot be deleted.")
+
+    def snapshot(self):
+        allocations = list(self.allocations.order_by("report_id").values(
+            "id", "report_id", "agreed_amount_snapshot", "amount_paid", "adjustment_reason",
+        )) if self.pk else []
+        for allocation in allocations:
+            allocation["payment_record_id"] = allocation.pop("id")
+            allocation["agreed_amount_snapshot"] = str(allocation["agreed_amount_snapshot"])
+            allocation["amount_paid"] = str(allocation["amount_paid"])
+        return {
+            "batch_id": self.pk,
+            "technician_membership_id": self.technician_id,
+            "report_ids": [row["report_id"] for row in allocations],
+            "allocations": allocations,
+            "payment_date": self.payment_date.isoformat(),
+            "payment_method": self.payment_method,
+            "method_description": self.method_description,
+            "reference": self.reference,
+            "manager_note": self.manager_note,
+            "agreed_amount_total_snapshot": str(self.agreed_amount_total_snapshot),
+            "amount_paid_total": str(self.amount_paid_total),
+            "difference": str(self.difference),
             "status": self.status,
             "recorded_by_id": self.recorded_by_id,
             "recorded_at": self.recorded_at.isoformat() if self.recorded_at else None,
@@ -485,6 +677,11 @@ class WorkReportHistory(models.Model):
         PAYMENT_DISPUTED = "PAYMENT_DISPUTED", "Payment disputed"
         PAYMENT_VOIDED = "PAYMENT_VOIDED", "Payment record voided"
         PAYMENT_REPLACED = "PAYMENT_REPLACED", "Payment record replaced"
+        PAYMENT_BATCH_RECORDED = "PAYMENT_BATCH_RECORDED", "Technician payment batch recorded"
+        PAYMENT_BATCH_CONFIRMED = "PAYMENT_BATCH_CONFIRMED", "Payment batch confirmed"
+        PAYMENT_BATCH_DISPUTED = "PAYMENT_BATCH_DISPUTED", "Payment batch disputed"
+        PAYMENT_BATCH_VOIDED = "PAYMENT_BATCH_VOIDED", "Payment batch voided"
+        PAYMENT_BATCH_REPLACED = "PAYMENT_BATCH_REPLACED", "Payment batch replaced"
 
     tenant = models.ForeignKey(
         "users.Organization", on_delete=models.PROTECT,

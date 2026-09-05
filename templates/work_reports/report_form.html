@@ -9,15 +9,38 @@
     <div class="grid gap-5 sm:grid-cols-2">
       {% for field in form %}<div class="{% if field.name == 'activity_description' or field.name == 'internal_notes' or field.name == 'correction_reason' %}sm:col-span-2{% endif %}">{% include "components/form_field.html" with field=field %}</div>{% endfor %}
     </div>
-    <fieldset class="mt-7 border-t border-slate-200 pt-6" aria-describedby="work-dates-help">
+    <fieldset class="mt-7 border-t border-slate-200 pt-6" aria-describedby="work-dates-help work-date-feedback">
       <legend class="text-base font-bold text-slate-950">Work dates</legend>
-      <p id="work-dates-help" class="mt-1 text-sm text-slate-600">Add each date on which work was actually performed. Daily notes are optional.</p>
+      <p id="work-dates-help" class="mt-1 text-sm text-slate-600">Add a date range for consecutive work, then include any extra individual dates when needed.</p>
       {{ work_date_formset.management_form }}
       {% if work_date_formset.non_form_errors %}<div class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">{% for error in work_date_formset.non_form_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
-      <div id="work-date-rows" class="mt-4 space-y-3">
+      <div class="mt-5 grid gap-4 lg:grid-cols-2">
+        <section class="rounded-xl border border-brand-200 bg-brand-50/60 p-4" aria-labelledby="date-range-heading">
+          <h2 id="date-range-heading" class="text-sm font-bold text-slate-950">Consecutive date range</h2>
+          <p class="mt-1 text-xs leading-5 text-slate-600">The system adds every date between the start and end date.</p>
+          <div class="mt-4 grid gap-3 sm:grid-cols-2">
+            <div><label for="work-date-range-start" class="mb-1 block text-sm font-semibold text-slate-700">Start date</label><input id="work-date-range-start" type="date" class="min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-describedby="work-date-range-error"></div>
+            <div><label for="work-date-range-end" class="mb-1 block text-sm font-semibold text-slate-700">End date</label><input id="work-date-range-end" type="date" class="min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-describedby="work-date-range-error"></div>
+          </div>
+          <div class="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between"><p id="work-date-range-error" class="text-sm font-medium text-rose-700" role="alert"></p><button type="button" id="add-work-date-range" class="jims-btn jims-btn-primary shrink-0">Add range</button></div>
+        </section>
+        <section class="rounded-xl border border-slate-200 bg-slate-50 p-4" aria-labelledby="specific-date-heading">
+          <h2 id="specific-date-heading" class="text-sm font-bold text-slate-950">Additional specific date</h2>
+          <p class="mt-1 text-xs leading-5 text-slate-600">Use this for a return visit or a skipped day.</p>
+          <div class="mt-4"><label for="work-date-specific" class="mb-1 block text-sm font-semibold text-slate-700">Work date</label><input id="work-date-specific" type="date" class="min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-describedby="work-date-specific-error"></div>
+          <div class="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between"><p id="work-date-specific-error" class="text-sm font-medium text-rose-700" role="alert"></p><button type="button" id="add-specific-work-date" class="jims-btn jims-btn-secondary shrink-0">Add date</button></div>
+        </section>
+      </div>
+      <div class="mt-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <h2 class="text-sm font-bold text-slate-950">Selected work dates</h2>
+        <p id="work-date-summary" class="text-sm font-medium text-slate-600">Choose at least one work date.</p>
+      </div>
+      <p id="work-date-feedback" class="mt-2 min-h-5 text-sm font-semibold text-brand-700" aria-live="polite" aria-atomic="true"></p>
+      <div id="work-date-rows" class="mt-2 space-y-3">
         {% for date_form in work_date_formset %}
-          <div class="work-date-row rounded-lg border border-slate-200 bg-slate-50 p-4 {% if date_form.DELETE.value %}hidden{% endif %}">
+          <div class="work-date-row rounded-lg border border-slate-200 bg-white p-4 shadow-sm {% if date_form.DELETE.value %}hidden{% endif %}">
             {{ date_form.DELETE }}
+            <p class="selected-work-date-label mb-3 text-sm font-bold text-brand-800"></p>
             <div class="grid gap-4 sm:grid-cols-[11rem_minmax(0,1fr)_auto] sm:items-start">
               <div>{% include "components/form_field.html" with field=date_form.service_date %}</div>
               <div>{% include "components/form_field.html" with field=date_form.activity_note %}</div>
@@ -27,14 +50,14 @@
           </div>
         {% endfor %}
       </div>
-      <button type="button" id="add-work-date" class="jims-btn jims-btn-secondary mt-4">+ Add another work date</button>
     </fieldset>
     <div class="mt-7 flex justify-end gap-3"><a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a><button type="submit" class="jims-btn jims-btn-primary">{% if approved_correction %}Save controlled correction{% else %}Save draft{% endif %}</button></div>
   </form>
 </div>
 <template id="empty-work-date-form">
-  <div class="work-date-row rounded-lg border border-slate-200 bg-slate-50 p-4">
+  <div class="work-date-row rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
     {{ work_date_formset.empty_form.DELETE }}
+    <p class="selected-work-date-label mb-3 text-sm font-bold text-brand-800"></p>
     <div class="grid gap-4 sm:grid-cols-[11rem_minmax(0,1fr)_auto] sm:items-start">
       <div>{% include "components/form_field.html" with field=work_date_formset.empty_form.service_date %}</div>
       <div>{% include "components/form_field.html" with field=work_date_formset.empty_form.activity_note %}</div>
@@ -47,26 +70,181 @@
     const rows = document.getElementById('work-date-rows');
     const total = document.getElementById('id_work_dates-TOTAL_FORMS');
     const template = document.getElementById('empty-work-date-form');
-    const add = document.getElementById('add-work-date');
-    if (!rows || !total || !template || !add) return;
+    const rangeStart = document.getElementById('work-date-range-start');
+    const rangeEnd = document.getElementById('work-date-range-end');
+    const rangeButton = document.getElementById('add-work-date-range');
+    const rangeError = document.getElementById('work-date-range-error');
+    const specificDate = document.getElementById('work-date-specific');
+    const specificButton = document.getElementById('add-specific-work-date');
+    const specificError = document.getElementById('work-date-specific-error');
+    const summary = document.getElementById('work-date-summary');
+    const feedback = document.getElementById('work-date-feedback');
+    if (!rows || !total || !template || !rangeStart || !rangeEnd || !rangeButton || !specificDate || !specificButton || !summary || !feedback) return;
 
-    const wireRemove = (button) => button.addEventListener('click', () => {
-      const row = button.closest('.work-date-row');
-      const deletion = row.querySelector('[name$="-DELETE"]');
-      if (deletion) deletion.value = 'on';
-      row.classList.add('hidden');
+    const dateFormatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const parseLocalDate = (value) => {
+      const parts = value.split('-').map(Number);
+      return parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2], 12) : null;
+    };
+    const toIsoDate = (value) => [
+      value.getFullYear(),
+      String(value.getMonth() + 1).padStart(2, '0'),
+      String(value.getDate()).padStart(2, '0'),
+    ].join('-');
+    const formatDate = (value) => {
+      const parsed = parseLocalDate(value);
+      return parsed ? dateFormatter.format(parsed) : '';
+    };
+    const rowParts = (row) => ({
+      date: row.querySelector('input[type="date"]'),
+      note: row.querySelector('input[name$="-activity_note"]'),
+      deletion: row.querySelector('[name$="-DELETE"]'),
     });
-    rows.querySelectorAll('.remove-work-date').forEach(wireRemove);
-    add.addEventListener('click', () => {
+    const isDeleted = (row) => {
+      const deletion = rowParts(row).deletion;
+      return Boolean(deletion && (deletion.checked || deletion.value === 'on'));
+    };
+    const activeRows = () => Array.from(rows.querySelectorAll('.work-date-row')).filter((row) => !isDeleted(row));
+    const activeDateValues = () => activeRows().map((row) => rowParts(row).date?.value).filter(Boolean);
+    const announce = (message) => {
+      feedback.textContent = '';
+      window.requestAnimationFrame(() => { feedback.textContent = message; });
+    };
+    const setError = (inputElements, errorElement, message) => {
+      errorElement.textContent = message;
+      inputElements.forEach((input) => input.setAttribute('aria-invalid', message ? 'true' : 'false'));
+    };
+    const updateRowLabel = (row) => {
+      const value = rowParts(row).date?.value || '';
+      const label = row.querySelector('.selected-work-date-label');
+      if (label) label.textContent = value ? formatDate(value) : 'Choose a work date';
+    };
+    const sortRows = () => {
+      Array.from(rows.querySelectorAll('.work-date-row')).sort((left, right) => {
+        const leftParts = rowParts(left);
+        const rightParts = rowParts(right);
+        const leftKey = `${isDeleted(left) ? '2' : leftParts.date?.value ? '0' : '1'}-${leftParts.date?.value || ''}`;
+        const rightKey = `${isDeleted(right) ? '2' : rightParts.date?.value ? '0' : '1'}-${rightParts.date?.value || ''}`;
+        return leftKey.localeCompare(rightKey);
+      }).forEach((row) => rows.appendChild(row));
+    };
+    const refresh = () => {
+      activeRows().forEach(updateRowLabel);
+      sortRows();
+      const dates = [...new Set(activeDateValues())].sort();
+      if (!dates.length) {
+        summary.textContent = 'Choose at least one work date.';
+      } else if (dates.length === 1) {
+        summary.textContent = `1 work day · ${formatDate(dates[0])}`;
+      } else {
+        summary.textContent = `${dates.length} work days · ${formatDate(dates[0])}–${formatDate(dates[dates.length - 1])}`;
+      }
+    };
+    const newRow = () => {
       const index = Number(total.value);
       const wrapper = document.createElement('div');
       wrapper.innerHTML = template.innerHTML.replaceAll('__prefix__', index).trim();
       const row = wrapper.firstElementChild;
       rows.appendChild(row);
       total.value = index + 1;
-      wireRemove(row.querySelector('.remove-work-date'));
-      row.querySelector('input[type="date"]')?.focus();
+      return row;
+    };
+    const addDate = (isoDate) => {
+      const duplicate = activeRows().find((row) => rowParts(row).date?.value === isoDate);
+      if (duplicate) return { row: duplicate, added: false };
+      const deletedMatch = Array.from(rows.querySelectorAll('.work-date-row')).find(
+        (row) => isDeleted(row) && rowParts(row).date?.value === isoDate,
+      );
+      const emptyRow = activeRows().find((row) => !rowParts(row).date?.value && !rowParts(row).note?.value);
+      const row = deletedMatch || emptyRow || newRow();
+      const parts = rowParts(row);
+      if (parts.deletion) { parts.deletion.checked = false; parts.deletion.value = ''; }
+      row.classList.remove('hidden');
+      parts.date.value = isoDate;
+      if (!deletedMatch && parts.note) parts.note.value = '';
+      updateRowLabel(row);
+      return { row, added: true };
+    };
+    const maxDate = rows.querySelector('input[type="date"]')?.max || '';
+    [rangeStart, rangeEnd, specificDate].forEach((input) => { if (maxDate) input.max = maxDate; });
+
+    rows.addEventListener('click', (event) => {
+      const button = event.target.closest('.remove-work-date');
+      if (!button) return;
+      const row = button.closest('.work-date-row');
+      const deletion = rowParts(row).deletion;
+      if (deletion) { deletion.checked = true; deletion.value = 'on'; }
+      row.classList.add('hidden');
+      refresh();
+      announce('Work date removed. You can add it again if needed.');
+      (specificDate || rangeStart).focus();
     });
+    rows.addEventListener('change', (event) => {
+      if (!event.target.matches('input[type="date"]')) return;
+      updateRowLabel(event.target.closest('.work-date-row'));
+      refresh();
+    });
+    rangeButton.addEventListener('click', () => {
+      setError([rangeStart, rangeEnd], rangeError, '');
+      if (!rangeStart.value || !rangeEnd.value) {
+        setError([rangeStart, rangeEnd], rangeError, 'Choose both a start date and an end date.');
+        (!rangeStart.value ? rangeStart : rangeEnd).focus();
+        return;
+      }
+      if (rangeEnd.value < rangeStart.value) {
+        setError([rangeStart, rangeEnd], rangeError, 'End date cannot be earlier than start date.');
+        rangeEnd.focus();
+        return;
+      }
+      if (maxDate && (rangeStart.value > maxDate || rangeEnd.value > maxDate)) {
+        setError([rangeStart, rangeEnd], rangeError, 'Work dates cannot be in the future.');
+        (rangeStart.value > maxDate ? rangeStart : rangeEnd).focus();
+        return;
+      }
+      let cursor = parseLocalDate(rangeStart.value);
+      const end = parseLocalDate(rangeEnd.value);
+      let added = 0;
+      let duplicates = 0;
+      let lastAddedRow = null;
+      while (cursor <= end) {
+        const result = addDate(toIsoDate(cursor));
+        if (result.added) { added += 1; lastAddedRow = result.row; } else { duplicates += 1; }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      refresh();
+      if (!added) {
+        announce('All dates in this range are already selected.');
+      } else if (duplicates) {
+        announce(`${added} work ${added === 1 ? 'date' : 'dates'} added; ${duplicates} ${duplicates === 1 ? 'was' : 'were'} already selected.`);
+      } else {
+        announce(`${added} work ${added === 1 ? 'date' : 'dates'} added.`);
+      }
+      (rowParts(lastAddedRow || activeRows()[0]).note || rangeEnd).focus();
+    });
+    specificButton.addEventListener('click', () => {
+      setError([specificDate], specificError, '');
+      if (!specificDate.value) {
+        setError([specificDate], specificError, 'Choose a work date.');
+        specificDate.focus();
+        return;
+      }
+      if (maxDate && specificDate.value > maxDate) {
+        setError([specificDate], specificError, 'Work dates cannot be in the future.');
+        specificDate.focus();
+        return;
+      }
+      const result = addDate(specificDate.value);
+      refresh();
+      if (!result.added) {
+        announce(`${formatDate(specificDate.value)} is already selected.`);
+        (rowParts(result.row).note || rowParts(result.row).date).focus();
+        return;
+      }
+      announce('1 work date added.');
+      specificDate.value = '';
+      (rowParts(result.row).note || rowParts(result.row).date).focus();
+    });
+    refresh();
   })();
 </script>
 {% endblock %}

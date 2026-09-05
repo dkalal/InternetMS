@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import ValidationError
-from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import Exists, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -11,18 +13,24 @@ from users.tenancy import require_tenant
 
 from .forms import (
     ApprovedCorrectionForm, PaymentDisputeForm, PaymentVoidForm,
-    RejectionForm, TechnicianPaymentForm, WorkDateFormSet, WorkReportForm,
+    RejectionForm, TechnicianPaymentBatchForm, TechnicianPaymentForm,
+    WorkDateFormSet, WorkReportForm,
 )
-from .models import TechnicianPaymentRecord, TechnicianWorkReport, WorkReportServiceDay
+from .models import (
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport,
+    WorkReportServiceDay,
+)
 from .policies import (
-    pending_approval_queryset_for, technician_payment_queryset_for,
-    work_report_queryset_for,
+    pending_approval_queryset_for, technician_payment_batch_queryset_for,
+    technician_payment_queryset_for, work_report_queryset_for,
 )
 from .services import (
     approve_report, correct_approved_report, create_report, reject_report,
-    confirm_technician_payment, dispute_technician_payment,
-    record_technician_payment, replace_technician_payment, submit_report,
-    update_own_report, void_technician_payment,
+    confirm_technician_payment, confirm_technician_payment_batch,
+    dispute_technician_payment, dispute_technician_payment_batch,
+    record_technician_payment, record_technician_payment_batch,
+    replace_technician_payment, submit_report, update_own_report,
+    void_technician_payment, void_technician_payment_batch,
 )
 
 
@@ -110,6 +118,8 @@ def report_list(request):
             ).order_by("service_date", "id"),
         ),
     )
+
+
     active_payment = TechnicianPaymentRecord.objects.unscoped().filter(
         tenant=tenant, report=OuterRef("pk"),
     ).exclude(status=TechnicianPaymentRecord.Status.VOIDED).order_by("-recorded_at")
@@ -179,11 +189,13 @@ def report_detail(request, pk):
         "can_record_payment": can_record_payment,
         "can_respond_payment": bool(
             active_payment
+            and active_payment.batch_id is None
             and active_payment.status == TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION
             and report.technician_id == request.membership.id
         ),
         "can_void_payment": bool(
             active_payment
+            and active_payment.batch_id is None
             and request.membership.base_role == request.membership.BaseRole.ADMIN_MANAGER
             and has_tenant_permission(
                 request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VOID,
@@ -216,6 +228,25 @@ def report_create(request):
         "form": form, "work_date_formset": work_date_formset,
         "page_title": "New Work Report",
     })
+
+
+def _payment_batch_or_404(request, pk):
+    tenant = require_tenant(request)
+    return get_object_or_404(
+        technician_payment_batch_queryset_for(
+            request.user, tenant, membership=request.membership,
+        ).select_related(
+            "technician__user", "recorded_by__user", "voided_by__user", "replaces",
+        ).prefetch_related(
+            Prefetch(
+                "allocations",
+                queryset=TechnicianPaymentRecord.objects.unscoped().filter(
+                    tenant=tenant,
+                ).select_related("report").prefetch_related("report__service_days").order_by("report_id"),
+            ),
+        ),
+        pk=pk,
+    )
 
 
 @login_required
@@ -360,6 +391,290 @@ def report_correct(request, pk):
     })
 
 
+@login_required
+def payment_workspace(request):
+    tenant = require_tenant(request)
+    membership = request.membership
+    can_manage = (
+        membership.base_role == membership.BaseRole.ADMIN_MANAGER
+        and has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_ALL,
+            membership=membership,
+        )
+    )
+    can_view_own = (
+        membership.base_role == membership.BaseRole.TECHNICIAN
+        and has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_OWN,
+            membership=membership,
+        )
+    )
+    if not can_manage and not can_view_own:
+        raise PermissionDenied("Technician payments are not available.")
+
+    batches = technician_payment_batch_queryset_for(
+        request.user, tenant, membership=membership,
+    ).select_related("technician__user").prefetch_related("allocations__report__service_days")
+    if can_view_own:
+        return render(request, "work_reports/payment_workspace.html", {
+            "batches": batches[:200], "can_manage": False, "selected_tab": "MY_PAYMENTS",
+        })
+
+    selected_tab = request.GET.get("status", "READY").upper()
+    valid_tabs = {"READY", *TechnicianPaymentRecord.Status.values}
+    if selected_tab not in valid_tabs:
+        selected_tab = "READY"
+    groups = []
+    if selected_tab == "READY":
+        active_payment = TechnicianPaymentRecord.objects.unscoped().filter(
+            tenant=tenant, report=OuterRef("pk"),
+        ).exclude(status=TechnicianPaymentRecord.Status.VOIDED)
+        eligible = (
+            TechnicianWorkReport.objects.unscoped()
+            .filter(
+                tenant=tenant,
+                status=TechnicianWorkReport.Status.APPROVED,
+                technician__tenant=tenant,
+                technician__is_active=True,
+                technician__base_role=membership.BaseRole.TECHNICIAN,
+            )
+            .annotate(has_active_payment=Exists(active_payment))
+            .filter(has_active_payment=False)
+            .select_related("technician__user", "customer")
+            .prefetch_related("service_days")
+            .order_by("technician__user__first_name", "technician__user__username", "pk")[:200]
+        )
+        grouped = {}
+        for report in eligible:
+            group = grouped.setdefault(report.technician_id, {
+                "technician": report.technician, "reports": [], "total": Decimal("0"),
+            })
+            group["reports"].append(report)
+            group["total"] += report.agreed_amount
+        groups = list(grouped.values())
+    else:
+        batches = batches.filter(status=selected_tab)
+    return render(request, "work_reports/payment_workspace.html", {
+        "batches": batches[:200], "groups": groups, "can_manage": True,
+        "selected_tab": selected_tab,
+    })
+
+
+def _selected_batch_reports(request, *, tenant, report_ids):
+    normalized = []
+    for raw_id in report_ids:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            raise Http404
+        if value not in normalized:
+            normalized.append(value)
+    if not normalized or len(normalized) > 100:
+        raise ValidationError("Select between 1 and 100 Work Reports.")
+    reports = list(
+        work_report_queryset_for(
+            request.user, tenant, membership=request.membership,
+        ).filter(pk__in=normalized).select_related("technician__user", "customer")
+        .prefetch_related("service_days").order_by("pk")
+    )
+    if len(reports) != len(normalized):
+        raise Http404
+    if len({report.technician_id for report in reports}) != 1:
+        raise ValidationError("Select Work Reports for one Technician only.")
+    technician = reports[0].technician
+    if (
+        not technician.is_active
+        or technician.tenant_id != tenant.id
+        or technician.base_role != technician.BaseRole.TECHNICIAN
+    ):
+        raise ValidationError("The selected Technician is not active in this tenant.")
+    if any(report.status != TechnicianWorkReport.Status.APPROVED for report in reports):
+        raise ValidationError("Select only approved Work Reports.")
+    if TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=tenant, report_id__in=normalized,
+    ).exclude(status=TechnicianPaymentRecord.Status.VOIDED).exists():
+        raise ValidationError("One or more selected Work Reports already has an active payment.")
+    return reports
+
+
+def _batch_form_rows(form, reports):
+    return [
+        {
+            "report": report,
+            "amount": form[f"allocation_{report.pk}_amount_paid"],
+            "reason": form[f"allocation_{report.pk}_adjustment_reason"],
+            "confirmation": form[f"allocation_{report.pk}_confirm_adjusted_amount"],
+        }
+        for report in reports
+    ]
+
+
+@login_required
+def payment_batch_record(request):
+    tenant = require_tenant(request)
+    require_permission(request, PermissionCode.TECHNICIAN_PAYMENTS_RECORD)
+    if request.membership.base_role != request.membership.BaseRole.ADMIN_MANAGER:
+        raise PermissionDenied("Only an Administrator / Manager may record Technician payments.")
+    if request.method != "POST":
+        return redirect("work_reports:payment_workspace")
+    report_ids = request.POST.getlist("report_ids")
+    try:
+        reports = _selected_batch_reports(request, tenant=tenant, report_ids=report_ids)
+    except ValidationError as exc:
+        messages.error(request, _validation_message(exc))
+        return redirect("work_reports:payment_workspace")
+    is_record_submission = request.POST.get("action") == "record"
+    form = TechnicianPaymentBatchForm(
+        request.POST if is_record_submission else None, reports=reports,
+    )
+    if is_record_submission and form.is_valid():
+        data = form.cleaned_data
+        try:
+            batch = record_technician_payment_batch(
+                report_allocations=form.allocations(),
+                membership=request.membership,
+                payment_date=data["payment_date"],
+                payment_method=data["payment_method"],
+                method_description=data["method_description"],
+                reference=data["reference"], manager_note=data["manager_note"],
+                tenant=tenant, request_metadata=_request_metadata(request),
+            )
+        except ValidationError as exc:
+            form.add_error(None, _validation_message(exc))
+        else:
+            messages.success(
+                request,
+                f"Payment batch recorded for {batch.technician.user.get_full_name() or batch.technician.user.username}. Awaiting Technician confirmation.",
+            )
+            return redirect("work_reports:payment_batch_detail", pk=batch.pk)
+    return render(request, "work_reports/payment_batch_form.html", {
+        "form": form, "reports": reports, "allocation_rows": _batch_form_rows(form, reports),
+        "technician": reports[0].technician,
+    })
+
+
+@login_required
+def payment_batch_detail(request, pk):
+    batch = _payment_batch_or_404(request, pk)
+    tenant = require_tenant(request)
+    is_owner = batch.technician_id == request.membership.id
+    can_manage = (
+        request.membership.base_role == request.membership.BaseRole.ADMIN_MANAGER
+        and has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_ALL,
+            membership=request.membership,
+        )
+    )
+    return render(request, "work_reports/payment_batch_detail.html", {
+        "batch": batch,
+        "can_respond": is_owner and batch.status == TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION,
+        "can_void": can_manage and batch.status != TechnicianPaymentRecord.Status.VOIDED,
+        "can_replace": can_manage and batch.status == TechnicianPaymentRecord.Status.VOIDED
+            and not hasattr(batch, "replacement"),
+    })
+
+
+@login_required
+@require_POST
+def payment_batch_confirm(request, pk):
+    tenant = require_tenant(request)
+    batch = _payment_batch_or_404(request, pk)
+    try:
+        batch = confirm_technician_payment_batch(
+            batch_id=batch.pk, membership=request.membership, tenant=tenant,
+            request_metadata=_request_metadata(request),
+        )
+    except ValidationError as exc:
+        messages.error(request, _validation_message(exc))
+    else:
+        messages.success(request, "The complete payment batch has been acknowledged as received.")
+    return redirect("work_reports:payment_batch_detail", pk=batch.pk)
+
+
+@login_required
+def payment_batch_dispute(request, pk):
+    tenant = require_tenant(request)
+    batch = _payment_batch_or_404(request, pk)
+    if batch.technician_id != request.membership.id or batch.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION:
+        raise Http404
+    form = PaymentDisputeForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            batch = dispute_technician_payment_batch(
+                batch_id=batch.pk, membership=request.membership,
+                reason=form.cleaned_data["reason"], tenant=tenant,
+                request_metadata=_request_metadata(request),
+            )
+        except ValidationError as exc:
+            form.add_error(None, _validation_message(exc))
+        else:
+            messages.success(request, "Payment batch disputed. The Manager's record remains in history.")
+            return redirect("work_reports:payment_batch_detail", pk=batch.pk)
+    return render(request, "work_reports/payment_batch_action.html", {
+        "batch": batch, "form": form, "action": "dispute",
+    })
+
+
+@login_required
+def payment_batch_void(request, pk):
+    tenant = require_tenant(request)
+    require_permission(request, PermissionCode.TECHNICIAN_PAYMENTS_VOID)
+    if request.membership.base_role != request.membership.BaseRole.ADMIN_MANAGER:
+        raise PermissionDenied("Only an Administrator / Manager may void Technician payments.")
+    batch = _payment_batch_or_404(request, pk)
+    if batch.status == TechnicianPaymentRecord.Status.VOIDED:
+        raise Http404
+    form = PaymentVoidForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            batch = void_technician_payment_batch(
+                batch_id=batch.pk, membership=request.membership,
+                reason=form.cleaned_data["reason"], tenant=tenant,
+                request_metadata=_request_metadata(request),
+            )
+        except ValidationError as exc:
+            form.add_error(None, _validation_message(exc))
+        else:
+            messages.success(request, "Payment batch voided. Its allocations and response remain in history.")
+            return redirect("work_reports:payment_batch_detail", pk=batch.pk)
+    return render(request, "work_reports/payment_batch_action.html", {
+        "batch": batch, "form": form, "action": "void",
+    })
+
+
+@login_required
+def payment_batch_replace(request, pk):
+    tenant = require_tenant(request)
+    require_permission(request, PermissionCode.TECHNICIAN_PAYMENTS_RECORD)
+    if request.membership.base_role != request.membership.BaseRole.ADMIN_MANAGER:
+        raise PermissionDenied("Only an Administrator / Manager may replace Technician payments.")
+    batch = _payment_batch_or_404(request, pk)
+    if batch.status != TechnicianPaymentRecord.Status.VOIDED or hasattr(batch, "replacement"):
+        raise Http404
+    reports = [allocation.report for allocation in batch.allocations.all()]
+    form = TechnicianPaymentBatchForm(request.POST or None, reports=reports)
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        try:
+            replacement = record_technician_payment_batch(
+                report_allocations=form.allocations(), membership=request.membership,
+                payment_date=data["payment_date"], payment_method=data["payment_method"],
+                method_description=data["method_description"], reference=data["reference"],
+                manager_note=data["manager_note"], tenant=tenant, replaces_batch_id=batch.pk,
+                request_metadata=_request_metadata(request),
+            )
+        except ValidationError as exc:
+            form.add_error(None, _validation_message(exc))
+        else:
+            messages.success(request, "Replacement payment batch recorded and awaiting confirmation.")
+            return redirect("work_reports:payment_batch_detail", pk=replacement.pk)
+    return render(request, "work_reports/payment_batch_form.html", {
+        "form": form, "reports": reports, "allocation_rows": _batch_form_rows(form, reports),
+        "technician": batch.technician,
+        "replaces": batch,
+    })
+
+
 def _render_payment_form(request, *, report, replaces=None):
     form = TechnicianPaymentForm(request.POST or None, report=report)
     if request.method == "POST" and form.is_valid():
@@ -425,6 +740,9 @@ def payment_replace(request, pk):
 def payment_confirm(request, pk):
     tenant = require_tenant(request)
     payment = _payment_or_404(request, pk)
+    if payment.batch_id:
+        messages.info(request, "Confirm the complete payment batch, not an individual allocation.")
+        return redirect("work_reports:payment_batch_detail", pk=payment.batch_id)
     try:
         payment = confirm_technician_payment(
             payment_id=payment.pk, membership=request.membership, tenant=tenant,
@@ -441,6 +759,8 @@ def payment_confirm(request, pk):
 def payment_dispute(request, pk):
     tenant = require_tenant(request)
     payment = _payment_or_404(request, pk)
+    if payment.batch_id:
+        return redirect("work_reports:payment_batch_dispute", pk=payment.batch_id)
     if (
         payment.report.technician_id != request.membership.id
         or payment.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION
@@ -469,6 +789,8 @@ def payment_void(request, pk):
     tenant = require_tenant(request)
     require_permission(request, PermissionCode.TECHNICIAN_PAYMENTS_VOID)
     payment = _payment_or_404(request, pk)
+    if payment.batch_id:
+        return redirect("work_reports:payment_batch_void", pk=payment.batch_id)
     if payment.status == TechnicianPaymentRecord.Status.VOIDED:
         raise Http404
     form = PaymentVoidForm(request.POST or None)

@@ -91,3 +91,11 @@ Billing isolation:
 - The feature is exposed only under `/work-reports/`; customer pages, Sales-owned views, billing print templates, exports, finance reports, and public integration APIs are unchanged.
 
 Migration `work_reports.0003` is additive: it creates the payment table and widens history event/status fields. Cross-row tenant and replacement consistency is enforced by model validation and locked lifecycle services because portable SQL check constraints cannot reference related rows.
+
+### Bulk Technician payment batches
+
+`TechnicianPaymentBatch` groups one or more approved, unpaid Work Reports for exactly one active Technician and one descriptive payment method. Each included report retains a `TechnicianPaymentRecord` allocation, so the existing active-payment uniqueness rule, agreed-amount snapshot, adjustment approval, and report history remain authoritative. Existing standalone records remain unchanged with `batch=NULL`.
+
+Managers select only visible reports within one Technician group. The lifecycle service re-queries every submitted ID from the active tenant, locks reports and existing payments in deterministic order, rejects an invalid line without partial creation, recalculates both totals, and writes the batch, allocations, report histories, and batch audit in one transaction. Confirmation, dispute, and void apply to the complete batch; replacements must cover the same reports and link to one voided batch. Individual allocation endpoints do not permit partial acknowledgement or voiding.
+
+Migration `work_reports.0006` is additive: it creates the batch table, adds the nullable protected allocation relationship, extends history event choices, and adds status/date indexes plus total, method-description, and lifecycle-field constraints. It does not backfill or rewrite standalone payment records.

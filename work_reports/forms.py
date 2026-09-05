@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal
+
 from django import forms
 from django.forms import BaseFormSet, formset_factory
 from django.utils import timezone
@@ -177,6 +180,83 @@ class TechnicianPaymentForm(forms.ModelForm):
                     "Explicitly approve the adjusted final amount.",
                 )
         return cleaned
+
+
+class TechnicianPaymentBatchForm(forms.Form):
+    payment_date = forms.DateField(
+        label="Payment date", widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    payment_method = forms.ChoiceField(
+        label="Payment method", choices=TechnicianPaymentRecord.PaymentMethod.choices,
+        help_text="Descriptive label only; JBMS does not validate or transfer money.",
+    )
+    method_description = forms.CharField(
+        label="Describe other method", required=False, max_length=120,
+    )
+    reference = forms.CharField(label="Reference (optional)", required=False, max_length=200)
+    manager_note = forms.CharField(
+        label="Manager note (optional)", required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+
+    def __init__(self, *args, reports, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reports = list(reports)
+        if not self.is_bound:
+            self.fields["payment_date"].initial = date.today()
+        for report in self.reports:
+            prefix = f"allocation_{report.pk}"
+            self.fields[f"{prefix}_amount_paid"] = forms.DecimalField(
+                label="Final paid amount", min_value=Decimal("0.01"),
+                max_digits=14, decimal_places=2, initial=report.agreed_amount,
+                widget=forms.NumberInput(attrs={"min": "0.01", "step": "0.01"}),
+            )
+            self.fields[f"{prefix}_adjustment_reason"] = forms.CharField(
+                label="Adjustment reason", required=False,
+                widget=forms.Textarea(attrs={"rows": 2}),
+            )
+            self.fields[f"{prefix}_confirm_adjusted_amount"] = forms.BooleanField(
+                label="I approve this adjusted final amount", required=False,
+            )
+        apply_tailwind(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        if (
+            cleaned.get("payment_method") == TechnicianPaymentRecord.PaymentMethod.OTHER
+            and not (cleaned.get("method_description") or "").strip()
+        ):
+            self.add_error("method_description", "Describe the payment method.")
+        for report in self.reports:
+            prefix = f"allocation_{report.pk}"
+            amount = cleaned.get(f"{prefix}_amount_paid")
+            if amount is not None and amount != report.agreed_amount:
+                if not (cleaned.get(f"{prefix}_adjustment_reason") or "").strip():
+                    self.add_error(
+                        f"{prefix}_adjustment_reason",
+                        "Explain why this final amount differs.",
+                    )
+                if cleaned.get(f"{prefix}_confirm_adjusted_amount") is not True:
+                    self.add_error(
+                        f"{prefix}_confirm_adjusted_amount",
+                        "Explicitly approve this adjusted final amount.",
+                    )
+        return cleaned
+
+    def allocations(self):
+        return [
+            {
+                "report_id": report.pk,
+                "amount_paid": self.cleaned_data[f"allocation_{report.pk}_amount_paid"],
+                "adjustment_reason": self.cleaned_data.get(
+                    f"allocation_{report.pk}_adjustment_reason", "",
+                ),
+                "confirm_adjusted_amount": self.cleaned_data.get(
+                    f"allocation_{report.pk}_confirm_adjusted_amount", False,
+                ),
+            }
+            for report in self.reports
+        ]
 
 
 class PaymentDisputeForm(forms.Form):

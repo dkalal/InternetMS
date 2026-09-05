@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from .models import (
-    TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
     WorkReportServiceDay,
 )
 
@@ -53,3 +53,13 @@ class TechnicianPaymentRecordAdmin(SupportTenantAdminMixin, admin.ModelAdmin):
         "report__work_title", "report__technician__user__username", "reference",
     )
     readonly_fields = tuple(field.name for field in TechnicianPaymentRecord._meta.fields)
+
+
+@admin.register(TechnicianPaymentBatch)
+class TechnicianPaymentBatchAdmin(SupportTenantAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "id", "technician", "amount_paid_total", "payment_date", "payment_method", "status",
+    )
+    list_filter = ("status", "payment_method", "payment_date")
+    search_fields = ("technician__user__username", "reference")
+    readonly_fields = tuple(field.name for field in TechnicianPaymentBatch._meta.fields)

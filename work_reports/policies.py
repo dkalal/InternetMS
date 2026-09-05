@@ -1,7 +1,7 @@
 from users.models import TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission
 
-from .models import TechnicianPaymentRecord, TechnicianWorkReport
+from .models import TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport
 
 
 def work_report_queryset_for(user, tenant, queryset=None, *, membership=None):
@@ -49,4 +49,25 @@ def technician_payment_queryset_for(user, tenant, queryset=None, *, membership=N
         membership=membership,
     ):
         return queryset.filter(report__technician=membership)
+    return queryset.none()
+
+
+def technician_payment_batch_queryset_for(user, tenant, queryset=None, *, membership=None):
+    queryset = queryset if queryset is not None else TechnicianPaymentBatch.objects.unscoped().all()
+    queryset = queryset.filter(tenant=tenant, technician__tenant=tenant)
+    membership = membership or TenantMembership.objects.filter(
+        user=user, tenant=tenant, is_active=True,
+    ).first()
+    if membership is None:
+        return queryset.none()
+    if has_tenant_permission(
+        user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_ALL,
+        membership=membership,
+    ):
+        return queryset
+    if has_tenant_permission(
+        user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_OWN,
+        membership=membership,
+    ):
+        return queryset.filter(technician=membership)
     return queryset.none()

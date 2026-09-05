@@ -45,12 +45,13 @@
         </dl>
         <p class="mt-4 text-xs text-slate-500">This is a manually recorded internal acknowledgement. JBMS does not send or verify money and does not create an invoice or receipt.</p>
         <div class="mt-4 flex flex-wrap gap-2">
+          {% if payment.batch_id %}<a href="{% url 'work_reports:payment_batch_detail' payment.batch_id %}" class="jims-btn jims-btn-primary">View complete payment batch</a>{% endif %}
           {% if can_respond_payment %}
             <button type="button" class="jims-btn jims-btn-primary" onclick="document.getElementById('confirm-payment-dialog').showModal()">Confirm received</button>
             <a href="{% url 'work_reports:payment_dispute' payment.pk %}" class="jims-btn jims-btn-secondary border-orange-300 text-orange-800 hover:bg-orange-50">Dispute payment</a>
           {% endif %}
           {% if can_void_payment %}<a href="{% url 'work_reports:payment_void' payment.pk %}" class="jims-btn jims-btn-secondary">Void record</a>{% endif %}
-          {% if can_record_payment and payment.status == 'VOIDED' %}<a href="{% url 'work_reports:payment_replace' payment.pk %}" class="jims-btn jims-btn-primary">Record replacement</a>{% endif %}
+          {% if can_record_payment and payment.status == 'VOIDED' and not payment.batch_id %}<a href="{% url 'work_reports:payment_replace' payment.pk %}" class="jims-btn jims-btn-primary">Record replacement</a>{% endif %}
         </div>
       {% else %}
         <div class="mt-4 flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -9,7 +11,7 @@ from users.models import TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission
 
 from .models import (
-    TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
     WorkReportServiceDay,
 )
 
@@ -300,6 +302,336 @@ def _payment_history(payment, membership, event, *, from_status="", reason="", r
     )
 
 
+def _batch_history(batch, membership, event, *, from_status="", reason="", request_metadata=None):
+    snapshot = batch.snapshot()
+    for allocation in batch.allocations.select_related("report").order_by("report_id"):
+        WorkReportHistory.objects.create(
+            tenant=batch.tenant,
+            report=allocation.report,
+            actor_membership=membership,
+            event=event,
+            from_status=from_status,
+            to_status=batch.status,
+            reason=reason,
+            snapshot={**allocation.snapshot(), "batch": snapshot},
+        )
+    metadata = {
+        "history_event": event,
+        "batch_id": batch.pk,
+        "report_ids": snapshot["report_ids"],
+        "technician_membership_id": batch.technician_id,
+    }
+    metadata.update(request_metadata or {})
+    AuditLog.objects.create(
+        organization=batch.tenant,
+        tenant=batch.tenant,
+        actor=membership.user,
+        action=f"technician_payment_batch.{event.lower()}",
+        object_type="TechnicianPaymentBatch",
+        object_id=str(batch.pk),
+        old_value={"status": from_status} if from_status else {},
+        new_value=snapshot,
+        metadata=metadata,
+    )
+
+
+def _normalize_batch_allocations(report_allocations):
+    if not report_allocations:
+        raise ValidationError("Select at least one approved Work Report.")
+    if len(report_allocations) > 100:
+        raise ValidationError("A payment batch may contain at most 100 Work Reports.")
+    normalized = {}
+    for raw in report_allocations:
+        try:
+            report_id = int(raw.get("report_id"))
+            amount_paid = Decimal(str(raw.get("amount_paid")))
+        except (TypeError, ValueError, InvalidOperation):
+            raise ValidationError("Every allocation requires a valid report and paid amount.")
+        if report_id <= 0 or not amount_paid.is_finite() or amount_paid <= 0:
+            raise ValidationError("Every allocation amount must be greater than zero.")
+        row = {
+            "report_id": report_id,
+            "amount_paid": amount_paid,
+            "adjustment_reason": (raw.get("adjustment_reason") or "").strip(),
+            "confirm_adjusted_amount": raw.get("confirm_adjusted_amount") is True,
+        }
+        if report_id in normalized and normalized[report_id] != row:
+            raise ValidationError("A Work Report cannot have conflicting allocations.")
+        normalized[report_id] = row
+    return [normalized[key] for key in sorted(normalized)]
+
+
+@transaction.atomic
+def record_technician_payment_batch(
+    *, report_allocations, membership, payment_date, payment_method,
+    method_description="", reference="", manager_note="", tenant=None,
+    replaces_batch_id=None, request_metadata=None,
+):
+    tenant = tenant or membership.tenant
+    _require_payment_manager(
+        membership, PermissionCode.TECHNICIAN_PAYMENTS_RECORD, tenant=tenant,
+    )
+    rows = _normalize_batch_allocations(report_allocations)
+    method_description = (method_description or "").strip()
+    if payment_method not in TechnicianPaymentRecord.PaymentMethod.values:
+        raise ValidationError("Choose a valid descriptive payment method.")
+    if payment_method == TechnicianPaymentRecord.PaymentMethod.OTHER and not method_description:
+        raise ValidationError("Describe the payment method when Other is selected.")
+
+    report_ids = [row["report_id"] for row in rows]
+    reports = list(
+        TechnicianWorkReport.objects.unscoped().select_for_update()
+        .select_related("technician")
+        .filter(tenant=tenant, pk__in=report_ids)
+        .order_by("pk")
+    )
+    if len(reports) != len(report_ids):
+        raise PermissionDenied("One or more Work Reports are not available.")
+    report_map = {report.pk: report for report in reports}
+    technician_ids = {report.technician_id for report in reports}
+    if len(technician_ids) != 1:
+        raise ValidationError("All Work Reports in a batch must belong to one Technician.")
+    technician = reports[0].technician
+    if (
+        not technician.is_active
+        or technician.tenant_id != tenant.id
+        or technician.base_role != TenantMembership.BaseRole.TECHNICIAN
+    ):
+        raise ValidationError("The Technician membership is not active in this tenant.")
+    if any(report.status != TechnicianWorkReport.Status.APPROVED for report in reports):
+        raise ValidationError("Every Work Report in a batch must be approved.")
+
+    list(
+        TechnicianPaymentRecord.objects.unscoped().select_for_update()
+        .filter(tenant=tenant, report_id__in=report_ids)
+        .order_by("report_id", "pk")
+    )
+    if TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=tenant, report_id__in=report_ids,
+    ).exclude(status=TechnicianPaymentRecord.Status.VOIDED).exists():
+        raise ValidationError("One or more Work Reports already have an active payment record.")
+
+    replacement = None
+    if replaces_batch_id is not None:
+        replacement = TechnicianPaymentBatch.objects.unscoped().select_for_update().filter(
+            pk=replaces_batch_id, tenant=tenant, technician=technician,
+        ).first()
+        if replacement is None or replacement.status != TechnicianPaymentRecord.Status.VOIDED:
+            raise ValidationError("A replacement must reference a voided batch for this Technician.")
+        if TechnicianPaymentBatch.objects.unscoped().filter(replaces=replacement).exists():
+            raise ValidationError("This voided payment batch has already been replaced.")
+        original_ids = set(replacement.allocations.values_list("report_id", flat=True))
+        if original_ids != set(report_ids):
+            raise ValidationError("A replacement batch must cover the same Work Reports.")
+
+    agreed_total = Decimal("0")
+    paid_total = Decimal("0")
+    for row in rows:
+        report = report_map[row["report_id"]]
+        differs = row["amount_paid"] != report.agreed_amount
+        if differs and not row["adjustment_reason"]:
+            raise ValidationError(
+                f"An adjustment reason is required for Work Report #{report.pk}."
+            )
+        if differs and not row["confirm_adjusted_amount"]:
+            raise ValidationError(
+                f"Explicitly approve the adjusted amount for Work Report #{report.pk}."
+            )
+        agreed_total += report.agreed_amount
+        paid_total += row["amount_paid"]
+    if agreed_total <= 0 or paid_total <= 0:
+        raise ValidationError("Payment batch totals must be greater than zero.")
+
+    try:
+        with transaction.atomic():
+            batch = TechnicianPaymentBatch(
+                tenant=tenant,
+                technician=technician,
+                payment_date=payment_date,
+                payment_method=payment_method,
+                method_description=method_description,
+                reference=(reference or "").strip(),
+                manager_note=(manager_note or "").strip(),
+                agreed_amount_total_snapshot=agreed_total,
+                amount_paid_total=paid_total,
+                status=TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION,
+                recorded_by=membership,
+                replaces=replacement,
+            )
+            batch.save()
+            for row in rows:
+                report = report_map[row["report_id"]]
+                TechnicianPaymentRecord(
+                    tenant=tenant,
+                    report=report,
+                    batch=batch,
+                    agreed_amount_snapshot=report.agreed_amount,
+                    amount_paid=row["amount_paid"],
+                    payment_date=payment_date,
+                    payment_method=payment_method,
+                    reference=batch.reference,
+                    manager_note=batch.manager_note,
+                    adjustment_reason=row["adjustment_reason"],
+                    status=batch.status,
+                    recorded_by=membership,
+                ).save()
+            initial_status = TechnicianPaymentRecord.Status.VOIDED if replacement else "NOT_RECORDED"
+            _batch_history(
+                batch, membership, WorkReportHistory.Event.PAYMENT_BATCH_RECORDED,
+                from_status=initial_status, request_metadata=request_metadata,
+            )
+            for allocation in batch.allocations.select_related("report"):
+                if allocation.amount_paid != allocation.agreed_amount_snapshot:
+                    _payment_history(
+                        allocation, membership,
+                        WorkReportHistory.Event.PAYMENT_ADJUSTMENT_APPROVED,
+                        from_status=allocation.status,
+                        reason=allocation.adjustment_reason,
+                        request_metadata={**(request_metadata or {}), "batch_id": batch.pk},
+                    )
+            if replacement:
+                _batch_history(
+                    batch, membership, WorkReportHistory.Event.PAYMENT_BATCH_REPLACED,
+                    from_status=TechnicianPaymentRecord.Status.VOIDED,
+                    reason=replacement.void_reason, request_metadata=request_metadata,
+                )
+            return batch
+    except IntegrityError as exc:
+        raise ValidationError(
+            "A payment was recorded for one of these Work Reports before this batch completed."
+        ) from exc
+
+
+def _locked_batch(*, batch_id, tenant, technician=None):
+    queryset = TechnicianPaymentBatch.objects.unscoped().select_for_update().select_related(
+        "technician", "recorded_by",
+    ).filter(pk=batch_id, tenant=tenant)
+    if technician is not None:
+        queryset = queryset.filter(technician=technician)
+    batch = queryset.first()
+    if batch is None:
+        raise PermissionDenied("Technician payment batch is not available.")
+    allocations = list(
+        TechnicianPaymentRecord.objects.unscoped().select_for_update()
+        .filter(tenant=tenant, batch=batch).select_related("report")
+        .order_by("report_id")
+    )
+    if not allocations:
+        raise ValidationError("This payment batch has no allocations.")
+    return batch, allocations
+
+
+def _transition_batch(batch, allocations, *, status, membership, timestamp_field, reason_field=None, reason=""):
+    now = timezone.now()
+    previous_status = batch.status
+    batch.status = status
+    setattr(batch, timestamp_field, now)
+    if reason_field:
+        setattr(batch, reason_field, reason)
+    if status == TechnicianPaymentRecord.Status.VOIDED:
+        batch.voided_by = membership
+    batch._lifecycle_transition = True
+    update_fields = ["status", timestamp_field, "updated_at"]
+    if reason_field:
+        update_fields.append(reason_field)
+    if status == TechnicianPaymentRecord.Status.VOIDED:
+        update_fields.append("voided_by")
+    batch.save(update_fields=update_fields)
+    for allocation in allocations:
+        allocation.status = status
+        setattr(allocation, timestamp_field, now)
+        if reason_field:
+            setattr(allocation, reason_field, reason)
+        if status == TechnicianPaymentRecord.Status.VOIDED:
+            allocation.voided_by = membership
+        allocation._lifecycle_transition = True
+        allocation.save(update_fields=update_fields)
+    return previous_status
+
+
+@transaction.atomic
+def confirm_technician_payment_batch(*, batch_id, membership, tenant=None, request_metadata=None):
+    tenant = tenant or membership.tenant
+    _require_payment_technician(
+        membership, PermissionCode.TECHNICIAN_PAYMENTS_CONFIRM_OWN, tenant=tenant,
+    )
+    batch, allocations = _locked_batch(batch_id=batch_id, tenant=tenant, technician=membership)
+    if batch.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION:
+        raise ValidationError("This payment batch can no longer be confirmed.")
+    previous = _transition_batch(
+        batch, allocations, status=TechnicianPaymentRecord.Status.CONFIRMED,
+        membership=membership, timestamp_field="confirmed_at",
+    )
+    _batch_history(
+        batch, membership, WorkReportHistory.Event.PAYMENT_BATCH_CONFIRMED,
+        from_status=previous, request_metadata=request_metadata,
+    )
+    return batch
+
+
+@transaction.atomic
+def dispute_technician_payment_batch(
+    *, batch_id, membership, reason, tenant=None, request_metadata=None,
+):
+    tenant = tenant or membership.tenant
+    _require_payment_technician(
+        membership, PermissionCode.TECHNICIAN_PAYMENTS_DISPUTE_OWN, tenant=tenant,
+    )
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError("Please provide a meaningful dispute reason.")
+    batch, allocations = _locked_batch(batch_id=batch_id, tenant=tenant, technician=membership)
+    if batch.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION:
+        raise ValidationError("This payment batch can no longer be disputed.")
+    previous = _transition_batch(
+        batch, allocations, status=TechnicianPaymentRecord.Status.DISPUTED,
+        membership=membership, timestamp_field="disputed_at",
+        reason_field="dispute_reason", reason=reason,
+    )
+    _batch_history(
+        batch, membership, WorkReportHistory.Event.PAYMENT_BATCH_DISPUTED,
+        from_status=previous, reason=reason, request_metadata=request_metadata,
+    )
+    return batch
+
+
+@transaction.atomic
+def void_technician_payment_batch(
+    *, batch_id, membership, reason, tenant=None, request_metadata=None,
+):
+    tenant = tenant or membership.tenant
+    _require_payment_manager(
+        membership, PermissionCode.TECHNICIAN_PAYMENTS_VOID, tenant=tenant,
+    )
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError("A meaningful void reason is required.")
+    batch, allocations = _locked_batch(batch_id=batch_id, tenant=tenant)
+    if batch.status == TechnicianPaymentRecord.Status.VOIDED:
+        raise ValidationError("This payment batch is already voided.")
+    previous = _transition_batch(
+        batch, allocations, status=TechnicianPaymentRecord.Status.VOIDED,
+        membership=membership, timestamp_field="voided_at",
+        reason_field="void_reason", reason=reason,
+    )
+    _batch_history(
+        batch, membership, WorkReportHistory.Event.PAYMENT_BATCH_VOIDED,
+        from_status=previous, reason=reason, request_metadata=request_metadata,
+    )
+    return batch
+
+
+def replace_technician_payment_batch(*, voided_batch_id, membership, **payment_data):
+    voided = TechnicianPaymentBatch.objects.unscoped().filter(
+        pk=voided_batch_id, tenant=membership.tenant,
+    ).first()
+    if voided is None:
+        raise PermissionDenied("Technician payment batch is not available.")
+    return record_technician_payment_batch(
+        membership=membership, replaces_batch_id=voided.pk, **payment_data,
+    )
+
+
 @transaction.atomic
 def record_technician_payment(
     *, report_id, membership, amount_paid, payment_date, payment_method,
@@ -395,6 +727,8 @@ def confirm_technician_payment(*, payment_id, membership, tenant=None, request_m
     ).filter(pk=payment_id, tenant=tenant, report__technician=membership).first()
     if payment is None:
         raise PermissionDenied("Technician payment is not available.")
+    if payment.batch_id:
+        raise ValidationError("This allocation must be confirmed through its complete payment batch.")
     if payment.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION:
         raise ValidationError("This payment record can no longer be confirmed.")
     previous_status = payment.status
@@ -425,6 +759,8 @@ def dispute_technician_payment(
     ).filter(pk=payment_id, tenant=tenant, report__technician=membership).first()
     if payment is None:
         raise PermissionDenied("Technician payment is not available.")
+    if payment.batch_id:
+        raise ValidationError("This allocation must be disputed through its complete payment batch.")
     if payment.status != TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION:
         raise ValidationError("This payment record can no longer be disputed.")
     previous_status = payment.status
@@ -454,6 +790,8 @@ def void_technician_payment(
     ).filter(pk=payment_id, tenant=tenant).first()
     if payment is None:
         raise PermissionDenied("Technician payment is not available.")
+    if payment.batch_id:
+        raise ValidationError("This allocation must be voided through its complete payment batch.")
     if payment.status == TechnicianPaymentRecord.Status.VOIDED:
         raise ValidationError("This payment record is already voided.")
     previous_status = payment.status

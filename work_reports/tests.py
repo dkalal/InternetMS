@@ -15,15 +15,17 @@ from users.models import Organization, TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission
 
 from .models import (
-    TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
     WorkReportServiceDay,
 )
 from .services import (
-    approve_report, confirm_technician_payment, correct_approved_report,
+    approve_report, confirm_technician_payment, confirm_technician_payment_batch,
+    correct_approved_report,
     create_report,
-    dispute_technician_payment, record_technician_payment, reject_report,
+    dispute_technician_payment, dispute_technician_payment_batch,
+    record_technician_payment, record_technician_payment_batch, reject_report,
     replace_technician_payment, submit_report, void_technician_payment,
-    update_own_report,
+    update_own_report, void_technician_payment_batch,
 )
 
 
@@ -439,6 +441,129 @@ class WorkReportSecurityTests(TestCase):
             field.name for field in WorkReportServiceDay._meta.fields
         })
 
+    def test_work_report_form_renders_range_and_specific_date_quick_entry(self):
+        response = self._client_for(self.tech_a).get(reverse("work_reports:create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Start date")
+        self.assertContains(response, "End date")
+        self.assertContains(response, "Add range")
+        self.assertContains(response, "Additional specific date")
+        self.assertContains(response, "Add date")
+        self.assertContains(response, "Selected work dates")
+        self.assertContains(response, 'id="work-date-range-start"')
+        self.assertContains(response, 'id="work-date-specific"')
+        self.assertNotContains(response, 'name="work-date-range-start"')
+        self.assertNotContains(response, 'name="work-date-specific"')
+        self.assertContains(response, 'name="work_dates-0-service_date"')
+
+    def test_expanded_range_and_specific_date_post_as_authoritative_rows(self):
+        client = self._client_for(self.tech_a)
+        payload = {
+            "work_title": "Range and return visit",
+            "client_name": "Customer A",
+            "customer": self.customer_a.pk,
+            "work_location": "Client site",
+            "activity_description": "Installation across several visits.",
+            "agreed_amount": "150000.00",
+            "internal_notes": "",
+            **self._work_date_payload(
+                ("2026-08-02", "Installation started"),
+                ("2026-08-03", "Installation continued"),
+                ("2026-08-04", "Initial testing"),
+                ("2026-08-07", "Return visit"),
+            ),
+        }
+
+        response = client.post(reverse("work_reports:create"), payload)
+
+        self.assertEqual(response.status_code, 302)
+        report = TechnicianWorkReport.objects.unscoped().get(
+            work_title="Range and return visit",
+        )
+        self.assertEqual(
+            list(report.service_days.values_list("service_date", flat=True)),
+            [date(2026, 8, 2), date(2026, 8, 3), date(2026, 8, 4), date(2026, 8, 7)],
+        )
+        self.assertEqual(report.service_date, date(2026, 8, 2))
+        self.assertEqual(report.agreed_amount, Decimal("150000.00"))
+
+    def test_edit_form_preserves_existing_dates_and_daily_notes(self):
+        update_own_report(
+            report_id=self.report_a.pk,
+            membership=self.tech_a,
+            cleaned_data={},
+            service_days=[
+                {"service_date": date(2026, 8, 2), "activity_note": "Installation"},
+                {"service_date": date(2026, 8, 7), "activity_note": "Return visit"},
+            ],
+        )
+
+        response = self._client_for(self.tech_a).get(
+            reverse("work_reports:edit", args=[self.report_a.pk]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="2026-08-02"')
+        self.assertContains(response, 'value="2026-08-07"')
+        self.assertContains(response, 'value="Installation"')
+        self.assertContains(response, 'value="Return visit"')
+        self.assertContains(response, "Add range")
+
+    def test_controlled_correction_uses_same_quick_entry_and_existing_rows(self):
+        update_own_report(
+            report_id=self.report_a.pk,
+            membership=self.tech_a,
+            cleaned_data={},
+            service_days=[
+                {"service_date": date(2026, 8, 2), "activity_note": "Installation"},
+                {"service_date": date(2026, 8, 4), "activity_note": "Testing"},
+            ],
+        )
+        submit_report(report_id=self.report_a.pk, membership=self.tech_a)
+        approve_report(report_id=self.report_a.pk, membership=self.manager_a)
+
+        response = self._client_for(self.manager_a).get(
+            reverse("work_reports:correct", args=[self.report_a.pk]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Add range")
+        self.assertContains(response, "Add date")
+        self.assertContains(response, 'value="2026-08-02"')
+        self.assertContains(response, 'value="2026-08-04"')
+        self.assertContains(response, 'value="Installation"')
+        self.assertContains(response, 'value="Testing"')
+
+    def test_validation_error_preserves_all_submitted_dates_and_notes(self):
+        client = self._client_for(self.tech_a)
+        future = (timezone.localdate() + timedelta(days=1)).isoformat()
+        payload = {
+            "work_title": "Preserve invalid submission",
+            "client_name": "",
+            "customer": "",
+            "work_location": "Site",
+            "activity_description": "Completed work.",
+            "agreed_amount": "50000.00",
+            "internal_notes": "",
+            **self._work_date_payload(
+                ("2026-08-02", "Keep this installation note"),
+                (future, "Keep this future-date note"),
+            ),
+        }
+
+        response = client.post(reverse("work_reports:create"), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Work dates cannot be in the future.")
+        self.assertContains(response, 'value="2026-08-02"')
+        self.assertContains(response, f'value="{future}"')
+        self.assertContains(response, 'value="Keep this installation note"')
+        self.assertContains(response, 'value="Keep this future-date note"')
+        self.assertFalse(TechnicianWorkReport.objects.unscoped().filter(
+            work_title="Preserve invalid submission",
+        ).exists())
+
     def _approve(self, report=None):
         report = report or self.report_a
         submit_report(report_id=report.pk, membership=report.technician)
@@ -687,3 +812,271 @@ class WorkReportSecurityTests(TestCase):
                 cleaned_data={"agreed_amount": Decimal("1.00")},
                 reason="Attempted correction after payment.",
             )
+
+    def _batch_reports(self):
+        second = self._report(
+            self.tech_a, self.customer_a, title="Second approved site visit",
+        )
+        self._approve(self.report_a)
+        self._approve(second)
+        return self.report_a, second
+
+    def _record_batch(self, reports=None, **overrides):
+        if reports is None:
+            reports = self._batch_reports()
+        values = {
+            "report_allocations": [
+                {
+                    "report_id": report.pk,
+                    "amount_paid": report.agreed_amount,
+                    "adjustment_reason": "",
+                    "confirm_adjusted_amount": False,
+                }
+                for report in reports
+            ],
+            "membership": self.manager_a,
+            "payment_date": date(2026, 8, 15),
+            "payment_method": TechnicianPaymentRecord.PaymentMethod.CASH,
+        }
+        values.update(overrides)
+        return record_technician_payment_batch(**values)
+
+    def test_batch_records_one_technician_allocations_and_server_totals(self):
+        reports = self._batch_reports()
+        allocations = [
+            {"report_id": reports[0].pk, "amount_paid": "900000.00",
+             "adjustment_reason": "Final approved scope reduction.",
+             "confirm_adjusted_amount": True},
+            {"report_id": reports[1].pk, "amount_paid": reports[1].agreed_amount,
+             "adjustment_reason": "", "confirm_adjusted_amount": False},
+            # An identical duplicate is normalized at the trusted boundary.
+            {"report_id": reports[1].pk, "amount_paid": reports[1].agreed_amount,
+             "adjustment_reason": "", "confirm_adjusted_amount": False},
+        ]
+        batch = self._record_batch(
+            reports=reports, report_allocations=allocations,
+        )
+        self.assertEqual(batch.technician_id, self.tech_a.pk)
+        self.assertEqual(batch.allocations.count(), 2)
+        self.assertEqual(batch.agreed_amount_total_snapshot, Decimal("1975308.64"))
+        self.assertEqual(batch.amount_paid_total, Decimal("1887654.32"))
+        self.assertEqual(batch.allocations.get(report=reports[0]).agreed_amount_snapshot,
+                         Decimal("987654.32"))
+        reports[0].refresh_from_db()
+        self.assertEqual(reports[0].agreed_amount, Decimal("987654.32"))
+
+    def test_batch_rejects_empty_mixed_tenant_unapproved_and_paid_atomically(self):
+        with self.assertRaises(ValidationError):
+            self._record_batch(reports=[], report_allocations=[])
+        reports = self._batch_reports()
+        self._approve(self.report_a2)
+        mixed = [
+            {"report_id": reports[0].pk, "amount_paid": reports[0].agreed_amount},
+            {"report_id": self.report_a2.pk, "amount_paid": self.report_a2.agreed_amount},
+        ]
+        with self.assertRaises(ValidationError):
+            self._record_batch(reports=reports, report_allocations=mixed)
+        with self.assertRaises(PermissionDenied):
+            self._record_batch(
+                reports=reports,
+                report_allocations=[{"report_id": self.report_b.pk, "amount_paid": "10.00"}],
+            )
+        draft = self._report(self.tech_a, self.customer_a, title="Not approved")
+        with self.assertRaises(ValidationError):
+            self._record_batch(
+                reports=reports,
+                report_allocations=[{"report_id": draft.pk, "amount_paid": draft.agreed_amount}],
+            )
+        self._record_payment(report=reports[0])
+        with self.assertRaises(ValidationError):
+            self._record_batch(reports=reports)
+        self.assertEqual(TechnicianPaymentBatch.objects.unscoped().count(), 0)
+
+    def test_batch_other_method_and_per_report_adjustment_are_strict(self):
+        reports = self._batch_reports()
+        with self.assertRaises(ValidationError):
+            self._record_batch(
+                reports=reports, payment_method=TechnicianPaymentRecord.PaymentMethod.OTHER,
+            )
+        changed = [{"report_id": report.pk, "amount_paid": Decimal("900000.00")}
+                   for report in reports]
+        with self.assertRaises(ValidationError):
+            self._record_batch(reports=reports, report_allocations=changed)
+        changed[0].update(
+            adjustment_reason="Approved reduction.", confirm_adjusted_amount=True,
+        )
+        changed[1].update(
+            adjustment_reason="Approved reduction.", confirm_adjusted_amount=True,
+        )
+        batch = self._record_batch(
+            reports=reports, report_allocations=changed,
+            payment_method=TechnicianPaymentRecord.PaymentMethod.OTHER,
+            method_description="Cheque",
+        )
+        self.assertEqual(batch.method_description, "Cheque")
+        self.assertEqual(batch.payment_method, TechnicianPaymentRecord.PaymentMethod.OTHER)
+
+    def test_batch_requires_same_tenant_manager_and_active_technician(self):
+        reports = self._batch_reports()
+        for actor in (self.manager_b, self.sales_a, self.tech_a):
+            with self.assertRaises(PermissionDenied):
+                self._record_batch(reports=reports, membership=actor)
+        self.tech_a.is_active = False
+        self.tech_a.save(update_fields=["is_active"])
+        with self.assertRaises(ValidationError):
+            self._record_batch(reports=reports)
+        self.assertFalse(TechnicianPaymentBatch.objects.unscoped().exists())
+
+    def test_batch_confirmation_is_owner_only_complete_and_one_way(self):
+        batch = self._record_batch()
+        with self.assertRaises(PermissionDenied):
+            confirm_technician_payment_batch(batch_id=batch.pk, membership=self.tech_a2)
+        with self.assertRaises(PermissionDenied):
+            confirm_technician_payment_batch(batch_id=batch.pk, membership=self.manager_a)
+        confirmed = confirm_technician_payment_batch(batch_id=batch.pk, membership=self.tech_a)
+        self.assertEqual(confirmed.status, TechnicianPaymentRecord.Status.CONFIRMED)
+        self.assertEqual(
+            set(confirmed.allocations.values_list("status", flat=True)),
+            {TechnicianPaymentRecord.Status.CONFIRMED},
+        )
+        with self.assertRaises(ValidationError):
+            confirm_technician_payment_batch(batch_id=batch.pk, membership=self.tech_a)
+        allocation = confirmed.allocations.first()
+        with self.assertRaises(ValidationError):
+            confirm_technician_payment(payment_id=allocation.pk, membership=self.tech_a)
+
+    def test_batch_dispute_void_and_replacement_preserve_complete_history(self):
+        batch = self._record_batch()
+        with self.assertRaises(ValidationError):
+            dispute_technician_payment_batch(
+                batch_id=batch.pk, membership=self.tech_a, reason=" ",
+            )
+        disputed = dispute_technician_payment_batch(
+            batch_id=batch.pk, membership=self.tech_a,
+            reason="The complete recorded amount was not received.",
+        )
+        with self.assertRaises(ValidationError):
+            void_technician_payment_batch(
+                batch_id=batch.pk, membership=self.manager_a, reason=" ",
+            )
+        voided = void_technician_payment_batch(
+            batch_id=batch.pk, membership=self.manager_a,
+            reason="Transfer reference was entered incorrectly.",
+        )
+        allocations = [
+            {"report_id": row.report_id, "amount_paid": row.agreed_amount_snapshot}
+            for row in voided.allocations.all()
+        ]
+        replacement = self._record_batch(
+            reports=[row.report for row in voided.allocations.select_related("report")],
+            report_allocations=allocations, replaces_batch_id=voided.pk,
+        )
+        self.assertEqual(replacement.replaces_id, voided.pk)
+        self.assertEqual(disputed.pk, voided.pk)
+        with self.assertRaises(ValidationError):
+            self._record_batch(
+                reports=[row.report for row in voided.allocations.select_related("report")],
+                report_allocations=allocations, replaces_batch_id=voided.pk,
+            )
+        events = set(WorkReportHistory.objects.unscoped().filter(
+            report_id__in=replacement.allocations.values_list("report_id", flat=True),
+        ).values_list("event", flat=True))
+        self.assertTrue({
+            WorkReportHistory.Event.PAYMENT_BATCH_RECORDED,
+            WorkReportHistory.Event.PAYMENT_BATCH_DISPUTED,
+            WorkReportHistory.Event.PAYMENT_BATCH_VOIDED,
+            WorkReportHistory.Event.PAYMENT_BATCH_REPLACED,
+        }.issubset(events))
+
+    def test_payment_workspace_is_private_and_eligible_reports_are_filtered(self):
+        reports = self._batch_reports()
+        paid = self._record_payment(report=reports[0])
+        manager_page = self._client_for(self.manager_a).get(
+            reverse("work_reports:payment_workspace"),
+        )
+        self.assertEqual(manager_page.status_code, 200)
+        self.assertNotContains(manager_page, reports[0].work_title)
+        self.assertContains(manager_page, reports[1].work_title)
+        self.assertEqual(
+            self._client_for(self.sales_a).get(reverse("work_reports:payment_workspace")).status_code,
+            403,
+        )
+        self.assertEqual(
+            self._client_for(self.tech_a2).post(
+                reverse("work_reports:payment_confirm", args=[paid.pk]),
+            ).status_code,
+            404,
+        )
+
+    def test_batch_has_no_billing_inventory_or_supplier_payment_side_effects(self):
+        before = (
+            BillingDocument.objects.unscoped().count(),
+            SupplierPaymentRecord.objects.unscoped().count(),
+            StockMovement.objects.unscoped().count(),
+        )
+        batch = self._record_batch()
+        confirm_technician_payment_batch(batch_id=batch.pk, membership=self.tech_a)
+        self.assertEqual(before, (
+            BillingDocument.objects.unscoped().count(),
+            SupplierPaymentRecord.objects.unscoped().count(),
+            StockMovement.objects.unscoped().count(),
+        ))
+
+    def test_batch_review_post_ignores_forged_owner_status_and_totals(self):
+        reports = self._batch_reports()
+        client = self._client_for(self.manager_a)
+        review = client.post(
+            reverse("work_reports:payment_batch_record"),
+            {"report_ids": [str(report.pk) for report in reports]},
+        )
+        self.assertEqual(review.status_code, 200)
+        self.assertContains(review, "Review payment batch")
+        payload = {
+            "action": "record",
+            "report_ids": [str(report.pk) for report in reports],
+            "payment_date": "2026-08-15",
+            "payment_method": "BANK_TRANSFER",
+            "method_description": "",
+            "reference": "TRANSFER-42",
+            "manager_note": "Recorded manually",
+            "tenant": self.tenant_b.pk,
+            "technician": self.tech_b.pk,
+            "recorded_by": self.manager_b.pk,
+            "status": "CONFIRMED",
+            "amount_paid_total": "1.00",
+            "agreed_amount_total_snapshot": "2.00",
+        }
+        for report in reports:
+            payload[f"allocation_{report.pk}_amount_paid"] = str(report.agreed_amount)
+            payload[f"allocation_{report.pk}_adjustment_reason"] = ""
+        response = client.post(reverse("work_reports:payment_batch_record"), payload)
+        self.assertEqual(response.status_code, 302)
+        batch = TechnicianPaymentBatch.objects.unscoped().get()
+        self.assertEqual(batch.tenant_id, self.tenant_a.pk)
+        self.assertEqual(batch.technician_id, self.tech_a.pk)
+        self.assertEqual(batch.recorded_by_id, self.manager_a.pk)
+        self.assertEqual(batch.status, TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION)
+        self.assertEqual(batch.amount_paid_total, Decimal("1975308.64"))
+
+    def test_batch_pages_are_owner_scoped_and_models_are_immutable(self):
+        batch = self._record_batch()
+        owner = self._client_for(self.tech_a)
+        self.assertContains(
+            owner.get(reverse("work_reports:payment_batch_detail", args=[batch.pk])),
+            "Confirm received",
+        )
+        for actor in (self.tech_a2, self.tech_b, self.sales_a):
+            client = self._client_for(actor)
+            self.assertIn(
+                client.get(reverse("work_reports:payment_batch_detail", args=[batch.pk])).status_code,
+                {403, 404},
+            )
+        batch.amount_paid_total = Decimal("1.00")
+        with self.assertRaises(ValidationError):
+            batch.save()
+        with self.assertRaises(ValidationError):
+            TechnicianPaymentBatch.objects.unscoped().filter(pk=batch.pk).update(
+                amount_paid_total=Decimal("2.00"),
+            )
+        with self.assertRaises(ValidationError):
+            batch.delete()
