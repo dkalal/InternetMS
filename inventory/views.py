@@ -778,8 +778,50 @@ def cart_line_delete(request, cart_pk, line_pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
         raise Http404
-    cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
-    get_object_or_404(CartLine, pk=line_pk, cart=cart).delete()
+    with transaction.atomic():
+        cart = get_object_or_404(
+            Cart.objects.select_for_update().filter(
+                tenant=organization, status=Cart.Status.DRAFT,
+            ),
+            pk=cart_pk,
+        )
+        line = get_object_or_404(
+            CartLine.objects.select_for_update().select_related('product'),
+            pk=line_pk,
+            cart=cart,
+            tenant=organization,
+        )
+        serial_unit_ids = list(
+            line.serial_selections.order_by('stock_unit_id').values_list(
+                'stock_unit_id', flat=True,
+            )
+        )
+        audit(
+            organization=organization,
+            actor=request.user,
+            action='inventory.cart_line.removed',
+            obj=line,
+            old_value={
+                'cart_id': cart.pk,
+                'product_id': line.product_id,
+                'product_name': line.product.name,
+                'quantity': str(line.quantity),
+                'unit_price': str(line.unit_price),
+                'discount_amount': str(line.discount_amount),
+                'serial_unit_ids': serial_unit_ids,
+            },
+            metadata={
+                'cart_status': cart.status,
+                'serialized': line.product.is_serialized,
+                'stock_changed': False,
+            },
+        )
+        line.delete()
+    if _is_pos_request(request):
+        return _pos_response(
+            request, cart, message='Item removed from the draft sale. Stock was not changed.',
+        )
+    messages.success(request, 'Item removed from the draft sale. Stock was not changed.')
     return redirect('inventory:cart_detail', pk=cart.pk)
 
 

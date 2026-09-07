@@ -71,5 +71,11 @@
       <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save item</button>
     </div>
   </form>
+  {% if line %}
+    <section class="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4 sm:flex-row sm:items-center sm:justify-between" aria-labelledby="remove-cart-line-title">
+      <div><h2 id="remove-cart-line-title" class="text-sm font-semibold text-rose-950">Remove this item</h2><p class="mt-1 text-xs leading-5 text-rose-800">Removes the complete line{% if selected_product.is_serialized %} and clears its selected serial numbers{% endif %}. Draft carts do not change stock.</p></div>
+      <form method="post" action="{% url 'inventory:cart_line_delete' cart.pk line.pk %}">{% csrf_token %}<button type="submit" class="jims-btn jims-btn-danger shrink-0" data-confirm="Remove {{ line.product.name }} from this draft sale?{% if selected_product.is_serialized %} Its selected serial numbers will be cleared.{% endif %} Stock will not be changed." data-confirm-title="Remove item?" data-confirm-action="Remove item" data-confirm-tone="danger">Remove item</button></form>
+    </section>
+  {% endif %}
 </div>
 {% endblock %}

@@ -399,7 +399,10 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         quantity = cleaned.get('quantity') or Decimal('0.00')
         discount = cleaned.get('discount_amount') or Decimal('0.00')
         if quantity <= 0:
-            self.add_error('quantity', 'Quantity must be greater than zero.')
+            self.add_error(
+                'quantity',
+                'Quantity must be greater than zero. Use “Remove item” to remove this line.',
+            )
         if product and product.is_serialized:
             if quantity != quantity.to_integral_value():
                 self.add_error('quantity', 'Serialized items require a whole quantity.')

@@ -551,6 +551,121 @@ class InventoryAcceptanceTests(TestCase):
         self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
         self.assertTrue(CartSerialSelection.objects.filter(cart_line=line, stock_unit=serial).exists())
 
+    def test_serialized_cart_line_has_explicit_remove_action_and_zero_is_not_delete(self):
+        serialized_product = self.make_product('Removable Router', 'SER-REMOVE-001', serialized=True)
+        self.receive(product=serialized_product, quantity=1, serials='SN-REMOVE-001')
+        serial = StockUnit.objects.get(product=serialized_product)
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        line = CartLine.objects.create(
+            cart=cart, product=serialized_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        CartSerialSelection.objects.create(
+            tenant=self.org, cart_line=line, stock_unit=serial,
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        delete_url = reverse('inventory:cart_line_delete', args=[cart.pk, line.pk])
+
+        cart_page = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertContains(cart_page, delete_url)
+        self.assertContains(cart_page, 'data-confirm-title="Remove item?"', html=False)
+        self.assertContains(cart_page, 'selected serial numbers will be cleared')
+        edit_page = self.client.get(
+            reverse('inventory:cart_line_edit', args=[cart.pk, line.pk]),
+        )
+        self.assertContains(edit_page, 'Remove this item')
+        self.assertContains(edit_page, delete_url)
+
+        invalid_update = self.client.post(
+            reverse('inventory:cart_line_edit', args=[cart.pk, line.pk]),
+            {
+                'product': serialized_product.pk,
+                'quantity': '0.00',
+                'discount_amount': '0.00',
+                'serial_units': [],
+            },
+        )
+        self.assertEqual(invalid_update.status_code, 200)
+        self.assertContains(invalid_update, 'Use “Remove item” to remove this line.')
+        self.assertTrue(CartLine.objects.filter(pk=line.pk).exists())
+
+    def test_serialized_cart_line_remove_is_atomic_audited_and_stock_neutral(self):
+        serialized_product = self.make_product('Audited Router', 'SER-AUDIT-001', serialized=True)
+        self.receive(product=serialized_product, quantity=2, serials='SN-AUDIT-001\nSN-AUDIT-002')
+        serial = StockUnit.objects.filter(product=serialized_product).order_by('pk').first()
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        line = CartLine.objects.create(
+            cart=cart, product=serialized_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        selection = CartSerialSelection.objects.create(
+            tenant=self.org, cart_line=line, stock_unit=serial,
+        )
+        balance_before = InventoryBalance.objects.get(product=serialized_product).quantity
+        movements_before = StockMovement.objects.filter(product=serialized_product).count()
+        line_id = line.pk
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(
+            reverse('inventory:cart_line_delete', args=[cart.pk, line.pk]), follow=True,
+        )
+
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertContains(response, 'Item removed from the draft sale')
+        self.assertFalse(CartLine.objects.filter(pk=line_id).exists())
+        self.assertFalse(CartSerialSelection.objects.filter(pk=selection.pk).exists())
+        self.assertEqual(
+            InventoryBalance.objects.get(product=serialized_product).quantity,
+            balance_before,
+        )
+        self.assertEqual(
+            StockMovement.objects.filter(product=serialized_product).count(),
+            movements_before,
+        )
+        log = AuditLog.objects.get(
+            action='inventory.cart_line.removed', object_id=str(line_id),
+        )
+        self.assertEqual(log.organization_id, self.org.pk)
+        self.assertEqual(log.actor_id, self.admin.pk)
+        self.assertEqual(log.old_value['serial_unit_ids'], [serial.pk])
+        self.assertEqual(log.metadata['serialized'], True)
+        self.assertEqual(log.metadata['stock_changed'], False)
+
+    def test_cart_line_remove_rejects_get_non_draft_and_cross_tenant_ids(self):
+        local_cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, created_by=self.admin,
+        )
+        local_line = CartLine.objects.create(
+            cart=local_cart, product=self.product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        other_product = self.make_product(
+            'Other Tenant Router', 'OTHER-REMOVE-001', organization=self.other_org,
+        )
+        other_cart = Cart.objects.create(
+            organization=self.other_org, tenant=self.other_org, created_by=self.admin,
+        )
+        other_line = CartLine.objects.create(
+            cart=other_cart, product=other_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        local_url = reverse(
+            'inventory:cart_line_delete', args=[local_cart.pk, local_line.pk],
+        )
+        self.assertEqual(self.client.get(local_url).status_code, 404)
+        local_cart.status = Cart.Status.CONVERTED
+        local_cart.save(update_fields=['status', 'updated_at'])
+        self.assertEqual(self.client.post(local_url).status_code, 404)
+        self.assertTrue(CartLine.objects.filter(pk=local_line.pk).exists())
+
+        other_url = reverse(
+            'inventory:cart_line_delete', args=[other_cart.pk, other_line.pk],
+        )
+        self.assertEqual(self.client.post(other_url).status_code, 404)
+        self.assertTrue(CartLine.objects.unscoped().filter(pk=other_line.pk).exists())
+
     def test_serialized_walk_in_cart_uses_wholesale_price_at_product_threshold(self):
         serialized_product = self.make_product('Bulk Router', 'BULK-SER-001', serialized=True)
         serial_numbers = [f'BULK-SN-{number:03d}' for number in range(1, 6)]
