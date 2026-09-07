@@ -436,6 +436,76 @@ class WorkReportSecurityTests(TestCase):
         )
         self.assertIn("service_days", manager_response.context["reports"]._prefetch_related_lookups[0].prefetch_through)
 
+    def test_work_report_list_is_tenant_scoped_and_paginated(self):
+        created = [
+            self._report(
+                self.tech_a, self.customer_a, title=f"Pagination report {index:02d}",
+            )
+            for index in range(11)
+        ]
+        response = self._client_for(self.manager_a).get(reverse("work_reports:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["result_count"], 13)
+        self.assertEqual(len(response.context["reports"]), 10)
+        self.assertNotContains(response, self.report_b.work_title)
+        self.assertContains(response, "Showing <span class=\"font-medium text-slate-900\">1</span>-<span class=\"font-medium text-slate-900\">10</span>", html=False)
+
+        second_page = self._client_for(self.manager_a).get(
+            reverse("work_reports:list"), {"page": 2},
+        )
+        self.assertEqual(len(second_page.context["reports"]), 3)
+        self.assertContains(second_page, created[0].work_title)
+
+    def test_approval_queue_paginates_after_tenant_filter_and_preserves_search(self):
+        submitted = []
+        for index in range(11):
+            report = self._report(
+                self.tech_a, self.customer_a, title=f"Queue item {index:02d}",
+            )
+            submitted.append(submit_report(report_id=report.pk, membership=self.tech_a))
+        submit_report(report_id=self.report_b.pk, membership=self.tech_b)
+
+        response = self._client_for(self.manager_a).get(
+            reverse("work_reports:approval_queue"), {"q": "Queue item"},
+        )
+        self.assertEqual(response.context["result_count"], 11)
+        self.assertEqual(len(response.context["reports"]), 10)
+        self.assertNotContains(response, self.report_b.work_title)
+        self.assertContains(response, "q=Queue+item&amp;page=2", html=False)
+
+        second_page = self._client_for(self.manager_a).get(
+            reverse("work_reports:approval_queue"), {"q": "Queue item", "page": 2},
+        )
+        self.assertEqual(len(second_page.context["reports"]), 1)
+        self.assertContains(second_page, submitted[0].work_title)
+
+    def test_report_history_uses_compact_server_side_pagination(self):
+        for index in range(10):
+            WorkReportHistory.objects.create(
+                tenant=self.tenant_a,
+                report=self.report_a,
+                actor_membership=self.tech_a,
+                event=WorkReportHistory.Event.UPDATED,
+                reason=f"History note {index:02d}",
+            )
+
+        response = self._client_for(self.tech_a).get(
+            reverse("work_reports:detail", args=[self.report_a.pk]),
+        )
+        self.assertEqual(response.context["history_count"], 10)
+        self.assertEqual(len(response.context["history"]), 8)
+        self.assertContains(response, "Showing 1-8 of 10")
+        self.assertContains(response, "View note")
+        self.assertContains(response, "?history_page=2#report-history", html=False)
+
+        second_page = self._client_for(self.tech_a).get(
+            reverse("work_reports:detail", args=[self.report_a.pk]),
+            {"history_page": 2},
+        )
+        self.assertEqual(len(second_page.context["history"]), 2)
+        self.assertContains(second_page, "History note 00")
+
     def test_service_days_have_no_amount_field(self):
         self.assertNotIn("agreed_amount", {
             field.name for field in WorkReportServiceDay._meta.fields
@@ -988,15 +1058,25 @@ class WorkReportSecurityTests(TestCase):
             WorkReportHistory.Event.PAYMENT_BATCH_REPLACED,
         }.issubset(events))
 
-    def test_payment_workspace_is_private_and_eligible_reports_are_filtered(self):
+    def test_payment_workspace_redirects_to_consolidated_authorized_destination(self):
         reports = self._batch_reports()
         paid = self._record_payment(report=reports[0])
-        manager_page = self._client_for(self.manager_a).get(
+        manager_response = self._client_for(self.manager_a).get(
             reverse("work_reports:payment_workspace"),
         )
-        self.assertEqual(manager_page.status_code, 200)
-        self.assertNotContains(manager_page, reports[0].work_title)
-        self.assertContains(manager_page, reports[1].work_title)
+        self.assertRedirects(
+            manager_response,
+            reverse("work_reports:list") + "?payment=NOT_RECORDED",
+            fetch_redirect_response=False,
+        )
+        technician_response = self._client_for(self.tech_a).get(
+            reverse("work_reports:payment_workspace"),
+        )
+        self.assertRedirects(
+            technician_response,
+            reverse("work_reports:list") + "#payment-acknowledgements",
+            fetch_redirect_response=False,
+        )
         self.assertEqual(
             self._client_for(self.sales_a).get(reverse("work_reports:payment_workspace")).status_code,
             403,
@@ -1007,6 +1087,86 @@ class WorkReportSecurityTests(TestCase):
             ).status_code,
             404,
         )
+
+    def test_approved_unpaid_selection_is_consolidated_and_grouped_on_report_list(self):
+        reports = self._batch_reports()
+        self._record_payment(report=reports[0])
+        page = self._client_for(self.manager_a).get(
+            reverse("work_reports:list"), {"payment": "NOT_RECORDED"},
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Approved &amp; unpaid", html=False)
+        self.assertNotContains(page, reports[0].work_title)
+        self.assertContains(page, reports[1].work_title)
+        self.assertContains(page, self.tech_a.user.username)
+        self.assertContains(page, 'name="report_ids"', html=False)
+        self.assertContains(page, reverse("work_reports:payment_batch_record"))
+        self.assertContains(page, "Record selected payments")
+
+    def test_ineligible_reports_are_not_selectable_from_consolidated_list(self):
+        approved = self._batch_reports()[0]
+        inactive_report = self._approve(self.report_a2)
+        self.tech_a2.is_active = False
+        self.tech_a2.save(update_fields=["is_active"])
+        submitted = self._report(self.tech_a, self.customer_a, title="Submitted only")
+        submit_report(report_id=submitted.pk, membership=self.tech_a)
+        page = self._client_for(self.manager_a).get(
+            reverse("work_reports:list"), {"payment": "NOT_RECORDED"},
+        )
+        self.assertContains(page, approved.work_title)
+        self.assertNotContains(page, inactive_report.work_title)
+        self.assertNotContains(page, submitted.work_title)
+        self.assertNotContains(page, self.report_b.work_title)
+
+    def test_list_filters_preserve_compatible_status_search_and_technician(self):
+        reports = self._batch_reports()
+        page = self._client_for(self.manager_a).get(reverse("work_reports:list"), {
+            "status": "APPROVED", "payment": "NOT_RECORDED",
+            "q": "Second", "technician": str(self.tech_a.pk),
+        })
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, reports[1].work_title)
+        self.assertNotContains(page, reports[0].work_title)
+        self.assertContains(page, 'value="Second"', html=False)
+        self.assertContains(page, 'value="NOT_RECORDED" selected', html=False)
+        self.assertContains(page, f'value="{self.tech_a.pk}" selected', html=False)
+        self.assertContains(page, "payment=NOT_RECORDED&amp;q=Second", html=False)
+
+    def test_batched_badges_and_pending_acknowledgements_link_from_work_reports(self):
+        batch = self._record_batch()
+        detail_url = reverse("work_reports:payment_batch_detail", args=[batch.pk])
+        manager_page = self._client_for(self.manager_a).get(reverse("work_reports:list"))
+        self.assertContains(manager_page, "Awaiting confirmation")
+        self.assertContains(manager_page, detail_url)
+        technician_page = self._client_for(self.tech_a).get(reverse("work_reports:list"))
+        self.assertContains(technician_page, "Payments awaiting your confirmation")
+        self.assertContains(technician_page, "Review and respond")
+        self.assertContains(technician_page, detail_url)
+        other_page = self._client_for(self.tech_a2).get(reverse("work_reports:list"))
+        self.assertNotContains(other_page, "Payments awaiting your confirmation")
+        self.assertNotContains(other_page, detail_url)
+
+    def test_payment_controls_and_duplicate_navigation_are_hidden_from_sales(self):
+        sales_response = self._client_for(self.sales_a).get(reverse("work_reports:list"))
+        self.assertIn(sales_response.status_code, {403, 404})
+        manager_page = self._client_for(self.manager_a).get(reverse("work_reports:list"))
+        self.assertNotContains(manager_page, ">Technician Payments<", html=False)
+        technician_page = self._client_for(self.tech_a).get(reverse("work_reports:list"))
+        self.assertNotContains(technician_page, ">My Payments<", html=False)
+
+    def test_batch_context_pages_return_to_work_reports(self):
+        batch = self._record_batch()
+        manager = self._client_for(self.manager_a)
+        detail = manager.get(reverse("work_reports:payment_batch_detail", args=[batch.pk]))
+        self.assertContains(detail, "Back to Work Reports")
+        self.assertNotContains(detail, "Technician Payments")
+        void_technician_payment_batch(
+            batch_id=batch.pk, membership=self.manager_a,
+            reason="Testing replacement navigation.",
+        )
+        replacement = manager.get(reverse("work_reports:payment_batch_replace", args=[batch.pk]))
+        self.assertContains(replacement, "&larr; Work Reports", html=False)
+        self.assertContains(replacement, "?payment=NOT_RECORDED")
 
     def test_batch_has_no_billing_inventory_or_supplier_payment_side_effects(self):
         before = (

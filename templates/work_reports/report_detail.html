@@ -66,6 +66,28 @@
       </dialog>
     {% endif %}
   {% endif %}
-  <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><h2 class="text-base font-bold text-slate-950">Report history</h2><ol class="mt-4 divide-y divide-slate-100">{% for event in history %}<li class="flex gap-3 py-3"><span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-brand-500"></span><div class="min-w-0"><p class="text-sm font-semibold text-slate-800">{{ event.get_event_display }}</p><p class="text-xs text-slate-500">{{ event.actor_membership.user.get_full_name|default:event.actor_membership.user.username }} · {{ event.created_at|date:"d M Y, H:i" }}</p>{% if event.reason %}<p class="mt-1 text-sm text-slate-600">{{ event.reason }}</p>{% endif %}</div></li>{% empty %}<li class="py-4 text-sm text-slate-500">No history recorded.</li>{% endfor %}</ol></section>
+  <section id="report-history" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-labelledby="report-history-heading">
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <div><h2 id="report-history-heading" class="text-base font-bold text-slate-950">Report history</h2><p class="mt-0.5 text-xs text-slate-500">Newest activity first</p></div>
+      {% if history_count %}<p class="text-xs font-medium text-slate-600">Showing {{ history_start_index }}-{{ history_end_index }} of {{ history_count }}</p>{% endif %}
+    </div>
+    <ol class="divide-y divide-slate-100">
+      {% for event in history %}
+        <li class="grid gap-1 px-4 py-2.5 sm:grid-cols-[minmax(10rem,0.8fr)_minmax(12rem,1fr)_auto] sm:items-start sm:gap-4">
+          <div class="flex min-w-0 items-center gap-2"><span class="h-2 w-2 shrink-0 rounded-full bg-brand-500"></span><p class="truncate text-sm font-semibold text-slate-800">{{ event.get_event_display }}</p></div>
+          <p class="truncate text-xs text-slate-500">{{ event.actor_membership.user.get_full_name|default:event.actor_membership.user.username }}</p>
+          <time datetime="{{ event.created_at|date:'c' }}" class="whitespace-nowrap text-xs text-slate-500">{{ event.created_at|date:"d M Y, H:i" }}</time>
+          {% if event.reason %}<details class="pl-4 sm:col-span-3"><summary class="cursor-pointer text-xs font-semibold text-brand-700 hover:text-brand-900">View note</summary><p class="mt-2 whitespace-pre-line rounded-lg bg-slate-50 p-3 text-sm leading-5 text-slate-700">{{ event.reason }}</p></details>{% endif %}
+        </li>
+      {% empty %}<li class="px-4 py-6 text-sm text-slate-500">No history recorded.</li>{% endfor %}
+    </ol>
+    {% if history_page.has_other_pages %}
+      <nav class="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 text-sm" aria-label="Report history pagination">
+        {% if history_page.has_previous %}<a href="?history_page={{ history_page.previous_page_number }}#report-history" rel="prev" class="jims-btn jims-btn-secondary jims-btn-compact">Previous</a>{% else %}<span></span>{% endif %}
+        <span class="text-xs font-medium text-slate-600">Page {{ history_page.number }} of {{ history_page.paginator.num_pages }}</span>
+        {% if history_page.has_next %}<a href="?history_page={{ history_page.next_page_number }}#report-history" rel="next" class="jims-btn jims-btn-secondary jims-btn-compact">Next</a>{% else %}<span></span>{% endif %}
+      </nav>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}

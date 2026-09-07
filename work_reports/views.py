@@ -1,13 +1,19 @@
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Exists, OuterRef, Prefetch, Q, Subquery
+from django.core.paginator import Paginator
+from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from internetservices.listing import paginate_queryset
+from users.models import TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_tenant
 
@@ -118,13 +124,26 @@ def report_list(request):
             ).order_by("service_date", "id"),
         ),
     )
-
-
     active_payment = TechnicianPaymentRecord.objects.unscoped().filter(
         tenant=tenant, report=OuterRef("pk"),
     ).exclude(status=TechnicianPaymentRecord.Status.VOIDED).order_by("-recorded_at")
+    latest_payment = TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=tenant, report=OuterRef("pk"),
+    ).order_by("-recorded_at", "-pk")
     queryset = queryset.annotate(
-        technician_payment_status=Subquery(active_payment.values("status")[:1]),
+        active_payment_record_id=Subquery(active_payment.values("pk")[:1]),
+        technician_payment_status=Coalesce(
+            Subquery(active_payment.values("status")[:1]),
+            Subquery(latest_payment.values("status")[:1]),
+        ),
+        technician_payment_record_id=Coalesce(
+            Subquery(active_payment.values("pk")[:1]),
+            Subquery(latest_payment.values("pk")[:1]),
+        ),
+        technician_payment_batch_id=Coalesce(
+            Subquery(active_payment.values("batch_id")[:1]),
+            Subquery(latest_payment.values("batch_id")[:1]),
+        ),
     )
     if not (
         has_tenant_permission(request.user, tenant, PermissionCode.TECHNICIAN_WORK_REPORTS_VIEW_OWN, membership=request.membership)
@@ -135,16 +154,35 @@ def report_list(request):
         request.user, tenant, PermissionCode.TECHNICIAN_WORK_REPORTS_VIEW_ALL,
         membership=request.membership,
     )
+    can_view_payments = (
+        has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_ALL,
+            membership=request.membership,
+        )
+        or has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_VIEW_OWN,
+            membership=request.membership,
+        )
+    )
+    can_manage_payments = (
+        request.membership.base_role == request.membership.BaseRole.ADMIN_MANAGER
+        and has_tenant_permission(
+            request.user, tenant, PermissionCode.TECHNICIAN_PAYMENTS_RECORD,
+            membership=request.membership,
+        )
+    )
     status = request.GET.get("status", "").upper()
     if status in TechnicianWorkReport.Status.values:
         queryset = queryset.filter(status=status)
     payment_status = request.GET.get("payment", "").upper()
-    if can_review and payment_status == "NOT_RECORDED":
+    if can_manage_payments and payment_status == "NOT_RECORDED":
         queryset = queryset.filter(
             status=TechnicianWorkReport.Status.APPROVED,
-            technician_payment_status__isnull=True,
+            active_payment_record_id__isnull=True,
+            technician__is_active=True,
+            technician__base_role=TenantMembership.BaseRole.TECHNICIAN,
         )
-    elif can_review and payment_status in TechnicianPaymentRecord.Status.values:
+    elif can_manage_payments and payment_status in TechnicianPaymentRecord.Status.values:
         queryset = queryset.filter(technician_payment_status=payment_status)
     query = request.GET.get("q", "").strip()
     if query:
@@ -152,9 +190,70 @@ def report_list(request):
             Q(work_title__icontains=query) | Q(client_name__icontains=query)
             | Q(work_location__icontains=query) | Q(technician__user__username__icontains=query)
         )
+    technician_filter = request.GET.get("technician", "").strip()
+    if can_review and technician_filter:
+        try:
+            queryset = queryset.filter(technician_id=int(technician_filter))
+        except ValueError:
+            technician_filter = ""
+
+    pagination = paginate_queryset(request, queryset, default_page_size=10)
+    report_page = pagination["page_obj"].object_list
+    payment_groups = []
+    if can_manage_payments and payment_status == "NOT_RECORDED":
+        grouped = {}
+        for report in report_page:
+            group = grouped.setdefault(report.technician_id, {
+                "technician": report.technician, "reports": [], "total": Decimal("0"),
+            })
+            group["reports"].append(report)
+            group["total"] += report.agreed_amount
+        payment_groups = list(grouped.values())
+
+    technicians = []
+    if can_manage_payments:
+        technicians = TenantMembership.objects.filter(
+            tenant=tenant, is_active=True,
+            base_role=TenantMembership.BaseRole.TECHNICIAN,
+        ).select_related("user").order_by("user__first_name", "user__username")
+
+    pending_batches = []
+    if request.membership.base_role == request.membership.BaseRole.TECHNICIAN and can_view_payments:
+        pending_batches = list(
+            technician_payment_batch_queryset_for(
+                request.user, tenant, membership=request.membership,
+            ).filter(
+                status=TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION,
+            ).prefetch_related("allocations")[:20]
+        )
+
+    preserved = {
+        "payment": payment_status, "q": query, "technician": technician_filter,
+    }
+    status_tabs = []
+    for value, label in (
+        ("", "All"), ("DRAFT", "Drafts"), ("SUBMITTED", "Awaiting review"),
+        ("REJECTED", "Needs correction"), ("APPROVED", "Approved"),
+    ):
+        params = {key: item for key, item in preserved.items() if item}
+        if value in {"DRAFT", "SUBMITTED", "REJECTED"}:
+            params.pop("payment", None)
+        if value:
+            params["status"] = value
+        base_url = reverse("work_reports:list")
+        status_tabs.append({
+            "value": value, "label": label,
+            "url": f"{base_url}?{urlencode(params)}" if params else base_url,
+        })
     return render(request, "work_reports/report_list.html", {
-        "reports": queryset[:200], "selected_status": status, "query": query,
-        "can_review": can_review, "selected_payment_status": payment_status,
+        "reports": report_page, "payment_groups": payment_groups,
+        "pending_payment_batches": pending_batches,
+        "status_tabs": status_tabs, "selected_status": status, "query": query,
+        "can_review": can_review, "can_view_payments": can_view_payments,
+        "can_manage_payments": can_manage_payments,
+        "selected_payment_status": payment_status,
+        "technicians": technicians, "selected_technician": technician_filter,
+        **pagination,
     })
 
 @login_required
@@ -179,8 +278,15 @@ def report_detail(request, pk):
         )
         and request.membership.base_role == request.membership.BaseRole.ADMIN_MANAGER
     )
+    history_queryset = report.history.select_related("actor_membership__user")
+    history_paginator = Paginator(history_queryset, 8)
+    history_page = history_paginator.get_page(request.GET.get("history_page"))
     return render(request, "work_reports/report_detail.html", {
-        "report": report, "history": report.history.select_related("actor_membership__user"),
+        "report": report, "history": history_page.object_list,
+        "history_page": history_page,
+        "history_count": history_paginator.count,
+        "history_start_index": history_page.start_index() if history_paginator.count else 0,
+        "history_end_index": history_page.end_index() if history_paginator.count else 0,
         "can_review": can_review,
         "can_edit": report.technician_id == request.membership.id and report.status in {
             TechnicianWorkReport.Status.DRAFT, TechnicianWorkReport.Status.REJECTED,
@@ -317,7 +423,12 @@ def approval_queue(request):
             Q(work_title__icontains=query) | Q(client_name__icontains=query)
             | Q(technician__user__username__icontains=query)
         )
-    return render(request, "work_reports/approval_queue.html", {"reports": reports[:200], "query": query})
+    pagination = paginate_queryset(request, reports, default_page_size=10)
+    return render(request, "work_reports/approval_queue.html", {
+        "reports": pagination["page_obj"].object_list,
+        "query": query,
+        **pagination,
+    })
 
 
 @login_required
@@ -411,53 +522,11 @@ def payment_workspace(request):
     )
     if not can_manage and not can_view_own:
         raise PermissionDenied("Technician payments are not available.")
-
-    batches = technician_payment_batch_queryset_for(
-        request.user, tenant, membership=membership,
-    ).select_related("technician__user").prefetch_related("allocations__report__service_days")
     if can_view_own:
-        return render(request, "work_reports/payment_workspace.html", {
-            "batches": batches[:200], "can_manage": False, "selected_tab": "MY_PAYMENTS",
-        })
-
-    selected_tab = request.GET.get("status", "READY").upper()
-    valid_tabs = {"READY", *TechnicianPaymentRecord.Status.values}
-    if selected_tab not in valid_tabs:
-        selected_tab = "READY"
-    groups = []
-    if selected_tab == "READY":
-        active_payment = TechnicianPaymentRecord.objects.unscoped().filter(
-            tenant=tenant, report=OuterRef("pk"),
-        ).exclude(status=TechnicianPaymentRecord.Status.VOIDED)
-        eligible = (
-            TechnicianWorkReport.objects.unscoped()
-            .filter(
-                tenant=tenant,
-                status=TechnicianWorkReport.Status.APPROVED,
-                technician__tenant=tenant,
-                technician__is_active=True,
-                technician__base_role=membership.BaseRole.TECHNICIAN,
-            )
-            .annotate(has_active_payment=Exists(active_payment))
-            .filter(has_active_payment=False)
-            .select_related("technician__user", "customer")
-            .prefetch_related("service_days")
-            .order_by("technician__user__first_name", "technician__user__username", "pk")[:200]
-        )
-        grouped = {}
-        for report in eligible:
-            group = grouped.setdefault(report.technician_id, {
-                "technician": report.technician, "reports": [], "total": Decimal("0"),
-            })
-            group["reports"].append(report)
-            group["total"] += report.agreed_amount
-        groups = list(grouped.values())
-    else:
-        batches = batches.filter(status=selected_tab)
-    return render(request, "work_reports/payment_workspace.html", {
-        "batches": batches[:200], "groups": groups, "can_manage": True,
-        "selected_tab": selected_tab,
-    })
+        return redirect(f"{reverse('work_reports:list')}#payment-acknowledgements")
+    return redirect(
+        f"{reverse('work_reports:list')}?{urlencode({'payment': 'NOT_RECORDED'})}"
+    )
 
 
 def _selected_batch_reports(request, *, tenant, report_ids):
@@ -516,13 +585,13 @@ def payment_batch_record(request):
     if request.membership.base_role != request.membership.BaseRole.ADMIN_MANAGER:
         raise PermissionDenied("Only an Administrator / Manager may record Technician payments.")
     if request.method != "POST":
-        return redirect("work_reports:payment_workspace")
+        return redirect(f"{reverse('work_reports:list')}?payment=NOT_RECORDED")
     report_ids = request.POST.getlist("report_ids")
     try:
         reports = _selected_batch_reports(request, tenant=tenant, report_ids=report_ids)
     except ValidationError as exc:
         messages.error(request, _validation_message(exc))
-        return redirect("work_reports:payment_workspace")
+        return redirect(f"{reverse('work_reports:list')}?payment=NOT_RECORDED")
     is_record_submission = request.POST.get("action") == "record"
     form = TechnicianPaymentBatchForm(
         request.POST if is_record_submission else None, reports=reports,
@@ -567,6 +636,7 @@ def payment_batch_detail(request, pk):
     )
     return render(request, "work_reports/payment_batch_detail.html", {
         "batch": batch,
+        "is_technician_owner": is_owner,
         "can_respond": is_owner and batch.status == TechnicianPaymentRecord.Status.AWAITING_CONFIRMATION,
         "can_void": can_manage and batch.status != TechnicianPaymentRecord.Status.VOIDED,
         "can_replace": can_manage and batch.status == TechnicianPaymentRecord.Status.VOIDED
