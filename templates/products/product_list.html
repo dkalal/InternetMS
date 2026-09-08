@@ -119,8 +119,15 @@
             {% for product in products %}
               <tr>
                 <td>
-                  <a href="{% url 'product-detail' product.pk %}" class="font-semibold text-slate-950 hover:text-brand-700">{{ product.name }}</a>
-                  {% if product.brand or product.model_number %}<div class="mt-1 text-xs text-slate-500">{{ product.brand }}{% if product.brand and product.model_number %} · {% endif %}{{ product.model_number }}</div>{% endif %}
+                  <div class="flex min-w-0 items-center gap-3">
+                    <a href="{% url 'product-detail' product.pk %}" class="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100" tabindex="-1" aria-hidden="true">
+                      {% if product.image %}<img src="{{ product.image.url }}" alt="" loading="lazy" class="h-full w-full object-cover">{% else %}<span class="flex h-full w-full items-center justify-center font-bold text-brand-700">{{ product.name|slice:":1"|upper }}</span>{% endif %}
+                    </a>
+                    <div class="min-w-0">
+                      <a href="{% url 'product-detail' product.pk %}" class="font-semibold text-slate-950 hover:text-brand-700">{{ product.name }}</a>
+                      {% if product.brand or product.model_number %}<div class="mt-1 text-xs text-slate-500">{{ product.brand }}{% if product.brand and product.model_number %} · {% endif %}{{ product.model_number }}</div>{% endif %}
+                    </div>
+                  </div>
                 </td>
                 <td class="font-mono text-xs text-slate-600">{{ product.sku|default:"—" }}</td>
                 <td>{{ product.catalog_category|default:product.get_category_display }}</td>
@@ -163,9 +170,14 @@
         {% for product in products %}
           <article class="rounded-xl border border-slate-200 bg-white p-4">
             <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
+              <div class="flex min-w-0 items-center gap-3">
+                <a href="{% url 'product-detail' product.pk %}" class="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                  {% if product.image %}<img src="{{ product.image.url }}" alt="{{ product.name }}" loading="lazy" class="h-full w-full object-cover">{% else %}<span class="flex h-full w-full items-center justify-center font-bold text-brand-700">{{ product.name|slice:":1"|upper }}</span>{% endif %}
+                </a>
+                <div class="min-w-0">
                 <a href="{% url 'product-detail' product.pk %}" class="font-semibold text-slate-950">{{ product.name }}</a>
                 <div class="mt-1 text-xs text-slate-500">{{ product.sku|default:"No SKU" }} · {{ product.catalog_category|default:product.get_category_display }}</div>
+                </div>
               </div>
               {% if product.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}
             </div>

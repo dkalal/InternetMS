@@ -5,6 +5,7 @@ from internetservices.tailwind import apply_tailwind
 from custom_fields.forms import CustomFieldFormMixin
 
 from .models import Product, ProductCategory, UnitOfMeasure
+from .images import prepare_product_image
 
 
 class ProductForm(CustomFieldFormMixin, forms.ModelForm):
@@ -15,6 +16,7 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         fields = [
             'sku',
             'name',
+            'image',
             'item_type',
             'catalog_category',
             'sales_unit',
@@ -37,6 +39,10 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         ]
         widgets = {
             'description': forms.Textarea(attrs={'rows': 4, 'placeholder': 'Important specifications, warranty notes, or supplier details'}),
+            'image': forms.ClearableFileInput(attrs={
+                'accept': 'image/jpeg,image/png,image/webp',
+                'data-product-image-input': '',
+            }),
         }
         help_texts = {
             'buying_price': 'Your acquisition cost. Used for margin guidance.',
@@ -46,6 +52,7 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'wholesale_min_quantity': 'Minimum quantity required before wholesale price applies.',
             'is_active': 'Inactive products stay in history but are hidden from normal selling workflows.',
             'sku': 'Unique product or service code within this business.',
+            'image': 'JPEG, PNG, or WebP. The image is securely renamed and optimized automatically.',
             'track_stock': 'Stock changes only through purchases and authorized adjustments.',
             'is_serialized': 'Each received unit must have a unique serial number.',
             'reorder_threshold': 'Low-stock alert threshold for this product.',
@@ -78,6 +85,14 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
                     'Locked because this item already has inventory or sales history.'
                 )
         apply_tailwind(self)
+
+    def clean_image(self):
+        """Validate and optimize only newly uploaded product photos."""
+        image = self.cleaned_data.get('image')
+        uploaded_image = self.files.get('image')
+        if not uploaded_image:
+            return image
+        return prepare_product_image(uploaded_image)
 
     def clean_sku(self):
         sku = (self.cleaned_data.get('sku') or '').strip().upper()

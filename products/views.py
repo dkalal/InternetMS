@@ -146,7 +146,12 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                 actor=self.request.user,
                 action='inventory.product.created',
                 obj=self.object,
-                new_value={'sku': self.object.sku, 'name': self.object.name, 'item_type': self.object.item_type},
+                new_value={
+                    'sku': self.object.sku,
+                    'name': self.object.name,
+                    'item_type': self.object.item_type,
+                    'has_image': bool(self.object.image),
+                },
             )
             legacy_quantity = self.request.POST.get('quantity')
             if legacy_quantity and self.object.track_stock:
@@ -204,6 +209,7 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
             'sku': previous.sku,
             'name': previous.name,
             'selling_price': str(previous.selling_price),
+            'image': previous.image.name if previous.image else '',
             'track_stock': previous.track_stock,
             'is_serialized': previous.is_serialized,
             'is_active': previous.is_active,
@@ -223,6 +229,7 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
                     'sku': self.object.sku,
                     'name': self.object.name,
                     'selling_price': str(self.object.selling_price),
+                    'image': self.object.image.name if self.object.image else '',
                     'track_stock': self.object.track_stock,
                     'is_serialized': self.object.is_serialized,
                     'is_active': self.object.is_active,

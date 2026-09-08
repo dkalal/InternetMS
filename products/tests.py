@@ -1,11 +1,16 @@
 from decimal import Decimal
 import importlib
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from PIL import Image
 
 from products.forms import ProductForm
 from products.models import Product, ProductCategory, UnitOfMeasure
@@ -13,6 +18,12 @@ from users.models import Organization, UserAccessProfile
 
 
 User = get_user_model()
+
+
+def product_image_upload(name='router.jpg', *, size=(2200, 1200), image_format='JPEG'):
+    output = BytesIO()
+    Image.new('RGB', size, color=(30, 64, 175)).save(output, format=image_format)
+    return SimpleUploadedFile(name, output.getvalue(), content_type=f'image/{image_format.lower()}')
 
 
 class UnitOfMeasureTests(TestCase):
@@ -184,6 +195,8 @@ class ProductListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Save product")
         self.assertContains(response, "Pricing summary")
+        self.assertContains(response, 'enctype="multipart/form-data"')
+        self.assertContains(response, 'data-product-image-preview')
         self.assertNotContains(response, 'name="measure_unit"')
         self.assertNotContains(response, 'name="retail_price"')
 
@@ -235,3 +248,103 @@ class ProductListViewTests(TestCase):
         )
 
         self.assertEqual(product.measure_unit, "Pc")
+
+
+class ProductImageTests(TestCase):
+    def setUp(self):
+        self.media_directory = TemporaryDirectory()
+        self.media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_override.enable()
+        self.organization = Organization.objects.create(name='Image Tenant', slug='image-tenant')
+        self.unit = UnitOfMeasure.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name='Piece',
+            symbol='Pcs',
+        )
+        self.category = ProductCategory.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name='Routers',
+            default_unit=self.unit,
+        )
+        self.category.allowed_units.set([self.unit])
+
+    def tearDown(self):
+        self.media_override.disable()
+        self.media_directory.cleanup()
+
+    def form_data(self):
+        return {
+            'sku': 'RTR-IMAGE-1',
+            'name': 'Catalog router',
+            'item_type': Product.ItemType.PHYSICAL,
+            'catalog_category': self.category.pk,
+            'sales_unit': self.unit.pk,
+            'brand': '',
+            'model_number': '',
+            'buying_price': '100.00',
+            'selling_price': '150.00',
+            'technician_price': '',
+            'wholesale_price': '',
+            'wholesale_min_quantity': '1',
+            'track_stock': 'on',
+            'tax_eligible': 'on',
+            'reorder_threshold': '0',
+            'is_active': 'on',
+            'description': '',
+            'category': 'hardware',
+        }
+
+    def test_product_form_optimizes_photo_and_stores_it_under_tenant_path(self):
+        form = ProductForm(
+            data=self.form_data(),
+            files={'image': product_image_upload()},
+            organization=self.organization,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        product = form.save(commit=False)
+        product.organization = self.organization
+        product.tenant = self.organization
+        product.quantity = Decimal('0.00')
+        product.stock = 0
+        product.save()
+
+        self.assertTrue(product.image.name.startswith(f'product_images/tenant_{self.organization.pk}/'))
+        self.assertEqual(Path(product.image.name).suffix, '.webp')
+        with Image.open(product.image.path) as saved_image:
+            self.assertLessEqual(max(saved_image.size), 1600)
+            self.assertEqual(saved_image.format, 'WEBP')
+
+    def test_product_form_rejects_a_fake_image(self):
+        form = ProductForm(
+            data=self.form_data(),
+            files={'image': SimpleUploadedFile('fake.jpg', b'not an image', content_type='image/jpeg')},
+            organization=self.organization,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('image', form.errors)
+
+    def test_replaced_product_photo_is_removed_after_commit(self):
+        product = Product.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name='Replace image router',
+            sku='RTR-REPLACE',
+            catalog_category=self.category,
+            sales_unit=self.unit,
+            image=product_image_upload(size=(200, 200)),
+            quantity=Decimal('0.00'),
+            buying_price=Decimal('100.00'),
+            selling_price=Decimal('150.00'),
+        )
+        previous_path = product.image.path
+
+        with self.captureOnCommitCallbacks(execute=True):
+            product.image = product_image_upload('replacement.png', size=(300, 300), image_format='PNG')
+            product.save()
+
+        self.assertFalse(Path(previous_path).exists())
+        self.assertTrue(Path(product.image.path).exists())

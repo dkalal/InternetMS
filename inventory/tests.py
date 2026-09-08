@@ -423,6 +423,26 @@ class InventoryAcceptanceTests(TestCase):
         self.assertEqual(CartLine.objects.get(cart=cart, product=self.product).quantity, Decimal('1.00'))
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('2.00'))
 
+    def test_pos_catalog_and_current_sale_render_product_photo(self):
+        self.receive(quantity=2)
+        self.product.image = f'product_images/tenant_{self.org.pk}/router.webp'
+        self.product.save(update_fields=['image'])
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(
+            cart=cart,
+            product=self.product,
+            quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.product.image.url, count=2)
+        self.assertContains(response, f'data-pos-product-card="{self.product.pk}"')
+        self.assertContains(response, f'data-product-id="{self.product.pk}"')
+
     def test_start_sale_opens_an_editable_pos_draft_immediately(self):
         self.client.login(username='inventory-admin', password='pass')
         response = self.client.post(reverse('inventory:cart_create'))

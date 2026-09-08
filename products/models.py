@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.db.models import Q
 from django.db.models.signals import m2m_changed
@@ -8,6 +9,8 @@ from django.dispatch import receiver
 from django.urls import reverse
 from django.contrib.humanize.templatetags.humanize import intcomma
 from users.tenant_models import TenantScopedManager
+
+from .images import product_image_upload_to, validate_product_image_size
 
 # Create your models here.
 
@@ -220,6 +223,16 @@ class Product(models.Model):
     )
     name = models.CharField(max_length=200)
     sku = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    image = models.ImageField(
+        upload_to=product_image_upload_to,
+        blank=True,
+        null=True,
+        validators=[
+            FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp']),
+            validate_product_image_size,
+        ],
+        help_text='Optional catalog photo. JPEG, PNG, or WebP up to 6 MB.',
+    )
     description = models.TextField(null=True, blank=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
     catalog_category = models.ForeignKey(
@@ -492,4 +505,3 @@ class Product(models.Model):
         if not self.selling_price:
             return Decimal('0.00')
         return ((self.selling_price - self.buying_price) / self.selling_price * Decimal('100')).quantize(Decimal('0.01'))
-

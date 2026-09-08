@@ -24,7 +24,7 @@
     </div>
   {% endif %}
 
-  <form method="post" class="space-y-5" data-product-form data-unsaved-form data-submit-lock>
+  <form method="post" enctype="multipart/form-data" class="space-y-5" data-product-form data-unsaved-form data-submit-lock>
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">
@@ -37,6 +37,7 @@
         <nav class="jims-panel sticky top-24 p-3" aria-label="Product form sections">
           <p class="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">On this page</p>
           <a class="jims-sidebar-link" href="#product-basics">Item foundation</a>
+          <a class="jims-sidebar-link" href="#product-image">Catalog photo</a>
           <a class="jims-sidebar-link" href="#product-identifiers">Classification</a>
           {% if INVENTORY_CAN_VIEW_COSTS %}<a class="jims-sidebar-link" href="#product-pricing">Commercial settings</a>{% endif %}
           <a class="jims-sidebar-link" href="#product-inventory">Inventory controls</a>
@@ -53,6 +54,25 @@
           </div>
           <div class="grid gap-4 p-5 sm:grid-cols-2">
             <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
+            <div id="product-image" class="sm:col-span-2">
+              <div class="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
+                <div class="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" data-product-image-preview>
+                  {% if form.instance.image %}
+                    <img src="{{ form.instance.image.url }}" alt="Current photo for {{ form.instance.name }}" class="h-full w-full object-cover" data-product-image-preview-img>
+                    <div class="hidden h-full w-full items-center justify-center bg-gradient-to-br from-brand-50 to-slate-100 text-3xl font-bold text-brand-700" data-product-image-placeholder>{{ form.instance.name|slice:":1"|upper }}</div>
+                  {% else %}
+                    <img src="" alt="Selected product preview" class="hidden h-full w-full object-cover" data-product-image-preview-img>
+                    <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-brand-50 to-slate-100" data-product-image-placeholder>
+                      <svg class="h-9 w-9 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Z"/></svg>
+                    </div>
+                  {% endif %}
+                </div>
+                <div>
+                  {% include "components/form_field.html" with field=form.image %}
+                  <p class="mt-2 text-xs leading-5 text-slate-500">Square or landscape photos work best. Images are resized to 1600 px and converted to WebP automatically.</p>
+                </div>
+              </div>
+            </div>
             <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.description %}</div>
             <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
           </div>
@@ -178,6 +198,24 @@
     };
     categoryField.addEventListener('change', syncUnits);
     syncUnits();
+  })();
+
+  (() => {
+    const input = document.querySelector('[data-product-image-input]');
+    const preview = document.querySelector('[data-product-image-preview-img]');
+    const placeholder = document.querySelector('[data-product-image-placeholder]');
+    if (!input || !preview || !placeholder) return;
+    let previewUrl = '';
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (!file) return;
+      previewUrl = URL.createObjectURL(file);
+      preview.src = previewUrl;
+      preview.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      placeholder.classList.remove('flex');
+    });
   })();
 </script>
 {% endblock %}
