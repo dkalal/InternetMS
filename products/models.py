@@ -250,7 +250,7 @@ class Product(models.Model):
     track_expiry = models.BooleanField(default=False)
     tax_eligible = models.BooleanField(default=True)
     reorder_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
-    quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.DecimalField(max_digits=16, decimal_places=6)
     measure_unit = models.CharField(max_length=50, default='Kg')
     sales_unit = models.ForeignKey(
         UnitOfMeasure,
@@ -260,7 +260,19 @@ class Product(models.Model):
         blank=True,
         help_text='Unit shown on quotations and invoices for this product.',
     )
-    buying_price = models.DecimalField(max_digits=10, decimal_places=2)
+    buying_price = models.DecimalField(
+        max_digits=16, decimal_places=6,
+        help_text='Normalized acquisition cost per base stock/sales unit.',
+    )
+    default_purchase_unit_label = models.CharField(max_length=50, blank=True, default='')
+    default_purchase_conversion_factor = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal('1.000000'),
+        help_text='Number of base stock units in one purchase pack.',
+    )
+    default_purchase_unit_cost = models.DecimalField(
+        max_digits=16, decimal_places=2, null=True, blank=True,
+        help_text='Cost of one default purchase pack.',
+    )
     selling_price = models.DecimalField(max_digits=10, decimal_places=2)
     retail_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     technician_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -446,6 +458,10 @@ class Product(models.Model):
             )
         if self.sales_unit_id:
             self.measure_unit = self.sales_unit.label
+        if self.default_purchase_unit_cost is None:
+            self.default_purchase_unit_label = self.get_measure_unit_display()
+            self.default_purchase_conversion_factor = Decimal('1.000000')
+            self.default_purchase_unit_cost = self.buying_price
         self.sku = (self.sku or '').strip().upper()
         if self.item_type == self.ItemType.SERVICE:
             self.track_stock = False
@@ -469,6 +485,16 @@ class Product(models.Model):
                 raise ValidationError({'sales_unit': 'Select a unit allowed by the product category.'})
         if self.buying_price is not None and self.buying_price < 0:
             raise ValidationError({'buying_price': 'Buying price cannot be negative.'})
+        if self.default_purchase_conversion_factor is None or self.default_purchase_conversion_factor <= 0:
+            raise ValidationError({'default_purchase_conversion_factor': 'Units in a purchase pack must be greater than zero.'})
+        if self.default_purchase_unit_cost is not None and self.default_purchase_unit_cost < 0:
+            raise ValidationError({'default_purchase_unit_cost': 'Purchase pack cost cannot be negative.'})
+        if self.default_purchase_unit_cost is not None and self.default_purchase_conversion_factor:
+            normalized = (self.default_purchase_unit_cost / self.default_purchase_conversion_factor).quantize(
+                Decimal('0.000001')
+            )
+            if self.buying_price is not None and normalized != self.buying_price.quantize(Decimal('0.000001')):
+                raise ValidationError({'buying_price': 'Normalized buying cost must match the purchase-pack configuration.'})
         if self.selling_price is not None and self.selling_price < 0:
             raise ValidationError({'selling_price': 'Selling price cannot be negative.'})
         if self.selling_price is not None and self.buying_price is not None and self.selling_price <= self.buying_price:
@@ -505,3 +531,8 @@ class Product(models.Model):
         if not self.selling_price:
             return Decimal('0.00')
         return ((self.selling_price - self.buying_price) / self.selling_price * Decimal('100')).quantize(Decimal('0.01'))
+
+    @property
+    def pricing_warnings(self):
+        from .pricing import underpriced_categories
+        return underpriced_categories(self) if self.pk else []

@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Receive stock{% endblock %}
 {% block content %}
+<noscript><style>[data-line-pack]{display:block!important}</style></noscript>
 {% include "inventory/includes/module_nav.html" %}
 {{ product_meta|json_script:"purchase-product-meta" }}
 
@@ -58,6 +59,12 @@
                   <div class="hidden">{{ field }}</div>
                 {% elif field.name == "product" %}
                   <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "entry_mode" %}
+                  <div class="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-white p-3">{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "quantity" or field.name == "unit_cost" %}
+                  <div data-line-direct>{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "pack_unit_label" or field.name == "pack_quantity" or field.name == "pack_conversion_factor" or field.name == "pack_unit_cost" %}
+                  <div class="hidden" data-line-pack>{% include "components/form_field.html" with field=field %}</div>
                 {% elif field.name == "serial_numbers" %}
                   <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
                 {% elif field.name == "expiry_date" %}
@@ -66,6 +73,7 @@
                   {% include "components/form_field.html" with field=field %}
                 {% endif %}
               {% endfor %}
+              <div class="hidden sm:col-span-2 lg:col-span-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-950" data-line-pack-summary aria-live="polite"></div>
             </div>
           </article>
         {% endfor %}
@@ -84,6 +92,12 @@
                 <div class="hidden">{{ field }}</div>
               {% elif field.name == "product" %}
                 <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "entry_mode" %}
+                <div class="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-white p-3">{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "quantity" or field.name == "unit_cost" %}
+                <div data-line-direct>{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "pack_unit_label" or field.name == "pack_quantity" or field.name == "pack_conversion_factor" or field.name == "pack_unit_cost" %}
+                <div class="hidden" data-line-pack>{% include "components/form_field.html" with field=field %}</div>
               {% elif field.name == "serial_numbers" %}
                 <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
               {% elif field.name == "expiry_date" %}
@@ -92,6 +106,7 @@
                 {% include "components/form_field.html" with field=field %}
               {% endif %}
             {% endfor %}
+            <div class="hidden sm:col-span-2 lg:col-span-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-950" data-line-pack-summary aria-live="polite"></div>
           </div>
         </article>
       </template>

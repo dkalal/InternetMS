@@ -140,8 +140,13 @@ class PurchaseLine(models.Model):
     tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_purchase_lines', db_index=True)
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='purchase_lines')
-    quantity = models.DecimalField(max_digits=12, decimal_places=2)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    quantity = models.DecimalField(max_digits=16, decimal_places=6)
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6)
+    source_purchase_unit_label = models.CharField(max_length=50, null=True, blank=True)
+    source_purchase_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
+    conversion_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
+    source_purchase_unit_cost = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True)
+    authoritative_purchase_total = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True)
     batch_reference = models.CharField(max_length=100, blank=True, default='')
     expiry_date = models.DateField(null=True, blank=True)
     serial_numbers = models.TextField(blank=True, default='', help_text='One serial number per line for serialized products.')
@@ -153,6 +158,8 @@ class PurchaseLine(models.Model):
 
     @property
     def line_total(self):
+        if self.authoritative_purchase_total is not None:
+            return self.authoritative_purchase_total
         return (self.quantity * self.unit_cost).quantize(Decimal('0.01'))
 
     def parsed_serial_numbers(self):
@@ -175,8 +182,8 @@ class PurchaseLine(models.Model):
 
 class InventoryBalance(TenantModel):
     product = models.OneToOneField('products.Product', on_delete=models.PROTECT, related_name='inventory_balance')
-    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
-    average_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    quantity = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
+    average_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     updated_at = models.DateTimeField(auto_now=True)
     objects = TenantScopedManager()
 
@@ -235,9 +242,9 @@ class StockMovement(TenantModel):
 
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='stock_movements')
     movement_type = models.CharField(max_length=30, choices=MovementType.choices, db_index=True)
-    quantity = models.DecimalField(max_digits=14, decimal_places=2, help_text='Positive for stock in; negative for stock out.')
-    balance_after = models.DecimalField(max_digits=14, decimal_places=2)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    quantity = models.DecimalField(max_digits=16, decimal_places=6, help_text='Positive for stock in; negative for stock out.')
+    balance_after = models.DecimalField(max_digits=16, decimal_places=6)
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     purchase_line = models.ForeignKey(PurchaseLine, on_delete=models.PROTECT, null=True, blank=True, related_name='stock_movements')
     billing_line = models.ForeignKey('billing.BillingLineItem', on_delete=models.PROTECT, null=True, blank=True, related_name='stock_movements')
     adjustment = models.ForeignKey(StockAdjustment, on_delete=models.PROTECT, null=True, blank=True, related_name='movements')
@@ -270,7 +277,7 @@ class StockUnit(TenantModel):
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='stock_units')
     serial_number = models.CharField(max_length=160)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE, db_index=True)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     batch_reference = models.CharField(max_length=100, blank=True, default='')
     expiry_date = models.DateField(null=True, blank=True)
     received_purchase_line = models.ForeignKey(PurchaseLine, on_delete=models.PROTECT, null=True, blank=True, related_name='stock_units')

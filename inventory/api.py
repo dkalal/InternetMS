@@ -45,13 +45,17 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number', 'buying_price', 'selling_price', 'technician_price', 'tax_eligible', 'track_stock', 'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
+        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number',
+                  'buying_price', 'default_purchase_unit_label', 'default_purchase_conversion_factor',
+                  'default_purchase_unit_cost', 'selling_price', 'technician_price', 'tax_eligible', 'track_stock',
+                  'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
         read_only_fields = ['available_stock']
 
     def get_fields(self):
         fields = super().get_fields()
         if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
-            fields.pop('buying_price', None)
+            for name in ('buying_price', 'default_purchase_unit_label', 'default_purchase_conversion_factor', 'default_purchase_unit_cost'):
+                fields.pop(name, None)
         if not _api_allowed(self.context['request'], PermissionCode.PRODUCT_MANAGE):
             fields.pop('technician_price', None)
         return fields
@@ -68,6 +72,16 @@ class ProductSerializer(serializers.ModelSerializer):
         if not sku or query.exists():
             raise serializers.ValidationError({'sku': 'A unique SKU is required.'})
         attrs['sku'] = sku
+        factor = attrs.get('default_purchase_conversion_factor')
+        pack_cost = attrs.get('default_purchase_unit_cost')
+        if factor is not None or pack_cost is not None:
+            factor = factor if factor is not None else getattr(self.instance, 'default_purchase_conversion_factor', None)
+            pack_cost = pack_cost if pack_cost is not None else getattr(self.instance, 'default_purchase_unit_cost', None)
+            if factor is None or factor <= 0:
+                raise serializers.ValidationError({'default_purchase_conversion_factor': 'Conversion factor must be greater than zero.'})
+            if pack_cost is None or pack_cost < 0:
+                raise serializers.ValidationError({'default_purchase_unit_cost': 'Purchase pack cost cannot be negative.'})
+            attrs['buying_price'] = (pack_cost / factor).quantize(Decimal('0.000001'))
         return attrs
 
     def create(self, validated_data):

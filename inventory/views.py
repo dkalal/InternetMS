@@ -378,6 +378,10 @@ def purchase_create(request):
             'serialized': product.is_serialized,
             'expiry': product.track_expiry,
             'sku': product.sku,
+            'base_unit': product.get_measure_unit_display(),
+            'pack_label': product.default_purchase_unit_label,
+            'conversion_factor': str(product.default_purchase_conversion_factor),
+            'pack_cost': str(product.default_purchase_unit_cost or ''),
         }
         for product in Product.objects.filter(
             tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
@@ -409,7 +413,9 @@ def purchase_edit(request, pk):
             audit(organization=organization, actor=request.user, action='inventory.purchase.updated', obj=purchase)
         messages.success(request, 'Purchase draft updated.')
         return redirect('inventory:purchase_detail', pk=purchase.pk)
-    product_meta = {str(product.pk): {'serialized': product.is_serialized, 'expiry': product.track_expiry, 'sku': product.sku}
+    product_meta = {str(product.pk): {'serialized': product.is_serialized, 'expiry': product.track_expiry, 'sku': product.sku,
+                                     'base_unit': product.get_measure_unit_display(), 'pack_label': product.default_purchase_unit_label,
+                                     'conversion_factor': str(product.default_purchase_conversion_factor), 'pack_cost': str(product.default_purchase_unit_cost or '')}
                     for product in Product.objects.filter(tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True).order_by('name')}
     return render(request, 'inventory/purchase_form.html', {'form': form, 'formset': formset, 'title': 'Edit purchase draft', 'product_meta': product_meta})
 
@@ -453,6 +459,15 @@ def purchase_confirm(request, pk):
     try:
         purchase = InventoryService.confirm_purchase(organization=organization, purchase_id=pk, actor=request.user)
         messages.success(request, f'Purchase {purchase.reference_number} confirmed and stock received.')
+        if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership):
+            warnings = {
+                line.product.name: line.product.pricing_warnings
+                for line in purchase.lines.select_related('product')
+                if line.product.pricing_warnings
+            }
+            if warnings:
+                labels = '; '.join(f"{name}: {', '.join(categories)}" for name, categories in warnings.items())
+                messages.warning(request, f'Pricing review required after receiving stock — {labels}. Affected sales are blocked.')
     except (InventoryError, BillingServiceError) as exc:
         messages.error(request, str(exc))
     return redirect('inventory:purchase_detail', pk=pk)
@@ -754,6 +769,15 @@ def cart_line_adjust(request, cart_pk):
             else:
                 line.quantity -= Decimal('1.00')
                 line.unit_price, _ = CartService.line_pricing(product=product, quantity=line.quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
+                from products.pricing import BelowCostError, validate_net_unit_price
+                try:
+                    validate_net_unit_price(product=product, quantity=line.quantity, unit_price=line.unit_price,
+                                            line_discount=line.discount_amount, actor=request.user, organization=organization)
+                except BelowCostError as exc:
+                    if _is_pos_request(request):
+                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
+                    messages.error(request, str(exc))
+                    return redirect('inventory:cart_detail', pk=cart.pk)
                 line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
         else:
             quantity = (line.quantity if line else Decimal('0.00')) + Decimal('1.00')
@@ -764,9 +788,27 @@ def cart_line_adjust(request, cart_pk):
             elif line:
                 line.quantity = quantity
                 line.unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
+                from products.pricing import BelowCostError, validate_net_unit_price
+                try:
+                    validate_net_unit_price(product=product, quantity=quantity, unit_price=line.unit_price,
+                                            line_discount=line.discount_amount, actor=request.user, organization=organization)
+                except BelowCostError as exc:
+                    if _is_pos_request(request):
+                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
+                    messages.error(request, str(exc))
+                    return redirect('inventory:cart_detail', pk=cart.pk)
                 line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
             else:
                 unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
+                from products.pricing import BelowCostError, validate_net_unit_price
+                try:
+                    validate_net_unit_price(product=product, quantity=quantity, unit_price=unit_price,
+                                            actor=request.user, organization=organization)
+                except BelowCostError as exc:
+                    if _is_pos_request(request):
+                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
+                    messages.error(request, str(exc))
+                    return redirect('inventory:cart_detail', pk=cart.pk)
                 CartLine.objects.create(cart=cart, product=product, quantity=quantity, unit_price=unit_price)
     if _is_pos_request(request):
         return _pos_response(request, cart)

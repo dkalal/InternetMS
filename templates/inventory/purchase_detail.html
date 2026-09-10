@@ -45,8 +45,8 @@
           {% for line in purchase_lines %}
             <tr>
               <td><div class="font-semibold text-slate-950">{{ line.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ line.product.sku }}{% if line.product.is_serialized %} · Serialized{% endif %}</div></td>
-              <td class="text-right">{{ line.quantity }}</td>
-              {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ line.unit_cost|intcomma }}</td><td class="text-right font-semibold">{{ line.line_total|intcomma }}</td>{% endif %}
+              <td class="text-right"><div>{{ line.quantity }} {{ line.product.get_measure_unit_display }}</div>{% if line.source_purchase_quantity %}<div class="mt-1 text-xs text-slate-500">{{ line.source_purchase_quantity }} {{ line.source_purchase_unit_label }} × {{ line.conversion_factor }}</div>{% endif %}</td>
+              {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right"><div>{{ line.unit_cost|intcomma }} / {{ line.product.get_measure_unit_display }}</div>{% if line.source_purchase_unit_cost != None %}<div class="mt-1 text-xs text-slate-500">{{ line.source_purchase_unit_cost|intcomma }} / {{ line.source_purchase_unit_label }}</div>{% endif %}</td><td class="text-right font-semibold">{{ line.line_total|intcomma }}</td>{% endif %}
               <td>{{ line.batch_reference|default:"—" }}</td>
               <td>{{ line.expiry_date|date:"d M Y"|default:"—" }}</td>
               <td class="max-w-xs whitespace-pre-line text-xs">{{ line.serial_numbers|default:"—" }}</td>

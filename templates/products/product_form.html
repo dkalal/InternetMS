@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add catalog item{% endif %}{% endblock %}
 {% block content %}
+<noscript><style>[data-cost-pack]{display:grid!important}</style></noscript>
 {% include "inventory/includes/module_nav.html" %}
 
 <div class="jims-form-page jims-form-page--standard space-y-5">
@@ -104,7 +105,18 @@
               <p class="mt-1 text-sm text-slate-600">Margin is calculated for guidance and is never a separate editable value.</p>
             </div>
             <div class="grid gap-4 p-5 sm:grid-cols-2">
-              {% include "components/form_field.html" with field=form.buying_price %}
+              <div class="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                {% include "components/form_field.html" with field=form.acquisition_cost_mode %}
+              </div>
+              <div data-cost-direct>{% include "components/form_field.html" with field=form.buying_price %}</div>
+              <div class="hidden sm:col-span-2 grid gap-4 rounded-xl border border-brand-200 bg-brand-50/50 p-4 sm:grid-cols-3" data-cost-pack>
+                {% include "components/form_field.html" with field=form.default_purchase_unit_label %}
+                {% include "components/form_field.html" with field=form.default_purchase_conversion_factor %}
+                {% include "components/form_field.html" with field=form.default_purchase_unit_cost %}
+                <div class="sm:col-span-3 rounded-lg bg-white p-3 text-sm text-slate-700" aria-live="polite">
+                  Calculated normalized base-unit cost: <strong data-pack-normalized>—</strong>
+                </div>
+              </div>
               {% include "components/form_field.html" with field=form.selling_price %}
               {% include "components/form_field.html" with field=form.technician_price %}
               <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.tax_eligible %}</div>

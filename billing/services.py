@@ -1002,6 +1002,13 @@ class BillingService:
         )
 
         created_items = cls._build_line_items(organization=organization, document=document, items=items)
+        if document_type in {BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.QUOTATION}:
+            cls._validate_product_cost_floors(
+                organization=organization,
+                actor=created_by,
+                line_items=created_items,
+                document_discount=discount_amount,
+            )
         if created_items:
             BillingLineItem.objects.bulk_create(created_items)
 
@@ -1011,6 +1018,31 @@ class BillingService:
         BillingDocument.objects.filter(id=document.id).update(subtotal=subtotal, tax_amount=tax_amount, total=total)
         document.refresh_from_db()
         return document
+
+    @classmethod
+    def _validate_product_cost_floors(cls, *, organization, actor, line_items, document_discount=Decimal('0.00')):
+        """Apply one pre-tax, discount-aware rule to every product-linked sale line."""
+        from products.pricing import BelowCostError, validate_net_unit_price
+
+        product_lines = [line for line in line_items if line.product_id]
+        subtotal = sum((line.line_total for line in line_items), Decimal('0.00'))
+        for line in product_lines:
+            share = (
+                Decimal(document_discount or 0) * line.line_total / subtotal
+                if subtotal > 0 else Decimal('0.00')
+            )
+            try:
+                validate_net_unit_price(
+                    product=line.product,
+                    quantity=line.quantity,
+                    unit_price=line.unit_price,
+                    line_discount=line.discount_amount,
+                    allocated_document_discount=share,
+                    actor=actor,
+                    organization=organization,
+                )
+            except BelowCostError as exc:
+                raise BillingServiceError(str(exc)) from exc
 
     @classmethod
     def create_document(
@@ -1276,6 +1308,12 @@ class BillingService:
         with transaction.atomic():
             BillingLineItem.objects.filter(document=invoice).delete()
             created_items = cls._build_line_items(organization=organization, document=invoice, items=items)
+            cls._validate_product_cost_floors(
+                organization=organization,
+                actor=performed_by,
+                line_items=created_items,
+                document_discount=invoice.discount_amount,
+            )
             if created_items:
                 BillingLineItem.objects.bulk_create(created_items)
             linked_periods = list(

@@ -4,6 +4,11 @@
 {% block title %}{{ product.name }}{% endblock %}
 
 {% block content %}
+{% if INVENTORY_CAN_VIEW_COSTS and product.pricing_warnings %}
+  <div class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+    <strong>Pricing review required.</strong> Current weighted-average cost makes these prices unsafe: {{ product.pricing_warnings|join:", " }}. Future sales using an affected price are blocked until corrected.
+  </div>
+{% endif %}
 {% include "inventory/includes/module_nav.html" %}
 <div class="space-y-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

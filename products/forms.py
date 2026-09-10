@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 from django.utils.text import slugify
 
@@ -11,6 +13,15 @@ from .images import prepare_product_image
 class ProductForm(CustomFieldFormMixin, forms.ModelForm):
     custom_field_target_model = "product"
 
+    COST_DIRECT = 'direct'
+    COST_PACK = 'pack'
+    acquisition_cost_mode = forms.ChoiceField(
+        choices=((COST_DIRECT, 'Cost per base unit'), (COST_PACK, 'Cost per purchase pack')),
+        widget=forms.RadioSelect,
+        initial=COST_DIRECT,
+        label='How do you enter acquisition cost?', required=False,
+    )
+
     class Meta:
         model = Product
         fields = [
@@ -23,6 +34,9 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
             'brand',
             'model_number',
             'buying_price',
+            'default_purchase_unit_label',
+            'default_purchase_conversion_factor',
+            'default_purchase_unit_cost',
             'selling_price',
             'technician_price',
             'wholesale_price',
@@ -72,7 +86,18 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         self.fields['sku'].required = False
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
+        self.fields['buying_price'].required = False
+        self.fields['default_purchase_conversion_factor'].required = False
         self.fields['category'].empty_label = None
+        self.fields['default_purchase_unit_label'].label = 'Purchase unit label'
+        self.fields['default_purchase_conversion_factor'].label = 'Units in one purchase pack'
+        self.fields['default_purchase_unit_cost'].label = 'Default cost per purchase pack'
+        self.fields['buying_price'].label = 'Cost per base stock unit'
+        self.fields['buying_price'].widget.attrs.update({'step': '0.000001', 'min': '0'})
+        self.fields['default_purchase_conversion_factor'].widget.attrs.update({'step': '0.000001', 'min': '0.000001'})
+        self.fields['default_purchase_unit_cost'].widget.attrs.update({'step': '0.01', 'min': '0'})
+        if self.instance.pk and self.instance.default_purchase_conversion_factor != Decimal('1.000000'):
+            self.initial['acquisition_cost_mode'] = self.COST_PACK
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Router, radio, cable, software license...')
         self.has_movement_history = bool(
             self.instance.pk
@@ -147,4 +172,43 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
                 self.instance.measure_unit = legacy_measure_unit
             else:
                 self.add_error('sales_unit', 'Stockable products require a sales unit.')
+        mode = cleaned.get('acquisition_cost_mode') or self.COST_DIRECT
+        base_label = sales_unit.label if sales_unit else (self.instance.measure_unit or 'Unit')
+        if mode == self.COST_PACK:
+            factor = cleaned.get('default_purchase_conversion_factor')
+            pack_cost = cleaned.get('default_purchase_unit_cost')
+            label = (cleaned.get('default_purchase_unit_label') or '').strip()
+            if not label:
+                self.add_error('default_purchase_unit_label', 'Enter the purchase unit label, for example Box.')
+            if factor is None or factor <= 0:
+                self.add_error('default_purchase_conversion_factor', 'Units in a purchase pack must be greater than zero.')
+            if pack_cost is None or pack_cost < 0:
+                self.add_error('default_purchase_unit_cost', 'Purchase pack cost cannot be negative.')
+            if factor and factor > 0 and pack_cost is not None and pack_cost >= 0:
+                normalized = (pack_cost / factor).quantize(Decimal('0.000001'))
+                cleaned['buying_price'] = normalized
+                self.instance.buying_price = normalized
+        else:
+            buying = cleaned.get('buying_price')
+            if buying is None:
+                self.add_error('buying_price', 'Enter the acquisition cost per base stock unit.')
+            cleaned['default_purchase_unit_label'] = base_label
+            cleaned['default_purchase_conversion_factor'] = Decimal('1.000000')
+            cleaned['default_purchase_unit_cost'] = buying
+            self.instance.default_purchase_unit_label = base_label
+            self.instance.default_purchase_conversion_factor = Decimal('1.000000')
+            self.instance.default_purchase_unit_cost = buying
+
+        for field_name, label in (
+            ('selling_price', 'Selling price'),
+            ('technician_price', 'Technician price'),
+            ('wholesale_price', 'Wholesale price'),
+        ):
+            value = cleaned.get(field_name)
+            floor = cleaned.get('buying_price')
+            if self.instance.pk:
+                from .pricing import cost_floor_for
+                floor = cost_floor_for(self.instance)
+            if value is not None and floor is not None and value <= floor:
+                self.add_error(field_name, f'{label} must be greater than normalized base-unit cost.')
         return cleaned

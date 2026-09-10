@@ -20,6 +20,7 @@ TEMPLATES = {
     'historical_purchases': ['date', 'reference', 'sku', 'description', 'quantity', 'unit_amount', 'notes'],
     'historical_sales': ['date', 'reference', 'sku', 'description', 'quantity', 'unit_amount', 'notes'],
 }
+PRODUCT_PACK_COLUMNS = ['purchase_unit_label', 'purchase_conversion_factor', 'purchase_unit_cost']
 
 
 def _openpyxl():
@@ -37,9 +38,9 @@ def template_workbook(import_type: str) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = import_type[:31]
-    sheet.append(TEMPLATES[import_type])
+    sheet.append(TEMPLATES[import_type] + (PRODUCT_PACK_COLUMNS if import_type == 'products' else []))
     if import_type == 'products':
-        sheet.append(['RTR-001', 'WiFi Router', 'physical', 'Routers', 'TP-Link', 'AX10', 100000, 150000, 2, 'no', 'yes'])
+        sheet.append(['RTR-001', 'WiFi Router', 'physical', 'Routers', 'TP-Link', 'AX10', 100000, 150000, 2, 'no', 'yes', 'Unit', 1, 100000])
     elif import_type == 'opening_stock':
         sheet.append(['RTR-001', 10, '', 'Counted opening balance'])
     output = BytesIO()
@@ -64,9 +65,9 @@ def _bool(value):
     return str(value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'active'}
 
 
-def _decimal(value, field, errors):
+def _decimal(value, field, errors, quantum=Decimal('0.01')):
     try:
-        return Decimal(str(value if value is not None else '')).quantize(Decimal('0.01'))
+        return Decimal(str(value if value is not None else '')).quantize(quantum)
     except (InvalidOperation, ValueError):
         errors.append(f'{field} must be a number.')
         return Decimal('0.00')
@@ -106,11 +107,14 @@ def validate_workbook(*, organization, actor, import_type: str, uploaded_file) -
     if missing:
         errors.append({'row': 1, 'errors': [f"Missing columns: {', '.join(missing)}"]})
     else:
-        positions = {header: headers.index(header) for header in required}
+        accepted = required + (PRODUCT_PACK_COLUMNS if import_type == 'products' else [])
+        positions = {header: headers.index(header) for header in accepted if header in headers}
         for number, values_row in enumerate(values, start=2):
             if not any(value not in (None, '') for value in values_row):
                 continue
             raw = {header: values_row[index] if index < len(values_row) else None for header, index in positions.items()}
+            for header in accepted:
+                raw.setdefault(header, None)
             row_errors = []
             normalized = _validate_row(organization=organization, import_type=import_type, raw=raw, errors=row_errors)
             if row_errors:
@@ -148,6 +152,13 @@ def _validate_row(*, organization, import_type, raw, errors):
         buying = _decimal(raw['buying_price'], 'buying_price', errors)
         selling = _decimal(raw['selling_price'], 'selling_price', errors)
         threshold = _decimal(raw['reorder_threshold'], 'reorder_threshold', errors)
+        pack_label = str(raw.get('purchase_unit_label') or '').strip()
+        pack_factor = _decimal(raw.get('purchase_conversion_factor'), 'purchase_conversion_factor', errors, Decimal('0.000001')) if raw.get('purchase_conversion_factor') not in (None, '') else Decimal('1.000000')
+        pack_cost = _decimal(raw.get('purchase_unit_cost'), 'purchase_unit_cost', errors) if raw.get('purchase_unit_cost') not in (None, '') else buying
+        if pack_factor <= 0 or pack_cost < 0:
+            errors.append('purchase conversion must be positive and purchase unit cost cannot be negative.')
+        if any(raw.get(name) not in (None, '') for name in PRODUCT_PACK_COLUMNS):
+            buying = (pack_cost / pack_factor).quantize(Decimal('0.000001')) if pack_factor > 0 else buying
         if min(buying, selling, threshold) < 0:
             errors.append('prices and threshold cannot be negative.')
         return {
@@ -155,6 +166,8 @@ def _validate_row(*, organization, import_type, raw, errors):
             'brand': str(raw['brand'] or '').strip(), 'model_number': str(raw['model_number'] or '').strip(),
             'buying_price': str(buying), 'selling_price': str(selling), 'reorder_threshold': str(threshold),
             'serialized': _bool(raw['serialized']), 'tax_eligible': _bool(raw['tax_eligible']),
+            'purchase_unit_label': pack_label or 'Unit', 'purchase_conversion_factor': str(pack_factor),
+            'purchase_unit_cost': str(pack_cost),
         }
     if import_type == 'suppliers':
         company = str(raw['company_name'] or '').strip()
@@ -211,6 +224,9 @@ def commit_import(*, organization, actor, job_id: int):
                 organization=organization, tenant=organization, sku=row['sku'], name=row['name'],
                 item_type=row['item_type'], catalog_category=category, brand=row['brand'], model_number=row['model_number'],
                 buying_price=Decimal(row['buying_price']), selling_price=Decimal(row['selling_price']),
+                default_purchase_unit_label=row['purchase_unit_label'],
+                default_purchase_conversion_factor=Decimal(row['purchase_conversion_factor']),
+                default_purchase_unit_cost=Decimal(row['purchase_unit_cost']),
                 retail_price=Decimal(row['selling_price']), reorder_threshold=Decimal(row['reorder_threshold']),
                 is_serialized=row['serialized'], track_stock=row['item_type'] == Product.ItemType.PHYSICAL,
                 tax_eligible=row['tax_eligible'], quantity=Decimal('0.00'), stock=0, measure_unit='Unit',

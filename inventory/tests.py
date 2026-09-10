@@ -41,9 +41,135 @@ from .models import (
 )
 from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService
+from .forms import PurchaseLineForm
 
 
 User = get_user_model()
+
+
+class PurchasePackCostingTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Pack Tenant', slug='pack-tenant')
+        self.other = Organization.objects.create(name='Other Pack Tenant', slug='other-pack-tenant')
+        self.admin = User.objects.create_user(username='pack-admin', password='pass')
+        UserAccessProfile.objects.create(user=self.admin, tenant=self.org, role=UserAccessProfile.Role.TENANT_ADMIN)
+        self.staff = User.objects.create_user(username='pack-staff', password='pass')
+        UserAccessProfile.objects.create(user=self.staff, tenant=self.org, role=UserAccessProfile.Role.TENANT_STAFF)
+        self.customer = Customer.objects.create(
+            organization=self.org, tenant=self.org, name='Cable buyer', customer_type='random', location='Moshi',
+        )
+        self.meter = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Meter', symbol='m',
+        )
+        self.product = Product.objects.create(
+            organization=self.org, tenant=self.org, sku='UTP-305', name='UTP Cable',
+            quantity=Decimal('0'), stock=0, measure_unit='m', sales_unit=self.meter,
+            buying_price=Decimal('655.737705'), selling_price=Decimal('2000.00'),
+            technician_price=Decimal('1800.00'), wholesale_price=Decimal('1500.00'),
+            wholesale_min_quantity=Decimal('100'), allow_wholesale=True,
+            default_purchase_unit_label='Box', default_purchase_conversion_factor=Decimal('305'),
+            default_purchase_unit_cost=Decimal('200000.00'),
+        )
+        self.supplier = Supplier.objects.create(
+            organization=self.org, tenant=self.org, company_name='Cable Supplier', created_by=self.admin,
+        )
+
+    def draft_pack(self, *, reference='PACK-1', packs='1', factor='305', pack_cost='200000'):
+        purchase = Purchase.objects.create(
+            organization=self.org, tenant=self.org, supplier=self.supplier,
+            reference_number=reference, purchase_date=date.today(), created_by=self.admin,
+        )
+        form = PurchaseLineForm(data={
+            'product': self.product.pk, 'entry_mode': 'pack', 'pack_unit_label': 'Box',
+            'pack_quantity': packs, 'pack_conversion_factor': factor, 'pack_unit_cost': pack_cost,
+            'quantity': '', 'unit_cost': '', 'batch_reference': '', 'expiry_date': '', 'serial_numbers': '',
+        }, organization=self.org)
+        self.assertTrue(form.is_valid(), form.errors)
+        line = form.save(commit=False)
+        line.purchase = purchase
+        line.save()
+        return purchase, line
+
+    def test_pack_receipt_posts_base_units_and_preserves_authoritative_total(self):
+        purchase, line = self.draft_pack()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        line.refresh_from_db()
+        balance = InventoryBalance.objects.get(product=self.product)
+        self.assertEqual(line.quantity, Decimal('305.000000'))
+        self.assertEqual(line.unit_cost, Decimal('655.737705'))
+        self.assertEqual(line.authoritative_purchase_total, Decimal('200000.00'))
+        self.assertEqual(line.line_total, Decimal('200000.00'))
+        self.assertEqual(balance.quantity, Decimal('305.00'))
+        self.assertEqual(balance.average_cost, Decimal('655.737705'))
+        self.assertEqual(StockMovement.objects.get(purchase_line=line).quantity, Decimal('305.00'))
+
+    def test_above_cost_sale_succeeds_and_at_or_below_cost_is_rejected(self):
+        purchase, _ = self.draft_pack()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        ok = BillingService.create_document(
+            organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'))],
+        )
+        self.assertEqual(ok.items.get().unit_price, Decimal('2000.00'))
+        InventoryBalance.objects.filter(product=self.product).update(average_cost=Decimal('2000.000000'))
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'), preserve_unit_price=True)],
+            )
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.QUOTATION,
+                customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
+            )
+
+    def test_discount_and_higher_weighted_cost_are_enforced_without_blocking_receipt(self):
+        first, _ = self.draft_pack()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=first.pk, actor=self.admin)
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk,
+                items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'), discount_amount=Decimal('1400'))],
+            )
+        second, _ = self.draft_pack(reference='PACK-2', pack_cost='1000000')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=second.pk, actor=self.admin)
+        balance = InventoryBalance.objects.get(product=self.product)
+        self.assertEqual(balance.quantity, Decimal('610.00'))
+        self.assertEqual(balance.average_cost, Decimal('1967.213115'))
+        self.assertIn('Technician', self.product.pricing_warnings)
+        self.assertIn('Wholesale', self.product.pricing_warnings)
+
+    def test_direct_entry_and_snapshot_immutability_remain_backward_compatible(self):
+        direct = Purchase.objects.create(
+            organization=self.org, tenant=self.org, supplier=self.supplier,
+            reference_number='DIRECT-1', purchase_date=date.today(), created_by=self.admin,
+        )
+        PurchaseLine.objects.create(purchase=direct, product=self.product, quantity=Decimal('2'), unit_cost=Decimal('700'))
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=direct.pk, actor=self.admin)
+        pack, line = self.draft_pack(reference='PACK-SNAPSHOT')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=pack.pk, actor=self.admin)
+        snapshot = (line.source_purchase_unit_label, line.source_purchase_quantity, line.conversion_factor,
+                    line.source_purchase_unit_cost, line.authoritative_purchase_total)
+        Product.objects.filter(pk=self.product.pk).update(
+            default_purchase_unit_label='Reel', default_purchase_conversion_factor=Decimal('500'),
+            default_purchase_unit_cost=Decimal('400000'), buying_price=Decimal('800'),
+        )
+        line.refresh_from_db()
+        self.assertEqual(snapshot, (line.source_purchase_unit_label, line.source_purchase_quantity, line.conversion_factor,
+                                    line.source_purchase_unit_cost, line.authoritative_purchase_total))
+
+    def test_unauthorized_error_hides_cost(self):
+        purchase, _ = self.draft_pack()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        with self.assertRaises(BillingServiceError) as error:
+            BillingService.create_document(
+                organization=self.org, created_by=self.staff, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk,
+                items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
+            )
+        self.assertIn('minimum allowed selling price', str(error.exception))
+        self.assertNotIn('655', str(error.exception))
 
 
 class InventoryAcceptanceTests(TestCase):

@@ -76,6 +76,10 @@ Super Administrator access to tenant data requires an explicit support session w
 
 All balance mutations go through `InventoryService` under `transaction.atomic()` with row locks. `BillingService.create_receipt_from_invoice()` locks the invoice and invokes inventory completion in the same transaction only for catalog/inventory sales. This makes retries idempotent and prevents negative stock or double-selling serialized units.
 
+Product inventory is always held in one canonical base sales/stock unit. An optional single default purchase pack is an input convenience, not a second stock unit: receiving converts pack quantity to base quantity before posting. The source pack label, quantity, conversion factor, pack cost, and authoritative monetary total are immutable snapshots on the purchase line; later product-default edits never rewrite history. Legacy and direct receipts remain 1:1 base-unit inputs.
+
+Weighted-average inventory cost is retained at six-decimal precision and is the authoritative future-sale cost floor whenever positive movement-backed stock exists; otherwise the product's normalized base-unit buying cost is used. Product-linked quotations, invoices, POS carts, APIs, discounts, and payment completion all enforce net pre-tax unit revenue strictly greater than that floor. Tax is excluded from the comparison, equality is prohibited, and receiving higher-cost stock remains allowed even when it creates a visible pricing warning. This intentionally does not implement a generic multi-UoM graph, packaging hierarchy, repacking, or manufacturing engine.
+
 Keep uploaded media and generated files out of source control. Use `.gitignore` for local artifacts and a real object store for production uploads when deploying.
 
 ## Production Notes

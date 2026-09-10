@@ -22,6 +22,7 @@ from .models import (
     InventorySaleLine,
     InventorySettings,
     Purchase,
+    PurchaseLine,
     StockAdjustment,
     StockMovement,
     StockUnit,
@@ -29,6 +30,8 @@ from .models import (
 
 
 MONEY = Decimal('0.01')
+COST = Decimal('0.000001')
+QUANTITY = Decimal('0.000001')
 
 
 class InventoryError(Exception):
@@ -37,6 +40,14 @@ class InventoryError(Exception):
 
 def money(value) -> Decimal:
     return Decimal(value or 0).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def cost(value) -> Decimal:
+    return Decimal(value or 0).quantize(COST, rounding=ROUND_HALF_UP)
+
+
+def stock_quantity(value) -> Decimal:
+    return Decimal(value or 0).quantize(QUANTITY, rounding=ROUND_HALF_UP)
 
 
 def audit(*, organization, actor, action, obj, old_value=None, new_value=None, metadata=None):
@@ -72,7 +83,7 @@ class InventoryService:
                 'organization': organization,
                 'tenant': organization,
                 'quantity': legacy_quantity,
-                'average_cost': money(product.buying_price),
+                'average_cost': cost(product.buying_price),
             },
         )
         if created and legacy_quantity > 0:
@@ -83,7 +94,7 @@ class InventoryService:
                 movement_type=StockMovement.MovementType.OPENING,
                 quantity=legacy_quantity,
                 balance_after=legacy_quantity,
-                unit_cost=money(product.buying_price),
+                unit_cost=cost(product.buying_price),
                 created_by=None,
             )
         balance = InventoryBalance.objects.unscoped().select_for_update().get(pk=balance.pk)
@@ -125,6 +136,26 @@ class InventoryService:
                 raise InventoryError(f'{product.name} is a service/non-stock item and cannot be received.')
             if line.quantity <= 0 or line.unit_cost < 0:
                 raise InventoryError('Purchase quantities must be positive and costs cannot be negative.')
+            if line.source_purchase_quantity is not None:
+                if not line.source_purchase_unit_label or line.source_purchase_quantity <= 0:
+                    raise InventoryError('Purchase-pack quantity and unit label are required.')
+                if line.conversion_factor is None or line.conversion_factor <= 0:
+                    raise InventoryError('Purchase-pack conversion factor must be greater than zero.')
+                if line.source_purchase_unit_cost is None or line.source_purchase_unit_cost < 0:
+                    raise InventoryError('Purchase-pack cost cannot be negative.')
+                base_quantity = stock_quantity(line.source_purchase_quantity * line.conversion_factor)
+                authoritative_total = money(line.source_purchase_quantity * line.source_purchase_unit_cost)
+                normalized_cost = cost(authoritative_total / base_quantity)
+                # Re-derive at the posting boundary; browser and saved draft values are never trusted.
+                if line.quantity != base_quantity or line.unit_cost != normalized_cost or line.authoritative_purchase_total != authoritative_total:
+                    PurchaseLine.objects.unscoped().filter(pk=line.pk).update(
+                        quantity=base_quantity,
+                        unit_cost=normalized_cost,
+                        authoritative_purchase_total=authoritative_total,
+                    )
+                    line.quantity = base_quantity
+                    line.unit_cost = normalized_cost
+                    line.authoritative_purchase_total = authoritative_total
             serials = [serial.strip().upper() for serial in line.parsed_serial_numbers()]
             if product.is_serialized:
                 if line.quantity != line.quantity.to_integral_value():
@@ -147,11 +178,11 @@ class InventoryService:
         for line in lines:
             product, balance = cls._locked_product_and_balance(organization=organization, product_id=line.product_id)
             old_quantity = balance.quantity
-            incoming_cost = money(line.unit_cost)
-            new_quantity = money(old_quantity + line.quantity)
+            incoming_cost = cost(line.unit_cost)
+            new_quantity = stock_quantity(old_quantity + line.quantity)
             if new_quantity > 0:
-                balance.average_cost = money(
-                    ((old_quantity * balance.average_cost) + (line.quantity * incoming_cost)) / new_quantity
+                balance.average_cost = cost(
+                    ((old_quantity * balance.average_cost) + line.line_total) / new_quantity
                 )
             balance.quantity = new_quantity
             balance.save(update_fields=['quantity', 'average_cost', 'updated_at'])
@@ -241,7 +272,7 @@ class InventoryService:
         product, balance = cls._locked_product_and_balance(organization=organization, product_id=product_id)
         if product.item_type == Product.ItemType.SERVICE or not product.track_stock:
             raise InventoryError('Service/non-stock items cannot be adjusted.')
-        new_quantity = money(balance.quantity + quantity_delta)
+        new_quantity = stock_quantity(balance.quantity + quantity_delta)
         if new_quantity < 0:
             raise InventoryError('Adjustment would make stock negative.')
 
@@ -276,7 +307,7 @@ class InventoryService:
         )
         balance.quantity = new_quantity
         if quantity_delta > 0 and balance.quantity == quantity_delta:
-            balance.average_cost = money(product.buying_price)
+            balance.average_cost = cost(product.buying_price)
         balance.save(update_fields=['quantity', 'average_cost', 'updated_at'])
         cls._sync_legacy_stock(product, balance)
         movement_type = (
@@ -348,6 +379,15 @@ class InventoryService:
 
         billing_lines = list(invoice.items.select_related('product').order_by('product_id', 'id'))
         product_lines = [line for line in billing_lines if line.product_id]
+        # Recheck immediately before stock leaves: a newer receipt may have raised
+        # weighted-average cost after this invoice was drafted or issued.
+        from billing.services import BillingService
+        BillingService._validate_product_cost_floors(
+            organization=organization,
+            actor=actor,
+            line_items=product_lines,
+            document_discount=getattr(invoice, 'discount_amount', Decimal('0.00')),
+        )
         subtotal = sum((line.line_total for line in product_lines), Decimal('0.00'))
         document_discount = money(getattr(invoice, 'discount_amount', Decimal('0.00')))
         processed_discount = Decimal('0.00')
@@ -366,7 +406,7 @@ class InventoryService:
 
             if product.item_type == Product.ItemType.PHYSICAL and product.track_stock:
                 locked_product, balance = cls._locked_product_and_balance(organization=organization, product_id=product.pk)
-                quantity = money(line.quantity)
+                quantity = stock_quantity(line.quantity)
                 if quantity <= 0 or balance.quantity < quantity:
                     raise InventoryError(f'Insufficient stock for {product.name}. Available: {balance.quantity}.')
                 if product.is_serialized:
@@ -399,7 +439,7 @@ class InventoryService:
                     movement_unit_cost = balance.average_cost
                     cost_total = money(quantity * movement_unit_cost)
 
-                balance.quantity = money(balance.quantity - quantity)
+                balance.quantity = stock_quantity(balance.quantity - quantity)
                 balance.save(update_fields=['quantity', 'updated_at'])
                 cls._sync_legacy_stock(locked_product, balance)
                 StockMovement.objects.create(
