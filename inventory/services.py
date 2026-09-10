@@ -164,6 +164,9 @@ class InventoryService:
                     raise InventoryError(f'{product.name} requires exactly {int(line.quantity)} serial numbers.')
                 if len(set(serials)) != len(serials):
                     raise InventoryError(f'Duplicate serial numbers were entered for {product.name}.')
+                duplicates_across_lines = seen_serials.intersection(serials)
+                if duplicates_across_lines:
+                    raise InventoryError('Duplicate serial numbers were entered across purchase lines.')
                 seen_serials.update(serials)
             elif serials:
                 raise InventoryError(f'{product.name} is quantity-based and must not have serial numbers.')
