@@ -57,3 +57,30 @@ class SelectDesignSystemTests(SimpleTestCase):
         self.assertIn("@media (forced-colors: active)", stylesheet)
         self.assertIn('root.querySelectorAll("[data-choice-group]").forEach(initChoiceGroup)', script)
         self.assertIn(".jims-choice-card:has(input:checked)", stylesheet)
+
+
+class StylesheetCompatibilityTests(SimpleTestCase):
+    def setUp(self):
+        stylesheet_path = finders.find("inventory/css/jims-ui.css")
+        self.assertIsNotNone(stylesheet_path)
+        self.stylesheet = Path(stylesheet_path).read_text(encoding="utf-8")
+
+    def test_webkit_fallbacks_precede_standard_filter_and_mask_properties(self):
+        for value in ("blur(2px)", "blur(8px)"):
+            prefixed = f"-webkit-backdrop-filter: {value};"
+            standard = f"backdrop-filter: {value};"
+            self.assertIn(f"{prefixed}\n  {standard}", self.stylesheet)
+
+        for value in (
+            "linear-gradient(to right, transparent, #000 28%)",
+            "linear-gradient(to right, transparent, #000 24%)",
+        ):
+            prefixed = f"-webkit-mask-image: {value};"
+            standard = f"mask-image: {value};"
+            self.assertIn(f"{prefixed}\n  {standard}", self.stylesheet)
+
+    def test_scroll_regions_use_accessible_cross_browser_fallbacks(self):
+        self.assertNotIn("scrollbar-gutter:", self.stylesheet)
+        self.assertNotIn("scrollbar-width:", self.stylesheet)
+        self.assertNotIn("scrollbar-color:", self.stylesheet)
+        self.assertGreaterEqual(self.stylesheet.count("overflow-y: scroll;"), 4)

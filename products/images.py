@@ -20,8 +20,17 @@ def product_image_upload_to(instance, filename):
 
 
 def validate_product_image_size(image):
-    """Reject uploads that are unnecessarily large for a POS catalog."""
-    if image and image.size > MAX_PRODUCT_IMAGE_BYTES:
+    """Reject oversized new uploads without reading an existing storage object.
+
+    ``Model.full_clean()`` also runs field validators for already-committed
+    ``FieldFile`` values. Reopening those objects makes an ordinary model save
+    depend on local/object storage availability and breaks valid legacy file
+    references. New assignments are marked uncommitted by Django's file
+    descriptor, so upload validation still happens before the file is saved.
+    """
+    if not image or getattr(image, '_committed', False):
+        return
+    if image.size > MAX_PRODUCT_IMAGE_BYTES:
         raise ValidationError('Product image must be 6 MB or smaller.')
 
 
