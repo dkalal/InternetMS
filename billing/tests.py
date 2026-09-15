@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from io import BytesIO
 import importlib
 import unittest
 from decimal import Decimal
@@ -13,6 +14,7 @@ from django.test import TestCase, TransactionTestCase
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from pypdf import PdfReader
 from threading import Barrier, Thread
 
 from audit.models import AuditLog
@@ -2339,20 +2341,26 @@ class BillingListViewTests(TestCase):
             status=BillingDocument.Status.ISSUED,
         )
 
-        responses = [
+        html_responses = [
             self.client.get(reverse("billing:document_list", kwargs={"doc_type": "invoice"})),
             self.client.get(
                 reverse("billing:document_detail", kwargs={"doc_type": "invoice", "pk": invoice.pk})
             ),
-            self.client.get(
-                reverse("billing:document_pdf", kwargs={"doc_type": "invoice", "pk": invoice.pk}),
-                {"download": "0"},
-            ),
         ]
 
-        for response in responses:
+        for response in html_responses:
             self.assertEqual(response.status_code, 200)
             self.assertContains(response, invoice.number)
+
+        pdf_response = self.client.get(
+            reverse("billing:document_pdf", kwargs={"doc_type": "invoice", "pk": invoice.pk}),
+            {"download": "0"},
+        )
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+        pdf_reader = PdfReader(BytesIO(pdf_response.content))
+        pdf_text = "\n".join(page.extract_text() or "" for page in pdf_reader.pages)
+        self.assertIn(invoice.number, pdf_text)
 
     def test_registered_customer_receipt_print_uses_source_items_and_thermal_layout(self):
         invoice = BillingService.create_document(
