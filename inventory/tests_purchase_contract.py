@@ -117,9 +117,9 @@ class UnifiedPurchasingBaselineContractTests(TestCase):
             default_purchase_unit_label=default_purchase_unit_label,
             default_purchase_conversion_factor=Decimal(default_purchase_conversion_factor),
             default_purchase_unit_cost=(
-                Decimal(default_purchase_unit_cost)
+                Decimal(default_purchase_unit_cost).quantize(Decimal("0.01"))
                 if default_purchase_unit_cost is not None
-                else None
+                else Decimal(buying_price).quantize(Decimal("0.01"))
             ),
         )
 
