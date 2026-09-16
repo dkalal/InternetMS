@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize number_display %}
 <section class="section">
   <div class="table-card">
     <table class="items-table quotation-items-table">
@@ -50,7 +50,7 @@
                 Service
               {% endif %}
             </td>
-            <td class="text-right">{{ item.quantity }}</td>
+            <td class="text-right">{{ item.quantity|quantity_display }}</td>
             <td class="text-right">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
             <td class="text-right total-amount">{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</td>
           </tr>

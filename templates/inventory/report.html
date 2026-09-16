@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load number_display %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -30,7 +31,7 @@
 
   <section class="jims-panel overflow-hidden">
     {% if rows %}
-      <div class="jims-table-wrap"><table class="jims-table"><thead><tr>{% for header in headers %}<th class="whitespace-nowrap">{{ header }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr>{% for value in row %}<td class="whitespace-nowrap">{{ value|default_if_none:"—" }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+      <div class="jims-table-wrap"><table class="jims-table"><thead><tr>{% for header in headers %}<th class="whitespace-nowrap">{{ header }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr>{% for value in row %}<td class="whitespace-nowrap">{{ value|default_if_none:"—"|number_display }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
       {% if page_obj.paginator.num_pages > 1 %}<nav class="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm" aria-label="Report pagination"><span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span><div class="flex gap-2">{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&q={{ query|urlencode }}&date_from={{ date_from }}&date_to={{ date_to }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&q={{ query|urlencode }}&date_from={{ date_from }}&date_to={{ date_to }}">Next</a>{% endif %}</div></nav>{% endif %}
     {% else %}
       {% include "components/empty_state.html" with title="No report records" message="Change the filters or date range to find matching inventory activity." %}

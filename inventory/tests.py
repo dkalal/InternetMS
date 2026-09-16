@@ -47,7 +47,7 @@ from .forms import PurchaseLineForm
 User = get_user_model()
 
 
-class PurchasePackCostingTests(TestCase):
+class SameUnitCostingTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name='Pack Tenant', slug='pack-tenant')
         self.other = Organization.objects.create(name='Other Pack Tenant', slug='other-pack-tenant')
@@ -64,25 +64,22 @@ class PurchasePackCostingTests(TestCase):
         self.product = Product.objects.create(
             organization=self.org, tenant=self.org, sku='UTP-305', name='UTP Cable',
             quantity=Decimal('0'), stock=0, measure_unit='m', sales_unit=self.meter,
-            buying_price=Decimal('655.737705'), selling_price=Decimal('2000.00'),
+            buying_price=Decimal('700.000000'), selling_price=Decimal('2000.00'),
             technician_price=Decimal('1800.00'), wholesale_price=Decimal('1500.00'),
             wholesale_min_quantity=Decimal('100'), allow_wholesale=True,
-            default_purchase_unit_label='Box', default_purchase_conversion_factor=Decimal('305'),
-            default_purchase_unit_cost=Decimal('200000.00'),
         )
         self.supplier = Supplier.objects.create(
             organization=self.org, tenant=self.org, company_name='Cable Supplier', created_by=self.admin,
         )
 
-    def draft_pack(self, *, reference='PACK-1', packs='1', factor='305', pack_cost='200000'):
+    def draft_receipt(self, *, reference='PURCHASE-1', quantity='305', unit_cost='700'):
         purchase = Purchase.objects.create(
             organization=self.org, tenant=self.org, supplier=self.supplier,
             reference_number=reference, purchase_date=date.today(), created_by=self.admin,
         )
         form = PurchaseLineForm(data={
-            'product': self.product.pk, 'entry_mode': 'pack', 'pack_unit_label': 'Box',
-            'pack_quantity': packs, 'pack_conversion_factor': factor, 'pack_unit_cost': pack_cost,
-            'quantity': '', 'unit_cost': '', 'batch_reference': '', 'expiry_date': '', 'serial_numbers': '',
+            'product': self.product.pk, 'quantity': quantity, 'unit_cost': unit_cost,
+            'batch_reference': '', 'expiry_date': '', 'serial_numbers': '',
         }, organization=self.org)
         self.assertTrue(form.is_valid(), form.errors)
         line = form.save(commit=False)
@@ -90,21 +87,20 @@ class PurchasePackCostingTests(TestCase):
         line.save()
         return purchase, line
 
-    def test_pack_receipt_posts_base_units_and_preserves_authoritative_total(self):
-        purchase, line = self.draft_pack()
+    def test_same_unit_receipt_posts_fractional_precision_and_total(self):
+        purchase, line = self.draft_receipt(quantity='305.5')
         InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
         line.refresh_from_db()
         balance = InventoryBalance.objects.get(product=self.product)
-        self.assertEqual(line.quantity, Decimal('305.000000'))
-        self.assertEqual(line.unit_cost, Decimal('655.737705'))
-        self.assertEqual(line.authoritative_purchase_total, Decimal('200000.00'))
-        self.assertEqual(line.line_total, Decimal('200000.00'))
-        self.assertEqual(balance.quantity, Decimal('305.00'))
-        self.assertEqual(balance.average_cost, Decimal('655.737705'))
-        self.assertEqual(StockMovement.objects.get(purchase_line=line).quantity, Decimal('305.00'))
+        self.assertEqual(line.quantity, Decimal('305.500000'))
+        self.assertEqual(line.unit_cost, Decimal('700.000000'))
+        self.assertEqual(line.line_total, Decimal('213850.00'))
+        self.assertEqual(balance.quantity, Decimal('305.500000'))
+        self.assertEqual(balance.average_cost, Decimal('700.000000'))
+        self.assertEqual(StockMovement.objects.get(purchase_line=line).quantity, Decimal('305.500000'))
 
     def test_above_cost_sale_succeeds_and_at_or_below_cost_is_rejected(self):
-        purchase, _ = self.draft_pack()
+        purchase, _ = self.draft_receipt()
         InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
         ok = BillingService.create_document(
             organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
@@ -124,7 +120,7 @@ class PurchasePackCostingTests(TestCase):
             )
 
     def test_discount_and_higher_weighted_cost_are_enforced_without_blocking_receipt(self):
-        first, _ = self.draft_pack()
+        first, _ = self.draft_receipt()
         InventoryService.confirm_purchase(organization=self.org, purchase_id=first.pk, actor=self.admin)
         with self.assertRaises(BillingServiceError):
             BillingService.create_document(
@@ -132,35 +128,30 @@ class PurchasePackCostingTests(TestCase):
                 customer_id=self.customer.pk,
                 items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'), discount_amount=Decimal('1400'))],
             )
-        second, _ = self.draft_pack(reference='PACK-2', pack_cost='1000000')
+        second, _ = self.draft_receipt(reference='PURCHASE-2', unit_cost='3000')
         InventoryService.confirm_purchase(organization=self.org, purchase_id=second.pk, actor=self.admin)
         balance = InventoryBalance.objects.get(product=self.product)
-        self.assertEqual(balance.quantity, Decimal('610.00'))
-        self.assertEqual(balance.average_cost, Decimal('1967.213115'))
+        self.assertEqual(balance.quantity, Decimal('610.000000'))
+        self.assertEqual(balance.average_cost, Decimal('1850.000000'))
         self.assertIn('Technician', self.product.pricing_warnings)
         self.assertIn('Wholesale', self.product.pricing_warnings)
 
-    def test_direct_entry_and_snapshot_immutability_remain_backward_compatible(self):
+    def test_confirmed_purchase_line_remains_immutable_after_product_cost_changes(self):
         direct = Purchase.objects.create(
             organization=self.org, tenant=self.org, supplier=self.supplier,
             reference_number='DIRECT-1', purchase_date=date.today(), created_by=self.admin,
         )
         PurchaseLine.objects.create(purchase=direct, product=self.product, quantity=Decimal('2'), unit_cost=Decimal('700'))
         InventoryService.confirm_purchase(organization=self.org, purchase_id=direct.pk, actor=self.admin)
-        pack, line = self.draft_pack(reference='PACK-SNAPSHOT')
-        InventoryService.confirm_purchase(organization=self.org, purchase_id=pack.pk, actor=self.admin)
-        snapshot = (line.source_purchase_unit_label, line.source_purchase_quantity, line.conversion_factor,
-                    line.source_purchase_unit_cost, line.authoritative_purchase_total)
-        Product.objects.filter(pk=self.product.pk).update(
-            default_purchase_unit_label='Reel', default_purchase_conversion_factor=Decimal('500'),
-            default_purchase_unit_cost=Decimal('400000'), buying_price=Decimal('800'),
-        )
+        received, line = self.draft_receipt(reference='PURCHASE-SNAPSHOT')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=received.pk, actor=self.admin)
+        snapshot = (line.quantity, line.unit_cost, line.line_total)
+        Product.objects.filter(pk=self.product.pk).update(buying_price=Decimal('800'))
         line.refresh_from_db()
-        self.assertEqual(snapshot, (line.source_purchase_unit_label, line.source_purchase_quantity, line.conversion_factor,
-                                    line.source_purchase_unit_cost, line.authoritative_purchase_total))
+        self.assertEqual(snapshot, (line.quantity, line.unit_cost, line.line_total))
 
     def test_unauthorized_error_hides_cost(self):
-        purchase, _ = self.draft_pack()
+        purchase, _ = self.draft_receipt()
         InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
         with self.assertRaises(BillingServiceError) as error:
             BillingService.create_document(
@@ -169,7 +160,7 @@ class PurchasePackCostingTests(TestCase):
                 items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
             )
         self.assertIn('minimum allowed selling price', str(error.exception))
-        self.assertNotIn('655', str(error.exception))
+        self.assertNotIn('700', str(error.exception))
 
 
 class InventoryAcceptanceTests(TestCase):
@@ -254,6 +245,29 @@ class InventoryAcceptanceTests(TestCase):
         balance = InventoryBalance.objects.get(product=self.product)
         self.assertEqual(balance.quantity, Decimal('10.00'))
         self.assertEqual(StockMovement.objects.get(product=self.product).quantity, Decimal('10.00'))
+
+    def test_quantity_views_hide_database_scale_but_preserve_fractional_meaning(self):
+        self.receive(quantity=Decimal('10.250000'))
+        self.client.login(username='inventory-admin', password='pass')
+
+        for url in (
+            reverse('inventory:dashboard'),
+            reverse('inventory:stock_list'),
+            reverse('inventory:movement_list'),
+            reverse('inventory:report', args=['stock-valuation']),
+            reverse('product-list'),
+            reverse('product-detail', args=[self.product.pk]),
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+            self.assertContains(response, '10.25')
+            self.assertNotContains(response, '10.250000')
+
+        invoice = self.invoice(quantity=Decimal('2.00'))
+        response = self.client.get(reverse('billing:document_detail', args=['invoice', invoice.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '>2</td>', html=False)
+        self.assertNotContains(response, '>2.00</td>', html=False)
 
     def test_02_full_payment_reduces_stock_from_ten_to_eight(self):
         self.receive(quantity=10)
@@ -380,6 +394,7 @@ class InventoryAcceptanceTests(TestCase):
         preview = response.context['form'].initial['reference_number']
 
         response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
             'supplier': self.supplier.pk,
             'reference_number': preview,
             'auto_generated_reference': preview,
@@ -409,6 +424,7 @@ class InventoryAcceptanceTests(TestCase):
         preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
 
         response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
             'supplier': self.supplier.pk,
             'reference_number': 'DELIVERY-INV-2048',
             'auto_generated_reference': preview,
@@ -454,6 +470,7 @@ class InventoryAcceptanceTests(TestCase):
         preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
 
         response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
             'supplier': self.supplier.pk,
             'reference_number': preview,
             'auto_generated_reference': preview,

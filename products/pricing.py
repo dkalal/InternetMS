@@ -13,7 +13,7 @@ class BelowCostError(ValueError):
 
 
 def cost_floor_for(product) -> Decimal:
-    """Return the authoritative base-unit sale cost without mutating inventory."""
+    """Return the authoritative same-sales-unit cost without mutating inventory."""
     from inventory.models import InventoryBalance, StockMovement
 
     balance = InventoryBalance.objects.unscoped().filter(

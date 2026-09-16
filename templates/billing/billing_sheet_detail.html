@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{{ sheet.reference_number }} — {{ sheet.title }}{% endblock %}
 
@@ -68,7 +68,7 @@
                 {{ item.description }}
                 {% if item.notes %}<div class="text-xs text-slate-500">{{ item.notes }}</div>{% endif %}
               </td>
-              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
+              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity|quantity_display }}</td>
               <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price|intcomma }}</td>
               <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.total_price|intcomma }}</td>
               {% if sheet.is_open %}

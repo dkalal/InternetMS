@@ -11,12 +11,14 @@ from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
+from internetservices.number_display import format_quantity
 from products.models import Product, ProductCategory
 from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
@@ -334,6 +336,92 @@ def purchase_list(request):
     })
 
 
+PURCHASE_WORKSPACE_ACTIONS = frozenset({'save_continue', 'save_review', 'confirm_receive'})
+
+
+def _purchase_product_meta(organization):
+    return {
+        str(product.pk): {
+            'serialized': product.is_serialized,
+            'expiry': product.track_expiry,
+            'sku': product.sku,
+            'base_unit': product.get_measure_unit_display(),
+        }
+        for product in Product.objects.filter(
+            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
+        ).order_by('name')
+    }
+
+
+def _purchase_workspace_summary(purchase, formset):
+    if formset.is_bound:
+        valid_lines = [
+            line_form.instance
+            for line_form in formset.forms
+            if line_form.cleaned_data
+            and not line_form.errors
+            and not line_form.cleaned_data.get('DELETE')
+            and line_form.cleaned_data.get('product')
+        ]
+    elif purchase.pk:
+        valid_lines = list(purchase.lines.select_related('product'))
+    else:
+        valid_lines = []
+    return len(valid_lines), sum((line.line_total for line in valid_lines), Decimal('0.00'))
+
+
+def _render_purchase_workspace(request, *, organization, purchase, form, formset):
+    line_count, authoritative_total = _purchase_workspace_summary(purchase, formset)
+    return render(request, 'inventory/purchase_form.html', {
+        'form': form,
+        'formset': formset,
+        'purchase': purchase,
+        'workspace_title': 'Edit Purchase' if purchase.pk else 'New Purchase',
+        'product_meta': _purchase_product_meta(organization),
+        'valid_line_count': line_count,
+        'authoritative_total': authoritative_total.quantize(Decimal('0.01')),
+        'can_confirm_purchase': has_tenant_permission(
+            request.user, organization, PermissionCode.PURCHASE_CONFIRM, membership=request.membership
+        ),
+    })
+
+
+def _save_purchase_draft(*, form, formset, organization, actor, creating):
+    with transaction.atomic():
+        purchase = form.save(commit=False)
+        purchase.organization = purchase.tenant = organization
+        if creating:
+            purchase.created_by = actor
+            if form.cleaned_data['auto_generated_reference'] == purchase.reference_number:
+                purchase.reference_number = PurchaseReferenceNumberService.next_number(
+                    organization=organization,
+                    purchase_date=purchase.purchase_date,
+                )
+        purchase.save()
+        formset.instance = purchase
+        formset.save()
+        total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
+        total = total.quantize(Decimal('0.01'))
+        Purchase.objects.filter(tenant=organization, pk=purchase.pk).update(total_cost=total)
+        purchase.total_cost = total
+        audit(
+            organization=organization,
+            actor=actor,
+            action='inventory.purchase.created' if creating else 'inventory.purchase.updated',
+            obj=purchase,
+            new_value={'reference_number': purchase.reference_number, 'total_cost': str(total)},
+        )
+    return purchase
+
+
+def _purchase_action_redirect(purchase, action):
+    if action == 'save_continue':
+        return redirect('inventory:purchase_edit', pk=purchase.pk)
+    if action == 'confirm_receive':
+        return redirect(f"{reverse('inventory:purchase_detail', kwargs={'pk': purchase.pk})}?receive=1")
+    return redirect('inventory:purchase_detail', pk=purchase.pk)
+
+
 @login_required
 def purchase_create(request):
     organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
@@ -347,49 +435,30 @@ def purchase_create(request):
         form_initial = {'auto_generated_reference': purchase.reference_number}
     form = PurchaseForm(request.POST or None, instance=purchase, organization=organization, initial=form_initial)
     formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization)
-    if request.method == 'POST' and form.is_valid() and formset.is_valid():
-        try:
-            with transaction.atomic():
-                purchase = form.save(commit=False)
-                purchase.organization = purchase.tenant = organization
-                purchase.created_by = request.user
-                if form.cleaned_data['auto_generated_reference'] == purchase.reference_number:
-                    purchase.reference_number = PurchaseReferenceNumberService.next_number(
-                        organization=organization,
-                        purchase_date=purchase.purchase_date,
-                    )
-                purchase.save()
-                formset.instance = purchase
-                formset.save()
-                # Keep the persisted draft total aligned with its authoritative
-                # lines. Confirmation repeats this calculation under a lock.
-                total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
-                Purchase.objects.filter(pk=purchase.pk).update(total_cost=total.quantize(Decimal('0.01')))
-                audit(organization=organization, actor=request.user, action='inventory.purchase.created', obj=purchase, new_value={'reference_number': purchase.reference_number})
-        except IntegrityError:
-            # The database constraint remains the final protection against a
-            # concurrent manual-reference submission.
-            form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
-        else:
-            messages.success(request, 'Purchase draft saved. Confirm it after reviewing all lines.')
-            return redirect('inventory:purchase_detail', pk=purchase.pk)
-    product_meta = {
-        str(product.pk): {
-            'serialized': product.is_serialized,
-            'expiry': product.track_expiry,
-            'sku': product.sku,
-            'base_unit': product.get_measure_unit_display(),
-            'pack_label': product.default_purchase_unit_label,
-            'conversion_factor': str(product.default_purchase_conversion_factor),
-            'pack_cost': str(product.default_purchase_unit_cost or ''),
-        }
-        for product in Product.objects.filter(
-            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
-        ).order_by('name')
-    }
-    return render(request, 'inventory/purchase_form.html', {
-        'form': form, 'formset': formset, 'title': 'Receive stock', 'product_meta': product_meta,
-    })
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+        form_valid = form.is_valid()
+        formset_valid = formset.is_valid()
+        if action not in PURCHASE_WORKSPACE_ACTIONS:
+            form.add_error(None, 'Choose a valid purchase action and try again.')
+        elif form_valid and formset_valid:
+            try:
+                purchase = _save_purchase_draft(
+                    form=form, formset=formset, organization=organization, actor=request.user, creating=True
+                )
+            except IntegrityError:
+                form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
+            else:
+                if action == 'save_continue':
+                    messages.success(request, 'Purchase draft saved. Continue editing when ready.')
+                elif action == 'confirm_receive':
+                    messages.success(request, 'Purchase draft saved. Review every line before confirming receipt.')
+                else:
+                    messages.success(request, 'Purchase draft saved for review. Stock has not changed.')
+                return _purchase_action_redirect(purchase, action)
+    return _render_purchase_workspace(
+        request, organization=organization, purchase=purchase, form=form, formset=formset
+    )
 
 
 @login_required
@@ -401,23 +470,30 @@ def purchase_edit(request, pk):
         return redirect('inventory:purchase_detail', pk=purchase.pk)
     form = PurchaseForm(request.POST or None, instance=purchase, organization=organization)
     formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization)
-    if request.method == 'POST' and form.is_valid() and formset.is_valid():
-        with transaction.atomic():
-            purchase = form.save(commit=False)
-            purchase.organization = purchase.tenant = organization
-            purchase.save()
-            formset.instance = purchase
-            formset.save()
-            total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
-            Purchase.objects.filter(pk=purchase.pk).update(total_cost=total.quantize(Decimal('0.01')))
-            audit(organization=organization, actor=request.user, action='inventory.purchase.updated', obj=purchase)
-        messages.success(request, 'Purchase draft updated.')
-        return redirect('inventory:purchase_detail', pk=purchase.pk)
-    product_meta = {str(product.pk): {'serialized': product.is_serialized, 'expiry': product.track_expiry, 'sku': product.sku,
-                                     'base_unit': product.get_measure_unit_display(), 'pack_label': product.default_purchase_unit_label,
-                                     'conversion_factor': str(product.default_purchase_conversion_factor), 'pack_cost': str(product.default_purchase_unit_cost or '')}
-                    for product in Product.objects.filter(tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True).order_by('name')}
-    return render(request, 'inventory/purchase_form.html', {'form': form, 'formset': formset, 'title': 'Edit purchase draft', 'product_meta': product_meta})
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+        form_valid = form.is_valid()
+        formset_valid = formset.is_valid()
+        if action not in PURCHASE_WORKSPACE_ACTIONS:
+            form.add_error(None, 'Choose a valid purchase action and try again.')
+        elif form_valid and formset_valid:
+            try:
+                purchase = _save_purchase_draft(
+                    form=form, formset=formset, organization=organization, actor=request.user, creating=False
+                )
+            except IntegrityError:
+                form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
+            else:
+                if action == 'save_continue':
+                    messages.success(request, 'Purchase draft updated. Continue editing when ready.')
+                elif action == 'confirm_receive':
+                    messages.success(request, 'Purchase draft updated. Review every line before confirming receipt.')
+                else:
+                    messages.success(request, 'Purchase draft updated for review. Stock has not changed.')
+                return _purchase_action_redirect(purchase, action)
+    return _render_purchase_workspace(
+        request, organization=organization, purchase=purchase, form=form, formset=formset
+    )
 
 
 @login_required
@@ -783,8 +859,8 @@ def cart_line_adjust(request, cart_pk):
             quantity = (line.quantity if line else Decimal('0.00')) + Decimal('1.00')
             if product.item_type == Product.ItemType.PHYSICAL and product.track_stock and quantity > product.available_stock:
                 if _is_pos_request(request):
-                    return _pos_response(request, cart, message=f'Only {product.available_stock} {product.measure_unit} of {product.name} are available.', level='warning', status=409)
-                messages.warning(request, f'Only {product.available_stock} {product.measure_unit} of {product.name} are available.')
+                    return _pos_response(request, cart, message=f'Only {format_quantity(product.available_stock)} {product.measure_unit} of {product.name} are available.', level='warning', status=409)
+                messages.warning(request, f'Only {format_quantity(product.available_stock)} {product.measure_unit} of {product.name} are available.')
             elif line:
                 line.quantity = quantity
                 line.unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)

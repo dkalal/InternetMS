@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load number_display %}
 {% load listing_tags %}
 
 {% block title %}Promotions{% endblock %}
@@ -91,7 +92,7 @@
                 {% if promotion.package %}<div class="text-xs text-slate-500">{{ promotion.package.name }}</div>{% endif %}
                 {% if promotion.product %}<div class="text-xs text-slate-500">{{ promotion.product.name }}</div>{% endif %}
               </td>
-              <td class="px-4 py-3 text-slate-700">Min qty {{ promotion.minimum_quantity }} &middot; Min months {{ promotion.minimum_months }}</td>
+              <td class="px-4 py-3 text-slate-700">Min qty {{ promotion.minimum_quantity|quantity_display }} &middot; Min months {{ promotion.minimum_months|quantity_display }}</td>
               <td class="px-4 py-3 text-slate-700">{{ promotion.get_reward_type_display }}: {{ promotion.reward_value }}</td>
               <td class="px-4 py-3 text-slate-700">
                 <div>{{ promotion.valid_from|date:"d M Y"|default:"No start" }}</div>

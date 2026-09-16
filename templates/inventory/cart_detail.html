@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}Point of sale{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -53,7 +53,7 @@
                     <div class="flex h-full items-center justify-center text-4xl font-bold text-brand-700/70">{{ product.name|slice:":1"|upper }}</div>
                   {% endif %}
                   <div class="absolute right-2 top-2">
-                    {% if product.item_type == "service" %}<span class="rounded-full bg-sky-50/95 px-2 py-1 text-xs font-semibold text-sky-800 shadow-sm">Service</span>{% elif product.available_stock > 0 %}<span class="rounded-full bg-emerald-50/95 px-2 py-1 text-xs font-semibold text-emerald-800 shadow-sm">{{ product.available_stock|intcomma }} in stock</span>{% else %}<span class="rounded-full bg-rose-50/95 px-2 py-1 text-xs font-semibold text-rose-800 shadow-sm">Out of stock</span>{% endif %}
+                    {% if product.item_type == "service" %}<span class="rounded-full bg-sky-50/95 px-2 py-1 text-xs font-semibold text-sky-800 shadow-sm">Service</span>{% elif product.available_stock > 0 %}<span class="rounded-full bg-emerald-50/95 px-2 py-1 text-xs font-semibold text-emerald-800 shadow-sm">{{ product.available_stock|quantity_display }} in stock</span>{% else %}<span class="rounded-full bg-rose-50/95 px-2 py-1 text-xs font-semibold text-rose-800 shadow-sm">Out of stock</span>{% endif %}
                   </div>
                 </div>
                 <div class="flex flex-1 flex-col p-4">
@@ -61,7 +61,7 @@
                   <div class="min-w-0"><h2 class="truncate font-semibold text-slate-950">{{ product.name }}</h2><p class="mt-1 truncate text-xs text-slate-500">{{ product.sku|default:"No SKU" }}</p></div>
                 </div>
                 <div class="mt-auto flex items-end justify-between gap-2 pt-4">
-                  <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity }}</p></div>
+                  <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity|quantity_display }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity|quantity_display }}</p></div>
                   {% if product.is_serialized %}
                     {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
                   {% elif product.item_type == "service" or product.available_stock > 0 %}

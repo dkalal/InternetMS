@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load number_display %}
 {% block title %}Stock movements{% endblock %}
 {% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
@@ -29,9 +30,9 @@
                 <td class="whitespace-nowrap">{{ movement.created_at|date:"d M Y, H:i" }}</td>
                 <td><div class="font-semibold text-slate-950">{{ movement.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ movement.product.sku }}</div></td>
                 <td>{{ movement.get_movement_type_display }}</td>
-                <td class="text-right font-semibold text-emerald-700">{% if movement.quantity > 0 %}+{{ movement.quantity }}{% else %}—{% endif %}</td>
-                <td class="text-right font-semibold text-rose-700">{% if movement.quantity < 0 %}{{ movement.quantity }}{% else %}—{% endif %}</td>
-                <td class="text-right font-bold">{{ movement.balance_after }}</td>
+                <td class="text-right font-semibold text-emerald-700">{% if movement.quantity > 0 %}+{{ movement.quantity|quantity_display }}{% else %}—{% endif %}</td>
+                <td class="text-right font-semibold text-rose-700">{% if movement.quantity < 0 %}{{ movement.quantity|quantity_display }}{% else %}—{% endif %}</td>
+                <td class="text-right font-bold">{{ movement.balance_after|quantity_display }}</td>
                 <td>
                   {% if movement.purchase_line_id %}<a class="font-semibold text-brand-700" href="{% url 'inventory:purchase_detail' movement.purchase_line.purchase.pk %}">{{ movement.purchase_line.purchase.reference_number }}</a>
                   {% elif movement.billing_line_id %}<a class="font-semibold text-brand-700" href="{% url 'billing:document_detail' 'invoice' movement.billing_line.document.pk %}">{{ movement.billing_line.document.number }}</a>

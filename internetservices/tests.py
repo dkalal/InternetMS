@@ -1,12 +1,16 @@
 from pathlib import Path
+from decimal import Decimal
 
 from django import forms
 from django.contrib.staticfiles import finders
+from django.template import Context, Template
+from django.template.loader import get_template
 from django.test import SimpleTestCase
 
 from users.models import Organization
 
 from .tailwind import apply_tailwind
+from .number_display import compact_decimal
 
 
 class SelectDesignSystemTests(SimpleTestCase):
@@ -84,3 +88,61 @@ class StylesheetCompatibilityTests(SimpleTestCase):
         self.assertNotIn("scrollbar-width:", self.stylesheet)
         self.assertNotIn("scrollbar-color:", self.stylesheet)
         self.assertGreaterEqual(self.stylesheet.count("overflow-y: scroll;"), 4)
+
+
+class NumberDisplayTests(SimpleTestCase):
+    def test_compact_decimal_removes_only_insignificant_zeroes_and_groups_digits(self):
+        self.assertEqual(compact_decimal(Decimal("1250.000000")), "1,250")
+        self.assertEqual(compact_decimal(Decimal("1250.500000")), "1,250.5")
+        self.assertEqual(compact_decimal(Decimal("0.000001")), "0.000001")
+        self.assertEqual(compact_decimal(Decimal("-0.000000")), "0")
+        self.assertEqual(compact_decimal(Decimal("655.737705"), max_places=2), "655.74")
+
+    def test_quantity_template_filter_is_safe_for_numbers_text_and_none(self):
+        template = Template(
+            "{% load number_display %}{{ whole|quantity_display }}|"
+            "{{ fraction|quantity_display }}|{{ label|number_display }}|{{ missing|number_display }}"
+        )
+        rendered = template.render(Context({
+            "whole": Decimal("10.000000"),
+            "fraction": Decimal("10.250000"),
+            "label": "001",
+            "missing": None,
+        }))
+        self.assertEqual(rendered, "10|10.25|001|")
+
+    def test_six_decimal_form_inputs_are_compact_but_keep_meaningful_precision(self):
+        class QuantityForm(forms.Form):
+            quantity = forms.DecimalField(max_digits=16, decimal_places=6, initial=Decimal("12.500000"))
+            exact = forms.DecimalField(max_digits=16, decimal_places=6, initial=Decimal("0.000001"))
+            amount = forms.DecimalField(max_digits=12, decimal_places=2, initial=Decimal("100.00"))
+
+        form = QuantityForm()
+        apply_tailwind(form)
+
+        self.assertIn('value="12.5"', form["quantity"].as_widget())
+        self.assertIn('value="0.000001"', form["exact"].as_widget())
+        self.assertIn('value="100.00"', form["amount"].as_widget())
+        self.assertIn('inputmode="decimal"', form["quantity"].as_widget())
+
+    def test_all_quantity_templates_compile_with_the_shared_filter(self):
+        for template_name in (
+            "inventory/dashboard.html",
+            "inventory/stock_list.html",
+            "inventory/movement_list.html",
+            "inventory/purchase_detail.html",
+            "inventory/includes/pos_cart_lines.html",
+            "inventory/invoice_serials.html",
+            "inventory/report.html",
+            "products/product_list.html",
+            "products/product_detail.html",
+            "products/product_confirm_delete.html",
+            "billing/billing_sheet_detail.html",
+            "billing/document_detail.html",
+            "billing/includes/print_items_table.html",
+            "billing/sales_document_print.html",
+            "billing/receipt_print_tra.html",
+            "billing/promotion_list.html",
+        ):
+            with self.subTest(template_name=template_name):
+                self.assertIsNotNone(get_template(template_name))

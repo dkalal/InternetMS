@@ -136,26 +136,6 @@ class InventoryService:
                 raise InventoryError(f'{product.name} is a service/non-stock item and cannot be received.')
             if line.quantity <= 0 or line.unit_cost < 0:
                 raise InventoryError('Purchase quantities must be positive and costs cannot be negative.')
-            if line.source_purchase_quantity is not None:
-                if not line.source_purchase_unit_label or line.source_purchase_quantity <= 0:
-                    raise InventoryError('Purchase-pack quantity and unit label are required.')
-                if line.conversion_factor is None or line.conversion_factor <= 0:
-                    raise InventoryError('Purchase-pack conversion factor must be greater than zero.')
-                if line.source_purchase_unit_cost is None or line.source_purchase_unit_cost < 0:
-                    raise InventoryError('Purchase-pack cost cannot be negative.')
-                base_quantity = stock_quantity(line.source_purchase_quantity * line.conversion_factor)
-                authoritative_total = money(line.source_purchase_quantity * line.source_purchase_unit_cost)
-                normalized_cost = cost(authoritative_total / base_quantity)
-                # Re-derive at the posting boundary; browser and saved draft values are never trusted.
-                if line.quantity != base_quantity or line.unit_cost != normalized_cost or line.authoritative_purchase_total != authoritative_total:
-                    PurchaseLine.objects.unscoped().filter(pk=line.pk).update(
-                        quantity=base_quantity,
-                        unit_cost=normalized_cost,
-                        authoritative_purchase_total=authoritative_total,
-                    )
-                    line.quantity = base_quantity
-                    line.unit_cost = normalized_cost
-                    line.authoritative_purchase_total = authoritative_total
             serials = [serial.strip().upper() for serial in line.parsed_serial_numbers()]
             if product.is_serialized:
                 if line.quantity != line.quantity.to_integral_value():

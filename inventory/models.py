@@ -142,6 +142,8 @@ class PurchaseLine(models.Model):
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='purchase_lines')
     quantity = models.DecimalField(max_digits=16, decimal_places=6)
     unit_cost = models.DecimalField(max_digits=16, decimal_places=6)
+    # Preservation-only legacy snapshot fields. New purchase lines use quantity
+    # and unit_cost in the product's selected sales/stock unit.
     source_purchase_unit_label = models.CharField(max_length=50, null=True, blank=True)
     source_purchase_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
     conversion_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
@@ -158,8 +160,6 @@ class PurchaseLine(models.Model):
 
     @property
     def line_total(self):
-        if self.authoritative_purchase_total is not None:
-            return self.authoritative_purchase_total
         return (self.quantity * self.unit_cost).quantize(Decimal('0.01'))
 
     def parsed_serial_numbers(self):

@@ -1,124 +1,92 @@
 {% extends 'base.html' %}
-{% block title %}Receive stock{% endblock %}
+{% load humanize %}
+{% block title %}{{ workspace_title }}{% endblock %}
 {% block content %}
 <noscript><style>[data-line-pack]{display:block!important}</style></noscript>
 {% include "inventory/includes/module_nav.html" %}
 {{ product_meta|json_script:"purchase-product-meta" }}
 
-<div class="space-y-5">
-  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-      <p class="text-sm font-semibold text-brand-700">Purchasing</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Receive stock</h1>
-      <p class="mt-1 text-sm text-slate-600">Capture a supplier delivery as a draft. Live stock changes only after a separate confirmation.</p>
+<div class="space-y-5 pb-36 sm:pb-24">
+  <header class="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div><p class="text-xs font-bold uppercase tracking-wider text-brand-700">Purchasing workspace</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ workspace_title }}</h1><p class="mt-1 text-sm text-slate-600">Build and review this supplier purchase safely. Saving a draft never changes stock.</p></div>
+      <div class="flex flex-wrap items-center gap-2 sm:justify-end">{% include "components/status_badge.html" with value=purchase.status label=purchase.get_status_display %}{% if purchase.reference_number %}<span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{{ purchase.reference_number }}</span>{% endif %}</div>
     </div>
+    <div class="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span aria-hidden="true">●</span><p><strong>Draft — stock has not changed.</strong> Stock movements are created only after the separate confirmation review.</p></div>
   </header>
 
   <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
-    {% csrf_token %}
-    {{ form.auto_generated_reference }}
+    {% csrf_token %}{{ form.auto_generated_reference }}
+    {% if form.non_field_errors %}<div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert"><p class="font-semibold">The purchase could not be saved.</p>{{ form.non_field_errors }}</div>{% endif %}
     <section class="jims-panel">
-      <div class="jims-panel-header">
-        <h2 class="font-semibold text-slate-950">Purchase details</h2>
-        <p class="mt-1 text-sm text-slate-600">A unique purchase reference is generated for you. Replace it with the supplier’s reference when that is more useful for reconciliation.</p>
-      </div>
+      <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 1</p><h2 class="mt-1 font-semibold text-slate-950">Supplier and purchase information</h2><p class="mt-1 text-sm text-slate-600">Choose an active supplier in this organization and record the delivery reference and date.</p></div>
       <div class="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
         <div class="lg:col-span-2">{% include "components/form_field.html" with field=form.supplier %}</div>
-        {% include "components/form_field.html" with field=form.reference_number %}
-        {% include "components/form_field.html" with field=form.purchase_date %}
+        {% include "components/form_field.html" with field=form.reference_number %}{% include "components/form_field.html" with field=form.purchase_date %}
         <div class="sm:col-span-2 lg:col-span-4">{% include "components/form_field.html" with field=form.notes %}</div>
       </div>
     </section>
 
     <section class="jims-panel overflow-hidden">
       <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 class="font-semibold text-slate-950">Received items</h2>
-          <p class="mt-1 text-sm text-slate-600">Add one line per product, batch, or expiry date.</p>
-        </div>
+        <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2</p><h2 class="mt-1 font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">Enter quantity and unit cost in each product's selected sales/stock unit.</p></div>
         <button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add another line</button>
       </div>
-
       {{ formset.management_form }}
-      {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ formset.non_form_errors }}</div>{% endif %}
-
+      {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><p class="font-semibold">Check the purchase items.</p>{{ formset.non_form_errors }}</div>{% endif %}
       <div class="space-y-4 p-4 sm:p-5" data-purchase-formset>
         {% for line_form in formset %}
-          <article class="rounded-xl border border-slate-200 bg-slate-50/60 p-4" data-purchase-line>
+          <article class="rounded-xl border {% if line_form.errors %}border-rose-300 bg-rose-50/30{% else %}border-slate-200 bg-slate-50/60{% endif %} p-4" data-purchase-line>
             {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <h3 class="text-sm font-semibold text-slate-900">Item {{ forloop.counter }}</h3>
-                <p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p>
-              </div>
-              <button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button>
-            </div>
+            <div class="flex items-center justify-between gap-3"><div><h3 class="text-sm font-semibold text-slate-900">Item {{ forloop.counter }}</h3><p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p></div><button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button></div>
             <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {% for field in line_form.visible_fields %}
-                {% if field.name == "DELETE" %}
-                  <div class="hidden">{{ field }}</div>
-                {% elif field.name == "product" %}
-                  <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "entry_mode" %}
-                  <div class="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-white p-3">{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "quantity" or field.name == "unit_cost" %}
-                  <div data-line-direct>{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "pack_unit_label" or field.name == "pack_quantity" or field.name == "pack_conversion_factor" or field.name == "pack_unit_cost" %}
-                  <div class="hidden" data-line-pack>{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "serial_numbers" %}
-                  <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "expiry_date" %}
-                  <div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
-                {% else %}
-                  {% include "components/form_field.html" with field=field %}
-                {% endif %}
+                {% if field.name == "DELETE" %}<div class="hidden">{{ field }}</div>
+                {% elif field.name == "product" %}<div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "quantity" or field.name == "unit_cost" %}<div>{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "serial_numbers" %}<div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
+                {% elif field.name == "expiry_date" %}<div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
+                {% else %}{% include "components/form_field.html" with field=field %}{% endif %}
               {% endfor %}
-              <div class="hidden sm:col-span-2 lg:col-span-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-950" data-line-pack-summary aria-live="polite"></div>
             </div>
           </article>
         {% endfor %}
       </div>
-
       <template id="purchase-line-template">
         <article class="rounded-xl border border-slate-200 bg-slate-50/60 p-4" data-purchase-line>
           {% for hidden in formset.empty_form.hidden_fields %}{{ hidden }}{% endfor %}
-          <div class="flex items-center justify-between gap-3">
-            <div><h3 class="text-sm font-semibold text-slate-900">New item</h3><p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p></div>
-            <button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button>
-          </div>
+          <div class="flex items-center justify-between gap-3"><div><h3 class="text-sm font-semibold text-slate-900">New item</h3><p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p></div><button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button></div>
           <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {% for field in formset.empty_form.visible_fields %}
-              {% if field.name == "DELETE" %}
-                <div class="hidden">{{ field }}</div>
-              {% elif field.name == "product" %}
-                <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "entry_mode" %}
-                <div class="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-white p-3">{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "quantity" or field.name == "unit_cost" %}
-                <div data-line-direct>{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "pack_unit_label" or field.name == "pack_quantity" or field.name == "pack_conversion_factor" or field.name == "pack_unit_cost" %}
-                <div class="hidden" data-line-pack>{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "serial_numbers" %}
-                <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "expiry_date" %}
-                <div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
-              {% else %}
-                {% include "components/form_field.html" with field=field %}
-              {% endif %}
+              {% if field.name == "DELETE" %}<div class="hidden">{{ field }}</div>
+              {% elif field.name == "product" %}<div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "quantity" or field.name == "unit_cost" %}<div>{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "serial_numbers" %}<div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
+              {% elif field.name == "expiry_date" %}<div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
+              {% else %}{% include "components/form_field.html" with field=field %}{% endif %}
             {% endfor %}
-            <div class="hidden sm:col-span-2 lg:col-span-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-950" data-line-pack-summary aria-live="polite"></div>
           </div>
         </article>
       </template>
     </section>
 
-    <div class="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm text-brand-950">
-      Saving creates a <strong>draft only</strong>. Review quantities, costs, batches, expiry dates, and serials on the next screen before confirming the stock receipt.
-    </div>
+    <section class="jims-panel" aria-labelledby="purchase-summary-heading">
+      <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 3</p><h2 id="purchase-summary-heading" class="mt-1 font-semibold text-slate-950">Purchase summary</h2></div>
+      <dl class="grid gap-px bg-slate-200 sm:grid-cols-3">
+        <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Valid lines</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ valid_line_count }}</dd></div>
+        <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Authoritative total</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ authoritative_total|intcomma }} TZS</dd></div>
+        <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Stock impact</dt><dd class="mt-1 text-sm font-bold text-amber-800">Draft — stock has not changed</dd></div>
+      </dl>
+      <p class="border-t border-slate-200 px-4 py-3 text-xs text-slate-600">The server recalculates totals from valid saved lines. Browser previews are informational only.</p>
+    </section>
 
-    <div class="flex justify-end gap-2">
-      <a href="{% url 'inventory:purchase_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
-      <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving draft…">Save purchase draft</button>
+    <div class="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur" aria-label="Purchase actions">
+      <div class="mx-auto flex max-w-7xl flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <a href="{% if purchase.pk %}{% url 'inventory:purchase_detail' purchase.pk %}{% else %}{% url 'inventory:purchase_list' %}{% endif %}" class="jims-btn jims-btn-quiet text-center">Cancel</a>
+        <button type="submit" name="action" value="save_continue" class="jims-btn jims-btn-secondary" data-loading-label="Saving…">Save Draft &amp; Continue</button>
+        <button type="submit" name="action" value="save_review" class="jims-btn jims-btn-secondary" data-loading-label="Saving…">Save &amp; Review</button>
+        {% if can_confirm_purchase %}<button type="submit" name="action" value="confirm_receive" class="jims-btn jims-btn-primary" data-loading-label="Preparing review…">Confirm &amp; Receive</button>{% endif %}
+      </div>
     </div>
   </form>
 </div>

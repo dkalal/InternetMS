@@ -172,16 +172,6 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
-    ENTRY_DIRECT = 'direct'
-    ENTRY_PACK = 'pack'
-    entry_mode = forms.ChoiceField(
-        choices=((ENTRY_DIRECT, 'Direct base-unit entry'), (ENTRY_PACK, 'Purchase-pack assisted entry')),
-        widget=forms.RadioSelect, initial=ENTRY_DIRECT, required=False,
-    )
-    pack_quantity = forms.DecimalField(max_digits=16, decimal_places=6, min_value=Decimal('0.000001'), required=False)
-    pack_conversion_factor = forms.DecimalField(max_digits=16, decimal_places=6, min_value=Decimal('0.000001'), required=False)
-    pack_unit_cost = forms.DecimalField(max_digits=16, decimal_places=2, min_value=Decimal('0.00'), required=False)
-    pack_unit_label = forms.CharField(max_length=50, required=False)
     product = PurchaseProductChoiceField(
         queryset=Product.objects.none(),
         empty_label='Select a product',
@@ -189,8 +179,7 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
 
     class Meta:
         model = PurchaseLine
-        fields = ['product', 'entry_mode', 'quantity', 'unit_cost', 'pack_unit_label', 'pack_quantity',
-                  'pack_conversion_factor', 'pack_unit_cost', 'batch_reference', 'expiry_date', 'serial_numbers']
+        fields = ['product', 'quantity', 'unit_cost', 'batch_reference', 'expiry_date', 'serial_numbers']
         widgets = {
             'quantity': forms.NumberInput(attrs={'min': '0.01', 'step': '0.01'}),
             'unit_cost': forms.NumberInput(attrs={'min': '0', 'step': '0.000001'}),
@@ -210,59 +199,16 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
             'data-search-placeholder': 'Search products by name or SKU...',
             'data-empty-label': 'Select a product',
         })
-        self.fields['quantity'].label = 'Quantity received (base unit)'
-        self.fields['unit_cost'].label = 'Cost per base unit'
-        self.fields['pack_quantity'].label = 'Number of purchase packs'
-        self.fields['pack_conversion_factor'].label = 'Base units per pack'
-        self.fields['pack_unit_cost'].label = 'Cost per purchase pack'
-        self.fields['pack_unit_label'].label = 'Purchase unit'
-        if self.instance.pk and self.instance.source_purchase_quantity is not None:
-            self.initial.update({
-                'entry_mode': self.ENTRY_PACK,
-                'pack_quantity': self.instance.source_purchase_quantity,
-                'pack_conversion_factor': self.instance.conversion_factor,
-                'pack_unit_cost': self.instance.source_purchase_unit_cost,
-                'pack_unit_label': self.instance.source_purchase_unit_label,
-            })
+        self.fields['quantity'].label = 'Quantity received'
+        self.fields['unit_cost'].label = 'Unit cost'
 
     def clean(self):
         cleaned = super().clean()
         product = cleaned.get('product')
-        mode = cleaned.get('entry_mode') or self.ENTRY_DIRECT
-        if mode == self.ENTRY_PACK:
-            pack_quantity = cleaned.get('pack_quantity')
-            factor = cleaned.get('pack_conversion_factor')
-            pack_cost = cleaned.get('pack_unit_cost')
-            pack_label = (cleaned.get('pack_unit_label') or '').strip()
-            if not pack_label:
-                self.add_error('pack_unit_label', 'Enter the purchase unit, for example Box.')
-            if pack_quantity is None or factor is None or pack_cost is None:
-                self.add_error('entry_mode', 'Complete the purchase-pack quantity, conversion, and cost.')
-            elif pack_quantity <= 0 or factor <= 0 or pack_cost < 0:
-                self.add_error('entry_mode', 'Pack quantity and conversion must be positive; cost cannot be negative.')
-            else:
-                base_quantity = (pack_quantity * factor).quantize(Decimal('0.000001'))
-                total = (pack_quantity * pack_cost).quantize(Decimal('0.01'))
-                normalized = (total / base_quantity).quantize(Decimal('0.000001'))
-                cleaned['quantity'] = base_quantity
-                cleaned['unit_cost'] = normalized
-                self.instance.quantity = base_quantity
-                self.instance.unit_cost = normalized
-                self.instance.source_purchase_unit_label = pack_label
-                self.instance.source_purchase_quantity = pack_quantity
-                self.instance.conversion_factor = factor
-                self.instance.source_purchase_unit_cost = pack_cost
-                self.instance.authoritative_purchase_total = total
-        else:
-            if cleaned.get('quantity') is None:
-                self.add_error('quantity', 'Enter the base-unit quantity received.')
-            if cleaned.get('unit_cost') is None:
-                self.add_error('unit_cost', 'Enter the cost per base unit.')
-            self.instance.source_purchase_unit_label = None
-            self.instance.source_purchase_quantity = None
-            self.instance.conversion_factor = None
-            self.instance.source_purchase_unit_cost = None
-            self.instance.authoritative_purchase_total = None
+        if cleaned.get('quantity') is None:
+            self.add_error('quantity', 'Enter the quantity received in the product sales unit.')
+        if cleaned.get('unit_cost') is None:
+            self.add_error('unit_cost', 'Enter the cost per product sales unit.')
         quantity = cleaned.get('quantity') or Decimal('0.00')
         serials = [
             value.strip()

@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize listing_tags %}
+{% load humanize listing_tags number_display %}
 {% block title %}Product and service catalog{% endblock %}
 {% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
@@ -135,7 +135,7 @@
                   {% if product.item_type == "service" %}<span class="font-medium text-sky-800">Service</span>{% else %}Product{% if product.is_serialized %}<div class="text-xs text-slate-500">Serialized</div>{% endif %}{% endif %}
                 </td>
                 <td>
-                  {% if product.item_type == "service" %}<span class="text-slate-500">Not tracked</span>{% else %}<span class="font-semibold text-slate-950">{{ product.available_stock|intcomma }}</span> {{ product.measure_unit }}{% endif %}
+                  {% if product.item_type == "service" %}<span class="text-slate-500">Not tracked</span>{% else %}<span class="font-semibold text-slate-950">{{ product.available_stock|quantity_display }}</span> {{ product.measure_unit }}{% endif %}
                 </td>
                 <td>
                   {% if product.item_type == "service" %}
@@ -194,7 +194,7 @@
                 {% else %}
                   {% include "components/status_badge.html" with value="available" label="Available" %}
                 {% endif %}
-                {% if product.item_type == "physical" %}<span class="ml-2 font-semibold">{{ product.available_stock|intcomma }} {{ product.measure_unit }}</span>{% endif %}
+                {% if product.item_type == "physical" %}<span class="ml-2 font-semibold">{{ product.available_stock|quantity_display }} {{ product.measure_unit }}</span>{% endif %}
               </div>
             </div>
           </article>

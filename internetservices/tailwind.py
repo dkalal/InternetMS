@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from django import forms
 
+from .number_display import compact_decimal
+
 
 INPUT_CLASSES = (
     "block min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm "
@@ -30,6 +32,14 @@ CHECKBOX_CHOICE_CLASSES = "jims-choice-input"
 RADIO_CHOICE_CLASSES = "jims-radio-input"
 
 
+class CompactDecimalInput(forms.NumberInput):
+    """Keep DecimalField precision but omit insignificant zeroes in forms."""
+
+    def format_value(self, value):
+        rendered = super().format_value(value)
+        return compact_decimal(rendered, grouping=False)
+
+
 def _merge_class(existing: str | None, added: str) -> str:
     if not existing:
         return added
@@ -46,6 +56,17 @@ def apply_tailwind(form: forms.BaseForm) -> None:
 
     for bound_name, field in form.fields.items():
         widget = field.widget
+
+        if (
+            isinstance(field, forms.DecimalField)
+            and (field.decimal_places or 0) > 2
+            and isinstance(widget, forms.NumberInput)
+            and not isinstance(widget, CompactDecimalInput)
+        ):
+            compact_widget = CompactDecimalInput(attrs=widget.attrs.copy())
+            compact_widget.is_required = widget.is_required
+            compact_widget.is_localized = widget.is_localized
+            field.widget = widget = compact_widget
 
         # Choice groups are container widgets whose attrs are also copied to
         # every generated input. They must never inherit full-width text-input
@@ -79,6 +100,8 @@ def apply_tailwind(form: forms.BaseForm) -> None:
             continue
 
         if isinstance(widget, (forms.DateInput, forms.DateTimeInput, forms.EmailInput, forms.NumberInput, forms.TextInput, forms.URLInput, forms.PasswordInput)):
+            if isinstance(field, forms.DecimalField):
+                widget.attrs.setdefault("inputmode", "decimal")
             widget.attrs["class"] = _merge_class(widget.attrs.get("class"), INPUT_CLASSES)
             continue
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{{ document }}{% endblock %}
 
@@ -259,7 +259,7 @@
                   {% endif %}
                 </td>
                 {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-sm font-medium text-slate-700">{{ item.unit_snapshot }}</td>{% endif %}
-                <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity }}</td>
+                <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity|quantity_display }}</td>
                 <td class="px-4 py-3 text-right text-sm text-slate-700{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.unit_price|floatformat:2|intcomma }}{% else %}{{ item.unit_price }}{% endif %}</td>
                 {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-right text-sm text-slate-700 whitespace-nowrap">{% if item.discount_amount %}{{ document.currency }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
                 <td class="px-4 py-3 text-right text-sm font-medium text-slate-900{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.line_total|floatformat:2|intcomma }}{% else %}{{ item.line_total }}{% endif %}</td>

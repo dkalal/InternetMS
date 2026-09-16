@@ -1,5 +1,5 @@
 {% extends "billing/base_print_tra.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block print_title %}RECEIPT {{ document.number }}{% endblock %}
 
@@ -43,7 +43,7 @@
       {% for item in items %}
         <tr>
           <td class="desc">{% if item.description %}{{ item.description }}{% elif item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}Item {{ forloop.counter }}{% endif %}</td>
-          <td class="qty">{{ item.quantity|floatformat:-2 }}{% if item.unit_snapshot %} {{ item.unit_snapshot }}{% endif %}</td>
+          <td class="qty">{{ item.quantity|quantity_display }}{% if item.unit_snapshot %} {{ item.unit_snapshot }}{% endif %}</td>
           <td class="amt">{{ item.line_total|floatformat:2|intcomma }}</td>
         </tr>
       {% empty %}

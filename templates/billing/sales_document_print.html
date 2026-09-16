@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize number_display %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -143,7 +143,7 @@
           {% if item.description and item.product or item.description and item.package %}<div class="item-secondary">{{ item.description }}</div>{% endif %}
         </td>
         <td class="unit">{{ item.unit_snapshot }}</td>
-        <td class="quantity right">{{ item.quantity|floatformat:"-2" }}</td>
+        <td class="quantity right">{{ item.quantity|quantity_display }}</td>
         <td class="price right money">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
         {% if show_discount_column %}<td class="discount right money">{% if item.discount_amount %}{{ document.currency|upper }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
         {% if show_tax_column %}<td class="tax right">{% if item.product and not item.product.tax_eligible %}Exempt{% else %}{{ document.tax_rate|floatformat:"-2" }}%{% endif %}</td>{% endif %}

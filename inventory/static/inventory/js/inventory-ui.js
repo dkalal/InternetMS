@@ -12,6 +12,8 @@
   }
 
   ready(function () {
+    var quantityFormatter = new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 6 });
+    var tzsDisplayFormatter = new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 2 });
     var productForm = document.querySelector("[data-product-form]");
     if (productForm) {
       var itemType = document.getElementById("id_item_type");
@@ -20,14 +22,12 @@
       var buying = document.getElementById("id_buying_price");
       var selling = document.getElementById("id_selling_price");
       var technician = document.getElementById("id_technician_price");
-      var packFactor = document.getElementById("id_default_purchase_conversion_factor");
-      var packCost = document.getElementById("id_default_purchase_unit_cost");
       var wholesaleToggle = document.getElementById("id_allow_wholesale");
       var wholesalePanel = document.querySelector("[data-wholesale-panel]");
 
       function money(value) {
         if (value === null || !isFinite(value)) return "—";
-        return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value) + " TZS";
+        return tzsDisplayFormatter.format(value) + " TZS";
       }
 
       function optionalNumber(input) {
@@ -58,11 +58,7 @@
       }
 
       function syncPricing() {
-        var costMode = productForm.querySelector("input[name='acquisition_cost_mode']:checked");
-        var factor = optionalNumber(packFactor);
-        var enteredPackCost = optionalNumber(packCost);
-        var buy = costMode && costMode.value === "pack" && factor > 0 && enteredPackCost !== null
-          ? enteredPackCost / factor : optionalNumber(buying);
+        var buy = optionalNumber(buying);
         var sell = optionalNumber(selling);
         var effective = sell;
         var technicianValue = optionalNumber(technician);
@@ -76,16 +72,6 @@
         if (marginRate) marginRate.textContent = profit !== null && effective ? ((profit / effective) * 100).toFixed(2) + "%" : "—";
         if (standardSelling) standardSelling.textContent = money(effective);
         if (effectiveTechnicianNode) effectiveTechnicianNode.textContent = money(effectiveTechnician);
-        var normalized = document.querySelector("[data-pack-normalized]");
-        if (normalized) normalized.textContent = buy === null ? "—" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(buy) + " TZS";
-      }
-
-      function syncCostMode() {
-        var selected = productForm.querySelector("input[name='acquisition_cost_mode']:checked");
-        var isPack = selected && selected.value === "pack";
-        document.querySelectorAll("[data-cost-direct]").forEach(function (node) { node.classList.toggle("hidden", isPack); });
-        document.querySelectorAll("[data-cost-pack]").forEach(function (node) { node.classList.toggle("hidden", !isPack); });
-        syncPricing();
       }
 
       function syncWholesale() {
@@ -95,15 +81,12 @@
       [itemType, trackStock, serialized].forEach(function (input) {
         if (input) input.addEventListener("change", syncProductFields);
       });
-      [buying, selling, technician, packFactor, packCost].forEach(function (input) {
+      [buying, selling, technician].forEach(function (input) {
         if (input) input.addEventListener("input", syncPricing);
-      });
-      productForm.querySelectorAll("input[name='acquisition_cost_mode']").forEach(function (input) {
-        input.addEventListener("change", syncCostMode);
       });
       if (wholesaleToggle) wholesaleToggle.addEventListener("change", syncWholesale);
       syncProductFields();
-      syncCostMode();
+      syncPricing();
       syncWholesale();
     }
 
@@ -164,31 +147,6 @@
       function syncLine(line) {
         var product = line.querySelector("select[name$='-product']");
         var meta = product ? productMeta[product.value] : null;
-        var selectedMode = line.querySelector("input[name$='-entry_mode']:checked");
-        var packMode = selectedMode && selectedMode.value === "pack";
-        line.querySelectorAll("[data-line-direct]").forEach(function (field) { field.classList.toggle("hidden", packMode); });
-        line.querySelectorAll("[data-line-pack]").forEach(function (field) { field.classList.toggle("hidden", !packMode); });
-        var packQuantity = line.querySelector("input[name$='-pack_quantity']");
-        var factor = line.querySelector("input[name$='-pack_conversion_factor']");
-        var packCost = line.querySelector("input[name$='-pack_unit_cost']");
-        var packLabel = line.querySelector("input[name$='-pack_unit_label']");
-        var summary = line.querySelector("[data-line-pack-summary]");
-        if (packMode && meta) {
-          if (packLabel && !packLabel.value) packLabel.value = meta.pack_label || "";
-          if (factor && !factor.value) factor.value = meta.conversion_factor || "1";
-          if (packCost && !packCost.value) packCost.value = meta.pack_cost || "";
-        }
-        if (summary) {
-          summary.classList.toggle("hidden", !packMode);
-          var packs = number(packQuantity && packQuantity.value);
-          var units = number(factor && factor.value);
-          var costPerPack = number(packCost && packCost.value);
-          var baseQuantity = packs * units;
-          var total = packs * costPerPack;
-          var normalized = baseQuantity > 0 ? total / baseQuantity : 0;
-          summary.textContent = "Stock to receive: " + baseQuantity + " " + (meta ? meta.base_unit : "base units") +
-            " · Normalized unit cost: " + normalized.toFixed(6) + " · Purchase total: TZS " + total.toFixed(2);
-        }
         line.querySelectorAll("[data-line-serials]").forEach(function (field) {
           field.classList.toggle("hidden", !(meta && meta.serialized));
         });
@@ -206,10 +164,6 @@
       function bindLine(line) {
         var product = line.querySelector("select[name$='-product']");
         if (product) product.addEventListener("change", function () { syncLine(line); });
-        line.querySelectorAll("input[name$='-entry_mode'], input[name$='-pack_quantity'], input[name$='-pack_conversion_factor'], input[name$='-pack_unit_cost']").forEach(function (input) {
-          input.addEventListener("input", function () { syncLine(line); });
-          input.addEventListener("change", function () { syncLine(line); });
-        });
         var remove = line.querySelector("[data-remove-line]");
         if (remove) {
           remove.addEventListener("click", function () {
@@ -252,8 +206,8 @@
         var quantity = number(quantityInput && quantityInput.value);
         var direction = adjustment.querySelector("input[name='direction']:checked");
         var expected = current + (direction && direction.value === "decrease" ? -quantity : quantity);
-        if (currentOutput) currentOutput.textContent = current.toFixed(2);
-        if (expectedOutput) expectedOutput.textContent = expected.toFixed(2);
+        if (currentOutput) currentOutput.textContent = quantityFormatter.format(current);
+        if (expectedOutput) expectedOutput.textContent = quantityFormatter.format(expected);
         if (warning) warning.classList.toggle("hidden", expected >= 0);
       }
 
@@ -343,7 +297,7 @@
           var priceLabel = card.querySelector("[data-pos-card-price-label]");
           if (quantity) {
             quantity.classList.toggle("hidden", !line);
-            quantity.textContent = line ? "In cart: " + line.quantity : "";
+            quantity.textContent = line ? "In cart: " + quantityFormatter.format(number(line.quantity)) : "";
           }
           if (price && line) price.textContent = formatter.format(number(line.unit_price));
           if (priceLabel && line) {

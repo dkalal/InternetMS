@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}Purchase {{ purchase.reference_number }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -22,7 +22,7 @@
         <span class="hidden h-7 w-px bg-slate-200 sm:block" aria-hidden="true"></span>
       <form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-confirm="Confirming this purchase creates permanent stock-in movements for every line. It cannot be edited afterward." data-confirm-title="Confirm stock receipt?" data-confirm-action="Confirm receipt" data-submit-lock>
         {% csrf_token %}
-        <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Confirming…">Confirm stock receipt</button>
+        <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive</button>
       </form>
       </div>
     {% endif %}
@@ -36,6 +36,14 @@
     <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800"><strong>Cancelled draft.</strong> This purchase was closed before receipt; no stock movements were created.</div>
   {% endif %}
 
+  {% if purchase.status == "draft" and request.GET.receive == "1" %}
+    <section class="rounded-xl border-2 border-brand-300 bg-brand-50 p-4 sm:p-5" aria-labelledby="receive-review-heading">
+      <h2 id="receive-review-heading" class="font-bold text-brand-950">Final confirmation required</h2>
+      <p class="mt-1 text-sm text-brand-900">Review {{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}, supplier {{ purchase.supplier.company_name }}, reference {{ purchase.reference_number }}{% if INVENTORY_CAN_VIEW_COSTS %}, and the authoritative total of {{ line_items_total|intcomma }} TZS{% endif %}. Confirming creates immutable stock movements and updates live stock.</p>
+      {% if INVENTORY_CAN_MANAGE_PURCHASES %}<div class="mt-4 flex flex-col gap-2 sm:flex-row"><a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Back to editing</a><form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-submit-lock>{% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive Stock</button></form></div>{% endif %}
+    </section>
+  {% endif %}
+
   <section class="jims-panel overflow-hidden">
     <div class="jims-panel-header flex items-center justify-between"><div><h2 class="font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">{{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}</p></div>{% if INVENTORY_CAN_VIEW_COSTS %}<div class="text-right"><div class="text-xs text-slate-500">Total cost</div><div class="font-bold text-slate-950">{{ line_items_total|intcomma }} TZS</div></div>{% endif %}</div>
     <div class="jims-table-wrap">
@@ -45,8 +53,8 @@
           {% for line in purchase_lines %}
             <tr>
               <td><div class="font-semibold text-slate-950">{{ line.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ line.product.sku }}{% if line.product.is_serialized %} · Serialized{% endif %}</div></td>
-              <td class="text-right"><div>{{ line.quantity }} {{ line.product.get_measure_unit_display }}</div>{% if line.source_purchase_quantity %}<div class="mt-1 text-xs text-slate-500">{{ line.source_purchase_quantity }} {{ line.source_purchase_unit_label }} × {{ line.conversion_factor }}</div>{% endif %}</td>
-              {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right"><div>{{ line.unit_cost|intcomma }} / {{ line.product.get_measure_unit_display }}</div>{% if line.source_purchase_unit_cost != None %}<div class="mt-1 text-xs text-slate-500">{{ line.source_purchase_unit_cost|intcomma }} / {{ line.source_purchase_unit_label }}</div>{% endif %}</td><td class="text-right font-semibold">{{ line.line_total|intcomma }}</td>{% endif %}
+              <td class="text-right">{{ line.quantity|quantity_display }} {{ line.product.get_measure_unit_display }}</td>
+              {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ line.unit_cost|floatformat:"-2g" }} / {{ line.product.get_measure_unit_display }}</td><td class="text-right font-semibold">{{ line.line_total|floatformat:"-2g" }}</td>{% endif %}
               <td>{{ line.batch_reference|default:"—" }}</td>
               <td>{{ line.expiry_date|date:"d M Y"|default:"—" }}</td>
               <td class="max-w-xs whitespace-pre-line text-xs">{{ line.serial_numbers|default:"—" }}</td>

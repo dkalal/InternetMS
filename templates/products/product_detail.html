@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{{ product.name }}{% endblock %}
 
@@ -77,7 +77,7 @@
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">{% if product.item_type == "service" %}Stock tracking{% else %}Available stock{% endif %}</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{% if product.item_type == "service" %}Not applicable · billable service{% else %}{{ product.available_stock }} {{ product.measure_unit }}{% endif %}</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{% if product.item_type == "service" %}Not applicable · billable service{% else %}{{ product.available_stock|quantity_display }} {{ product.measure_unit }}{% endif %}</dd>
                 </div>
                 {% if INVENTORY_CAN_VIEW_COSTS %}
                 <div>
@@ -97,7 +97,7 @@
                     <dt class="text-xs text-slate-500">Wholesale price</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">
                         {% if product.allow_wholesale and product.wholesale_price %}
-                            {{ product.wholesale_price|intcomma }} TZS from {{ product.wholesale_min_quantity }} {{ product.measure_unit }}
+                            {{ product.wholesale_price|intcomma }} TZS from {{ product.wholesale_min_quantity|quantity_display }} {{ product.measure_unit }}
                         {% else %}
                             Not enabled
                         {% endif %}

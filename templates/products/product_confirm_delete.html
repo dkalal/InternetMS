@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Delete {{ object.name }}{% endblock %}
 
@@ -37,7 +37,7 @@
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Quantity</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.quantity }} {{ object.measure_unit }}</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ object.quantity|quantity_display }} {{ object.measure_unit }}</dd>
                 </div>
             </dl>
         </div>

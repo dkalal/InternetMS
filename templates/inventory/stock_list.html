@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}Stock workspace{% endblock %}
 {% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
@@ -27,9 +27,9 @@
               <tr>
                 <td><a class="font-semibold text-slate-950 hover:text-brand-700" href="{% url 'product-detail' balance.product.pk %}">{{ balance.product.name }}</a><div class="mt-1 text-xs text-slate-500">{{ balance.product.sku }}{% if balance.product.is_serialized %} · Serialized{% endif %}</div></td>
                 <td>{{ balance.product.catalog_category|default:balance.product.get_category_display }}</td>
-                <td class="text-right text-base font-bold text-slate-950">{{ balance.quantity|intcomma }} <span class="text-xs font-normal text-slate-500">{{ balance.product.measure_unit }}</span></td>
+                <td class="text-right text-base font-bold text-slate-950">{{ balance.quantity|quantity_display }} <span class="text-xs font-normal text-slate-500">{{ balance.product.measure_unit }}</span></td>
                 <td>{% if balance.quantity <= 0 %}{% include "components/status_badge.html" with value="out" label="Out of stock" %}{% elif balance.quantity <= balance.product.reorder_threshold %}{% include "components/status_badge.html" with value="low" label="Low stock" %}{% else %}{% include "components/status_badge.html" with value="available" label="Available" %}{% endif %}</td>
-                <td class="text-right">{{ balance.product.reorder_threshold }}</td>
+                <td class="text-right">{{ balance.product.reorder_threshold|quantity_display }}</td>
                 <td class="whitespace-nowrap text-slate-600">{{ balance.last_movement_at|date:"d M Y, H:i"|default:"No movement" }}</td>
                 {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ balance.average_cost|intcomma }}</td><td class="text-right font-semibold">{{ balance.total_value|intcomma }}</td>{% endif %}
                 <td class="text-right"><div class="jims-menu"><button type="button" class="jims-btn jims-btn-quiet px-2" data-menu-button aria-controls="stock-actions-{{ balance.pk }}" aria-expanded="false"><span class="sr-only">Actions for {{ balance.product.name }}</span>•••</button><div id="stock-actions-{{ balance.pk }}" class="jims-menu-panel" data-menu-panel hidden><a href="{% url 'inventory:movement_list' %}?product={{ balance.product.pk }}">Movement history</a><a href="{% url 'product-detail' balance.product.pk %}">Product details</a>{% if INVENTORY_CAN_MANAGE_STOCK %}<a href="{% url 'inventory:stock_adjust' %}?product={{ balance.product.pk }}">Adjust stock</a>{% endif %}</div></div></td>
@@ -42,7 +42,7 @@
         {% for balance in balances %}
           <article class="rounded-xl border border-slate-200 bg-white p-4">
             <div class="flex items-start justify-between gap-3"><div><a href="{% url 'product-detail' balance.product.pk %}" class="font-semibold text-slate-950">{{ balance.product.name }}</a><div class="mt-1 text-xs text-slate-500">{{ balance.product.sku }}{% if balance.product.is_serialized %} · Serialized{% endif %}</div></div>{% if balance.quantity <= 0 %}{% include "components/status_badge.html" with value="out" label="Out" %}{% elif balance.quantity <= balance.product.reorder_threshold %}{% include "components/status_badge.html" with value="low" label="Low" %}{% else %}{% include "components/status_badge.html" with value="available" label="Available" %}{% endif %}</div>
-            <div class="mt-4 flex items-end justify-between border-t border-slate-100 pt-3"><div><div class="text-xs text-slate-500">Available</div><div class="mt-1 text-xl font-bold">{{ balance.quantity|intcomma }} <span class="text-xs font-normal">{{ balance.product.measure_unit }}</span></div></div><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:movement_list' %}?product={{ balance.product.pk }}">History</a></div>
+            <div class="mt-4 flex items-end justify-between border-t border-slate-100 pt-3"><div><div class="text-xs text-slate-500">Available</div><div class="mt-1 text-xl font-bold">{{ balance.quantity|quantity_display }} <span class="text-xs font-normal">{{ balance.product.measure_unit }}</span></div></div><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:movement_list' %}?product={{ balance.product.pk }}">History</a></div>
           </article>
         {% endfor %}
       </div>

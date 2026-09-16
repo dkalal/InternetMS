@@ -264,6 +264,8 @@ class Product(models.Model):
         max_digits=16, decimal_places=6,
         help_text='Normalized acquisition cost per base stock/sales unit.',
     )
+    # Preservation-only legacy fields. The package conversion workflow is disabled;
+    # retain these columns until non-default production data is explicitly archived.
     default_purchase_unit_label = models.CharField(max_length=50, blank=True, default='')
     default_purchase_conversion_factor = models.DecimalField(
         max_digits=16, decimal_places=6, default=Decimal('1.000000'),
@@ -458,10 +460,6 @@ class Product(models.Model):
             )
         if self.sales_unit_id:
             self.measure_unit = self.sales_unit.label
-        if self.default_purchase_unit_cost is None:
-            self.default_purchase_unit_label = self.get_measure_unit_display()
-            self.default_purchase_conversion_factor = Decimal('1.000000')
-            self.default_purchase_unit_cost = self.buying_price
         self.sku = (self.sku or '').strip().upper()
         if self.item_type == self.ItemType.SERVICE:
             self.track_stock = False
@@ -485,16 +483,6 @@ class Product(models.Model):
                 raise ValidationError({'sales_unit': 'Select a unit allowed by the product category.'})
         if self.buying_price is not None and self.buying_price < 0:
             raise ValidationError({'buying_price': 'Buying price cannot be negative.'})
-        if self.default_purchase_conversion_factor is None or self.default_purchase_conversion_factor <= 0:
-            raise ValidationError({'default_purchase_conversion_factor': 'Units in a purchase pack must be greater than zero.'})
-        if self.default_purchase_unit_cost is not None and self.default_purchase_unit_cost < 0:
-            raise ValidationError({'default_purchase_unit_cost': 'Purchase pack cost cannot be negative.'})
-        if self.default_purchase_unit_cost is not None and self.default_purchase_conversion_factor:
-            normalized = (self.default_purchase_unit_cost / self.default_purchase_conversion_factor).quantize(
-                Decimal('0.000001')
-            )
-            if self.buying_price is not None and normalized != self.buying_price.quantize(Decimal('0.000001')):
-                raise ValidationError({'buying_price': 'Normalized buying cost must match the purchase-pack configuration.'})
         if self.selling_price is not None and self.selling_price < 0:
             raise ValidationError({'selling_price': 'Selling price cannot be negative.'})
         if self.selling_price is not None and self.buying_price is not None and self.selling_price <= self.buying_price:
