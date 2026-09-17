@@ -449,7 +449,7 @@ class InventoryAcceptanceTests(TestCase):
             f'PUR-{date.today():%Y}-00001',
         )
 
-    def test_purchase_product_combobox_is_premium_searchable_and_tenant_scoped(self):
+    def test_purchase_product_combobox_uses_remote_search_without_catalog_preload(self):
         other_product = self.make_product('Tenant B Secret Switch', 'SECRET-B', organization=self.other_org)
         self.client.login(username='inventory-admin', password='pass')
 
@@ -457,11 +457,13 @@ class InventoryAcceptanceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         product_field = response.context['formset'].forms[0].fields['product']
-        self.assertQuerySetEqual(product_field.queryset, [self.product])
+        self.assertQuerySetEqual(product_field.queryset, [])
         self.assertEqual(product_field.empty_label, 'Select a product')
         self.assertEqual(product_field.label_from_instance(self.product), 'Router · RTR-001')
+        self.assertNotContains(response, self.product.name)
         self.assertNotContains(response, other_product.name)
-        self.assertContains(response, 'data-search-placeholder="Search products by name or SKU..."')
+        self.assertContains(response, 'data-purchase-product-select="true"')
+        self.assertContains(response, 'data-product-search-url=')
         self.assertContains(response, '>Select a product</option>', html=False)
 
     def test_purchase_create_rejects_a_product_from_another_tenant(self):

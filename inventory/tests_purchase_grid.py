@@ -100,6 +100,7 @@ class CompactPurchaseGridTests(TestCase):
     def test_unbound_form_does_not_load_the_tenant_catalog(self):
         form = PurchaseLineForm(organization=self.organization)
         self.assertFalse(form.fields['product'].queryset.exists())
+        self.assertNotIn('data-searchable-select', form.fields['product'].widget.attrs)
 
     def test_submitted_tenant_product_is_loaded_and_validated(self):
         form = PurchaseLineForm(

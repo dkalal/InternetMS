@@ -178,7 +178,7 @@
       function enhanceProductSelect(select, line) {
         if (!select || select.dataset.remoteReady === "true" || !productSearchUrl) return;
         select.dataset.remoteReady = "true";
-        select.classList.add("sr-only");
+        select.hidden = true;
         select.tabIndex = -1;
 
         var wrapper = document.createElement("div");
@@ -343,6 +343,9 @@
           remove.addEventListener("click", function () {
             var deletion = line.querySelector("input[name$='-DELETE']");
             if (deletion) deletion.checked = true;
+            line.querySelectorAll("input, select, textarea").forEach(function (field) {
+              if (field !== deletion) field.disabled = true;
+            });
             line.classList.add("hidden");
             syncDuplicateWarnings();
           });

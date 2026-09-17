@@ -204,6 +204,11 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['product'].widget.attrs.update({
             'data-purchase-product-select': 'true',
         })
+        # The purchase grid owns this select's remote combobox. Prevent the
+        # shared local-choice enhancer from creating a second search control.
+        self.fields['product'].widget.attrs.pop('data-searchable-select', None)
+        self.fields['product'].widget.attrs.pop('data-search-label', None)
+        self.fields['product'].widget.attrs.pop('data-search-placeholder', None)
         self.fields['quantity'].label = 'Quantity received'
         self.fields['unit_cost'].label = 'Unit cost'
 
