@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.http import require_GET
 
 from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
@@ -337,6 +338,54 @@ def purchase_list(request):
 
 
 PURCHASE_WORKSPACE_ACTIONS = frozenset({'save_continue', 'save_review', 'confirm_receive'})
+PURCHASE_PRODUCT_SEARCH_PAGE_SIZE = 20
+
+
+@login_required
+@require_GET
+@never_cache
+def purchase_product_search(request):
+    """Return a small tenant-scoped product page for the purchase combobox."""
+    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
+    query = request.GET.get('q', '').strip()[:100]
+    try:
+        page = min(max(int(request.GET.get('page', '1')), 1), 1000)
+    except (TypeError, ValueError):
+        page = 1
+
+    products = Product.objects.filter(
+        tenant=organization,
+        is_active=True,
+        item_type=Product.ItemType.PHYSICAL,
+        track_stock=True,
+    )
+    if query:
+        products = products.filter(
+            Q(name__icontains=query)
+            | Q(sku__icontains=query)
+            | Q(brand__icontains=query)
+            | Q(model_number__icontains=query)
+        )
+    products = products.select_related('sales_unit').order_by('name', 'sku', 'pk')
+    start = (page - 1) * PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
+    rows = list(products[start:start + PURCHASE_PRODUCT_SEARCH_PAGE_SIZE + 1])
+    more = len(rows) > PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
+
+    return JsonResponse({
+        'results': [
+            {
+                'id': product.pk,
+                'text': str(product),
+                'name': product.name,
+                'sku': product.sku,
+                'unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
+                'serialized': product.is_serialized,
+                'expiry': product.track_expiry,
+            }
+            for product in rows[:PURCHASE_PRODUCT_SEARCH_PAGE_SIZE]
+        ],
+        'pagination': {'page': page, 'more': more},
+    })
 
 
 def _purchase_product_meta(organization):

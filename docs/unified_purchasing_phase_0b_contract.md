@@ -67,3 +67,7 @@ python manage.py test --keepdb
 ```
 
 Phase 2 may introduce the compact high-volume line grid, keyboard entry, bulk selection, and server-side product search. Inline supplier/category/product creation and spreadsheet import remain later, separately approved work.
+
+### Phase 2 search contract
+
+The purchase product search endpoint is authenticated, permission-protected, tenant-scoped, read-only, paginated, and limited to active physical stock-tracked products. It may return only the metadata required by the purchase combobox; it must not expose cost or cross-tenant catalog data. The server-side form and confirmation service remain authoritative even when the browser uses search results to populate a row.
