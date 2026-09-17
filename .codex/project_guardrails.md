@@ -1,4 +1,4 @@
-🛑 INTERNET CUSTOMER MANAGEMENT SYSTEM
+🛑 JS BUSINESS MANAGEMENT SYSTEM
 GUARDRAILS v1.0
 
 If any rule is violated, implementation is invalid.
