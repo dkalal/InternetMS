@@ -149,7 +149,48 @@ class CompactPurchaseGridTests(TestCase):
 
         self.assertContains(response, 'data-product-search-url=')
         self.assertContains(response, 'data-purchase-product-select=')
+        self.assertContains(response, 'data-open-bulk-products')
+        self.assertContains(response, 'data-bulk-product-dialog')
         self.assertContains(response, 'GRID-RTR-A')
         self.assertNotContains(response, 'GRID-RTR-B')
         self.assertNotContains(response, 'PRIVATE-GRID-RTR')
 
+    def test_high_volume_workspace_saves_many_remote_selected_products_as_one_draft(self):
+        products = [self.product, self.unselected_product]
+        for number in range(3, 26):
+            products.append(self.make_product(
+                self.organization,
+                self.category,
+                self.unit,
+                f'Bulk Product {number:02d}',
+                f'GRID-BULK-{number:02d}',
+            ))
+        payload = {
+            'action': 'save_review',
+            'supplier': self.supplier.pk,
+            'reference_number': 'GRID-BULK-001',
+            'auto_generated_reference': '',
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': str(len(products)),
+            'lines-INITIAL_FORMS': '0',
+            'lines-MIN_NUM_FORMS': '0',
+            'lines-MAX_NUM_FORMS': '1000',
+        }
+        for index, product in enumerate(products):
+            payload.update({
+                f'lines-{index}-product': product.pk,
+                f'lines-{index}-quantity': '2',
+                f'lines-{index}-unit_cost': '100',
+                f'lines-{index}-batch_reference': '',
+                f'lines-{index}-expiry_date': '',
+                f'lines-{index}-serial_numbers': '',
+            })
+
+        response = self.client.post(reverse('inventory:purchase_create'), payload)
+
+        purchase = Purchase.objects.get(reference_number='GRID-BULK-001')
+        self.assertRedirects(response, reverse('inventory:purchase_detail', args=[purchase.pk]))
+        self.assertEqual(purchase.lines.count(), 25)
+        self.assertEqual(purchase.total_cost, Decimal('5000.00'))
+        self.assertEqual(purchase.status, Purchase.Status.DRAFT)

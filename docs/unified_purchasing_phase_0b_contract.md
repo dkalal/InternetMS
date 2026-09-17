@@ -75,3 +75,5 @@ The purchase product search endpoint is authenticated, permission-protected, ten
 ### Phase 2 compact-grid contract
 
 The purchase workspace must not serialize or render the full tenant catalog. Each row carries only its selected/submitted product in the Django field queryset, while the remote combobox supplies discoverability. The grid may show client-side line totals and duplicate-product guidance, but persisted totals, tenant membership, product eligibility, tracking requirements, and stock posting remain server-authoritative. Separate rows for one product remain valid when batch or expiry details differ.
+
+The bulk picker reuses the same protected search endpoint and only creates ordinary formset rows. Already-active products are identified before selection, selected products are de-duplicated again while rows are appended, and every resulting identifier is still validated by the tenant-scoped Django formset on submission. Bulk selection never writes stock or bypasses the draft/review/confirm lifecycle.

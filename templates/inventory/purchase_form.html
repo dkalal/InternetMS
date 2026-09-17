@@ -30,7 +30,7 @@
     <section class="jims-panel overflow-hidden">
       <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2</p><h2 class="mt-1 font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">Enter quantity and unit cost in each product's selected sales/stock unit.</p></div>
-        <button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add another line</button>
+        <div class="flex flex-wrap gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add one row</button><button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products>Add multiple products</button></div>
       </div>
       {{ formset.management_form }}
       {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><p class="font-semibold">Check the purchase items.</p>{{ formset.non_form_errors }}</div>{% endif %}
@@ -73,6 +73,15 @@
         </article>
       </template>
     </section>
+
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-bulk-product-dialog role="dialog" aria-modal="true" aria-labelledby="bulk-product-title">
+      <div class="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-4 sm:p-5"><div><h2 id="bulk-product-title" class="text-lg font-bold text-slate-950">Add multiple products</h2><p class="mt-1 text-sm text-slate-600">Search and select products, then add them as purchase rows.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-bulk-products aria-label="Close product picker">Close</button></div>
+        <div class="border-b border-slate-200 p-4"><label for="bulk-product-search" class="sr-only">Search products</label><input id="bulk-product-search" type="search" class="block min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Search name, SKU, brand or model…" data-bulk-product-search></div>
+        <div class="min-h-52 flex-1 overflow-y-auto p-3" data-bulk-product-results><p class="p-6 text-center text-sm text-slate-500">Start typing or browse available products.</p></div>
+        <div class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><p class="text-sm font-semibold text-slate-700"><span data-bulk-selected-count>0</span> selected</p><div class="flex gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-clear-bulk-products>Clear</button><button type="button" class="jims-btn jims-btn-primary" data-add-bulk-products disabled>Add selected products</button></div></div>
+      </div>
+    </div>
 
     <section class="jims-panel" aria-labelledby="purchase-summary-heading">
       <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 3</p><h2 id="purchase-summary-heading" class="mt-1 font-semibold text-slate-950">Purchase summary</h2></div>

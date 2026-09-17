@@ -353,18 +353,165 @@
         syncLine(line);
       }
 
+      function appendLine(result) {
+        var index = parseInt(totalForms.value, 10);
+        var wrapper = document.createElement("div");
+        wrapper.innerHTML = template.innerHTML.replace(/__prefix__/g, String(index)).trim();
+        var line = wrapper.firstElementChild;
+        if (result) {
+          var select = line.querySelector("select[name$='-product']");
+          select.replaceChildren(new Option("Select a product", ""), new Option(result.text, String(result.id), true, true));
+          productMeta[String(result.id)] = {
+            sku: result.sku || "",
+            base_unit: result.unit || "Unit",
+            serialized: Boolean(result.serialized),
+            expiry: Boolean(result.expiry)
+          };
+        }
+        formset.appendChild(line);
+        totalForms.value = String(index + 1);
+        bindLine(line);
+        return line;
+      }
+
       formset.querySelectorAll("[data-purchase-line]").forEach(bindLine);
       if (addButton && totalForms && template) {
         addButton.addEventListener("click", function () {
-          var index = parseInt(totalForms.value, 10);
-          var wrapper = document.createElement("div");
-          wrapper.innerHTML = template.innerHTML.replace(/__prefix__/g, String(index)).trim();
-          var line = wrapper.firstElementChild;
-          formset.appendChild(line);
-          totalForms.value = String(index + 1);
-          bindLine(line);
-          var first = line.querySelector("select, input");
+          var line = appendLine(null);
+          var first = line.querySelector("input[type='search'], input:not([type='hidden'])");
           if (first) first.focus();
+        });
+      }
+
+      var bulkDialog = document.querySelector("[data-bulk-product-dialog]");
+      var openBulk = document.querySelector("[data-open-bulk-products]");
+      if (bulkDialog && openBulk && totalForms && template && productSearchUrl) {
+        var bulkSearch = bulkDialog.querySelector("[data-bulk-product-search]");
+        var bulkResults = bulkDialog.querySelector("[data-bulk-product-results]");
+        var bulkCount = bulkDialog.querySelector("[data-bulk-selected-count]");
+        var addBulk = bulkDialog.querySelector("[data-add-bulk-products]");
+        var clearBulk = bulkDialog.querySelector("[data-clear-bulk-products]");
+        var closeBulk = bulkDialog.querySelector("[data-close-bulk-products]");
+        var selectedBulk = new Map();
+        var bulkTimer = null;
+        var bulkController = null;
+
+        function existingProductIds() {
+          return new Set(activeLines().map(function (line) {
+            var select = line.querySelector("select[name$='-product']");
+            return select ? select.value : "";
+          }).filter(Boolean));
+        }
+
+        function syncBulkCount() {
+          bulkCount.textContent = String(selectedBulk.size);
+          addBulk.disabled = selectedBulk.size === 0;
+        }
+
+        function renderBulk(results) {
+          bulkResults.replaceChildren();
+          var existing = existingProductIds();
+          if (!results.length) {
+            var empty = document.createElement("p");
+            empty.className = "p-6 text-center text-sm text-slate-500";
+            empty.textContent = "No matching stock products.";
+            bulkResults.appendChild(empty);
+          }
+          results.forEach(function (result) {
+            var label = document.createElement("label");
+            label.className = "flex items-start gap-3 rounded-lg px-3 py-3 hover:bg-slate-50";
+            var checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.className = "mt-1 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500";
+            checkbox.checked = selectedBulk.has(String(result.id));
+            checkbox.disabled = existing.has(String(result.id));
+            var copy = document.createElement("span");
+            copy.className = "min-w-0 flex-1";
+            var name = document.createElement("span");
+            name.className = "block font-semibold text-slate-900";
+            name.textContent = result.name;
+            var detail = document.createElement("span");
+            detail.className = "block text-xs text-slate-500";
+            detail.textContent = (result.sku || "No SKU") + " · " + (result.unit || "Unit") + (checkbox.disabled ? " · Already added" : "");
+            copy.appendChild(name);
+            copy.appendChild(detail);
+            label.appendChild(checkbox);
+            label.appendChild(copy);
+            checkbox.addEventListener("change", function () {
+              if (checkbox.checked) selectedBulk.set(String(result.id), result);
+              else selectedBulk.delete(String(result.id));
+              syncBulkCount();
+            });
+            bulkResults.appendChild(label);
+          });
+        }
+
+        function searchBulk() {
+          if (bulkController) bulkController.abort();
+          bulkController = new AbortController();
+          bulkResults.innerHTML = '<p class="p-6 text-center text-sm text-slate-500">Searching products…</p>';
+          fetch(productSearchUrl + "?q=" + encodeURIComponent(bulkSearch.value.trim()), { signal: bulkController.signal })
+            .then(function (response) { if (!response.ok) throw new Error(); return response.json(); })
+            .then(function (payload) { renderBulk(payload.results || []); })
+            .catch(function (error) {
+              if (error.name !== "AbortError") bulkResults.innerHTML = '<p class="p-6 text-center text-sm text-rose-700">Products could not be loaded. Try again.</p>';
+            });
+        }
+
+        function closeBulkDialog() {
+          bulkDialog.classList.add("hidden");
+          bulkDialog.classList.remove("flex");
+          document.body.classList.remove("overflow-hidden");
+          openBulk.focus();
+        }
+
+        openBulk.addEventListener("click", function () {
+          selectedBulk.clear();
+          syncBulkCount();
+          bulkDialog.classList.remove("hidden");
+          bulkDialog.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+          bulkSearch.value = "";
+          bulkSearch.focus();
+          searchBulk();
+        });
+        closeBulk.addEventListener("click", closeBulkDialog);
+        bulkDialog.addEventListener("click", function (event) { if (event.target === bulkDialog) closeBulkDialog(); });
+        bulkDialog.addEventListener("keydown", function (event) {
+          if (event.key !== "Tab") return;
+          var focusable = Array.prototype.filter.call(
+            bulkDialog.querySelectorAll("button:not([disabled]), input:not([disabled])"),
+            function (element) { return element.offsetParent !== null; }
+          );
+          if (!focusable.length) return;
+          var first = focusable[0];
+          var last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first.focus();
+          }
+        });
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape" && !bulkDialog.classList.contains("hidden")) closeBulkDialog();
+        });
+        bulkSearch.addEventListener("input", function () {
+          window.clearTimeout(bulkTimer);
+          bulkTimer = window.setTimeout(searchBulk, 200);
+        });
+        clearBulk.addEventListener("click", function () {
+          selectedBulk.clear();
+          syncBulkCount();
+          searchBulk();
+        });
+        addBulk.addEventListener("click", function () {
+          var firstAdded = null;
+          selectedBulk.forEach(function (result) { if (!existingProductIds().has(String(result.id))) firstAdded = firstAdded || appendLine(result); });
+          closeBulkDialog();
+          if (firstAdded) {
+            var quantity = firstAdded.querySelector("input[name$='-quantity']");
+            if (quantity) quantity.focus();
+          }
         });
       }
     }
