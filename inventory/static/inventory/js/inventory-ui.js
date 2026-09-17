@@ -141,8 +141,171 @@
       var totalForms = document.getElementById("id_lines-TOTAL_FORMS");
       var template = document.getElementById("purchase-line-template");
       var addButton = document.querySelector("[data-add-purchase-line]");
+      var purchaseForm = formset.closest("form");
+      var productSearchUrl = purchaseForm ? purchaseForm.dataset.productSearchUrl : "";
       var metaNode = document.getElementById("purchase-product-meta");
       var productMeta = metaNode ? JSON.parse(metaNode.textContent) : {};
+
+      function activeLines() {
+        return Array.prototype.filter.call(formset.querySelectorAll("[data-purchase-line]"), function (line) {
+          var deletion = line.querySelector("input[name$='-DELETE']");
+          return !line.classList.contains("hidden") && !(deletion && deletion.checked);
+        });
+      }
+
+      function syncDuplicateWarnings() {
+        var counts = {};
+        activeLines().forEach(function (line) {
+          var select = line.querySelector("select[name$='-product']");
+          if (select && select.value) counts[select.value] = (counts[select.value] || 0) + 1;
+        });
+        activeLines().forEach(function (line) {
+          var select = line.querySelector("select[name$='-product']");
+          var hint = line.querySelector("[data-product-hint]");
+          if (select && select.value && counts[select.value] > 1 && hint) {
+            hint.textContent = "This product appears more than once. Keep separate rows only for different batch or expiry details.";
+            hint.classList.add("text-amber-700");
+          } else if (hint) {
+            hint.classList.remove("text-amber-700");
+            var meta = select && select.value ? productMeta[select.value] : null;
+            hint.textContent = meta
+              ? meta.sku + (meta.serialized ? " · Serial numbers required" : "") + (meta.expiry ? " · Expiry tracked" : "")
+              : "Search by name, SKU, brand or model.";
+          }
+        });
+      }
+
+      function enhanceProductSelect(select, line) {
+        if (!select || select.dataset.remoteReady === "true" || !productSearchUrl) return;
+        select.dataset.remoteReady = "true";
+        select.classList.add("sr-only");
+        select.tabIndex = -1;
+
+        var wrapper = document.createElement("div");
+        wrapper.className = "relative";
+        var input = document.createElement("input");
+        input.type = "search";
+        input.autocomplete = "off";
+        input.className = "block min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30";
+        input.placeholder = "Search name, SKU, brand or model…";
+        input.setAttribute("aria-label", "Product search");
+        input.setAttribute("role", "combobox");
+        input.setAttribute("aria-autocomplete", "list");
+        input.setAttribute("aria-expanded", "false");
+        var list = document.createElement("div");
+        list.className = "absolute z-40 mt-1 hidden max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl";
+        list.setAttribute("role", "listbox");
+        wrapper.appendChild(input);
+        wrapper.appendChild(list);
+        select.parentNode.insertBefore(wrapper, select);
+
+        var selectedOption = select.options[select.selectedIndex];
+        if (select.value && selectedOption) input.value = selectedOption.textContent.trim();
+        var timer = null;
+        var controller = null;
+
+        function closeList() {
+          list.classList.add("hidden");
+          input.setAttribute("aria-expanded", "false");
+        }
+
+        function renderResults(results) {
+          list.replaceChildren();
+          if (!results.length) {
+            var empty = document.createElement("p");
+            empty.className = "px-3 py-2 text-sm text-slate-500";
+            empty.textContent = "No matching stock products.";
+            list.appendChild(empty);
+          }
+          results.forEach(function (result) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "block w-full rounded-md px-3 py-2 text-left hover:bg-slate-100 focus:bg-slate-100 focus:outline-none";
+            button.setAttribute("role", "option");
+            var title = document.createElement("span");
+            title.className = "block text-sm font-semibold text-slate-900";
+            title.textContent = result.name;
+            var detail = document.createElement("span");
+            detail.className = "block text-xs text-slate-500";
+            detail.textContent = (result.sku || "No SKU") + " · " + (result.unit || "Unit");
+            button.appendChild(title);
+            button.appendChild(detail);
+            button.addEventListener("click", function () {
+              var option = new Option(result.text, String(result.id), true, true);
+              select.replaceChildren(new Option("Select a product", ""), option);
+              productMeta[String(result.id)] = {
+                sku: result.sku || "",
+                base_unit: result.unit || "Unit",
+                serialized: Boolean(result.serialized),
+                expiry: Boolean(result.expiry)
+              };
+              input.value = result.text;
+              closeList();
+              select.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            list.appendChild(button);
+          });
+          list.classList.remove("hidden");
+          input.setAttribute("aria-expanded", "true");
+        }
+
+        function renderMessage(message, error) {
+          list.replaceChildren();
+          var status = document.createElement("p");
+          status.className = "px-3 py-2 text-sm " + (error ? "text-rose-700" : "text-slate-500");
+          status.textContent = message;
+          list.appendChild(status);
+          list.classList.remove("hidden");
+          input.setAttribute("aria-expanded", "true");
+        }
+
+        function search() {
+          if (controller) controller.abort();
+          controller = new AbortController();
+          renderMessage("Searching products…", false);
+          var url = productSearchUrl + "?q=" + encodeURIComponent(input.value.trim());
+          fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" }, signal: controller.signal })
+            .then(function (response) {
+              if (!response.ok) throw new Error("Product search failed");
+              return response.json();
+            })
+            .then(function (payload) { renderResults(payload.results || []); })
+            .catch(function (error) {
+              if (error.name !== "AbortError") renderMessage("Products could not be loaded. Try again.", true);
+            });
+        }
+
+        input.addEventListener("focus", search);
+        input.addEventListener("input", function () {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(search, 200);
+        });
+        input.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") closeList();
+          if (event.key === "ArrowDown" && !list.classList.contains("hidden")) {
+            event.preventDefault();
+            var firstResult = list.querySelector("button[role='option']");
+            if (firstResult) firstResult.focus();
+          }
+        });
+        list.addEventListener("keydown", function (event) {
+          var options = Array.prototype.slice.call(list.querySelectorAll("button[role='option']"));
+          var index = options.indexOf(document.activeElement);
+          if (event.key === "ArrowDown" && index > -1) {
+            event.preventDefault();
+            options[Math.min(index + 1, options.length - 1)].focus();
+          } else if (event.key === "ArrowUp" && index > -1) {
+            event.preventDefault();
+            if (index === 0) input.focus(); else options[index - 1].focus();
+          } else if (event.key === "Escape") {
+            closeList();
+            input.focus();
+          }
+        });
+        document.addEventListener("click", function (event) {
+          if (!wrapper.contains(event.target)) closeList();
+        });
+      }
 
       function syncLine(line) {
         var product = line.querySelector("select[name$='-product']");
@@ -157,19 +320,31 @@
         if (hint) {
           hint.textContent = meta
             ? meta.sku + (meta.serialized ? " · Serial numbers required" : "") + (meta.expiry ? " · Expiry tracked" : "")
-            : "Choose a stock-tracked product.";
+            : "Search by name, SKU, brand or model.";
         }
+        var unit = line.querySelector("[data-product-unit]");
+        if (unit) unit.textContent = "Unit — " + (meta ? meta.base_unit : "—");
+        var quantity = line.querySelector("input[name$='-quantity']");
+        var unitCost = line.querySelector("input[name$='-unit_cost']");
+        var total = line.querySelector("[data-line-total]");
+        if (total) total.textContent = tzsDisplayFormatter.format(number(quantity && quantity.value) * number(unitCost && unitCost.value)) + " TZS";
+        syncDuplicateWarnings();
       }
 
       function bindLine(line) {
         var product = line.querySelector("select[name$='-product']");
+        enhanceProductSelect(product, line);
         if (product) product.addEventListener("change", function () { syncLine(line); });
+        line.querySelectorAll("input[name$='-quantity'], input[name$='-unit_cost']").forEach(function (input) {
+          input.addEventListener("input", function () { syncLine(line); });
+        });
         var remove = line.querySelector("[data-remove-line]");
         if (remove) {
           remove.addEventListener("click", function () {
             var deletion = line.querySelector("input[name$='-DELETE']");
             if (deletion) deletion.checked = true;
             line.classList.add("hidden");
+            syncDuplicateWarnings();
           });
         }
         syncLine(line);

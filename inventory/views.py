@@ -388,7 +388,12 @@ def purchase_product_search(request):
     })
 
 
-def _purchase_product_meta(organization):
+def _purchase_product_meta(organization, formset):
+    product_ids = {
+        form.instance.product_id
+        for form in formset.forms
+        if form.instance and form.instance.product_id
+    }
     return {
         str(product.pk): {
             'serialized': product.is_serialized,
@@ -397,7 +402,11 @@ def _purchase_product_meta(organization):
             'base_unit': product.get_measure_unit_display(),
         }
         for product in Product.objects.filter(
-            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
+            tenant=organization,
+            pk__in=product_ids,
+            is_active=True,
+            item_type=Product.ItemType.PHYSICAL,
+            track_stock=True,
         ).order_by('name')
     }
 
@@ -426,7 +435,8 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'formset': formset,
         'purchase': purchase,
         'workspace_title': 'Edit Purchase' if purchase.pk else 'New Purchase',
-        'product_meta': _purchase_product_meta(organization),
+        'product_meta': _purchase_product_meta(organization, formset),
+        'product_search_url': reverse('inventory:purchase_product_search'),
         'valid_line_count': line_count,
         'authoritative_total': authoritative_total.quantize(Decimal('0.01')),
         'can_confirm_purchase': has_tenant_permission(

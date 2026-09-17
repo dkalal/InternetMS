@@ -71,3 +71,7 @@ Phase 2 may introduce the compact high-volume line grid, keyboard entry, bulk se
 ### Phase 2 search contract
 
 The purchase product search endpoint is authenticated, permission-protected, tenant-scoped, read-only, paginated, and limited to active physical stock-tracked products. It may return only the metadata required by the purchase combobox; it must not expose cost or cross-tenant catalog data. The server-side form and confirmation service remain authoritative even when the browser uses search results to populate a row.
+
+### Phase 2 compact-grid contract
+
+The purchase workspace must not serialize or render the full tenant catalog. Each row carries only its selected/submitted product in the Django field queryset, while the remote combobox supplies discoverability. The grid may show client-side line totals and duplicate-product guidance, but persisted totals, tenant membership, product eligibility, tracking requirements, and stock posting remain server-authoritative. Separate rows for one product remain valid when batch or expiry details differ.

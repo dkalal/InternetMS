@@ -191,13 +191,18 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['quantity'].required = False
         self.fields['unit_cost'].required = False
+        product_ids = set()
+        if self.instance and self.instance.product_id:
+            product_ids.add(self.instance.product_id)
+        if self.is_bound:
+            submitted_product = self.data.get(self.add_prefix('product'))
+            if submitted_product and str(submitted_product).isdigit():
+                product_ids.add(int(submitted_product))
         self.fields['product'].queryset = Product.objects.filter(
             tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
-        ).order_by('name', 'sku')
+        ).filter(pk__in=product_ids).select_related('sales_unit').order_by('name', 'sku')
         self.fields['product'].widget.attrs.update({
-            'data-search-label': 'Product',
-            'data-search-placeholder': 'Search products by name or SKU...',
-            'data-empty-label': 'Select a product',
+            'data-purchase-product-select': 'true',
         })
         self.fields['quantity'].label = 'Quantity received'
         self.fields['unit_cost'].label = 'Unit cost'
@@ -231,9 +236,6 @@ class PurchaseLineFormSet(BaseInlineFormSet):
         super().__init__(*args, **kwargs)
         for form in self.forms:
             form.organization = organization
-            form.fields['product'].queryset = Product.objects.filter(
-                tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True
-            ).order_by('name', 'sku')
 
     def get_form_kwargs(self, index):
         kwargs = super().get_form_kwargs(index)
