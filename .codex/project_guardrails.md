@@ -1,191 +1,60 @@
-🛑 INTERNET CUSTOMER MANAGEMENT SYSTEM
-GUARDRAILS v1.0
+# JIMS non-negotiable guardrails — v2.0
 
-If any rule is violated, implementation is invalid.
+An implementation that violates these guardrails is invalid even if its UI works or its happy-path tests pass.
 
-1️⃣ TENANCY ISOLATION (NON-NEGOTIABLE)
+## 1. Tenant isolation
 
-Every business model MUST include tenant_id.
+- Every tenant-owned aggregate must have explicit tenant ownership.
+- A child record must either carry tenant ownership or be reachable only through a protected tenant-owned parent, with service/database enforcement.
+- Request and business flows derive tenant context from authenticated server-side membership, never from a tenant identifier trusted directly from user input.
+- Tenant-owned queries are scoped. Explicit unscoped access is permitted only for migrations, restricted support/administration, maintenance, or an equally documented infrastructure need; it must be fail-closed, audited where applicable, and tested.
+- Cross-tenant foreign keys, joins, selections, and mutations are security breaches.
 
-All database queries MUST filter by tenant.
+## 2. Authentication and authorization
 
-No global queries allowed.
+- Business-data endpoints require authentication. Explicit public authentication/infrastructure endpoints are the only exceptions.
+- Stable permission codes and object/tenant checks are enforced server-side.
+- UI visibility improves usability but is never an authorization boundary.
+- Super Administrator access to tenant data requires the established audited support-session path.
+- Financial and purchasing visibility follows least privilege; Sales and Technician roles must not gain broader financial access incidentally.
 
-No cross-tenant joins.
+## 3. Financial and inventory integrity
 
-Tenant context required in all services.
+- Financial and stock mutations use the owning service and a database transaction.
+- Retried operations must not duplicate payments, receipts, references, stock movements, serialized units, or document transitions.
+- Partial writes are forbidden: a failed operation leaves the aggregate and dependent records unchanged.
+- Confirmed financial and inventory history is immutable. Corrections use explicit reversal/cancellation/credit workflows rather than silent edits or hard deletion.
+- Monetary totals and inventory conversions are server-authoritative; browser calculations are informational only.
 
-Violation = security breach.
+## 4. Purchasing and stock
 
-2️⃣ SERVICE LAYER ENFORCEMENT
+- Each product has one selected sales/stock unit. Purchase quantity, purchase unit cost, stock balance, and selling prices use that same unit.
+- Package-to-smaller-unit conversion is deferred. Legacy package fields are preservation-only and cannot drive new forms, APIs, imports, calculations, or stock posting.
+- Draft purchases are stock-neutral.
+- Receiving requires server-side permission and is tenant-scoped, atomic, row-locked, idempotent, and all-or-nothing.
+- Every confirmed line produces the correct immutable stock-in history exactly once.
+- Services/non-stock items cannot be received into inventory.
+- Serialized stock requires the exact number of normalized, tenant-unique serials; duplicates within or across lines must fail before posting.
+- Weighted-average movement cost remains the authoritative cost floor when positive movement-backed stock exists. Net pre-tax unit revenue must be strictly greater than the applicable floor.
+- Historical snapshot totals remain historical truth after product defaults or active workflows change.
 
-Business logic MUST NOT exist in views.
+## 5. Audit and data preservation
 
-Models contain data + invariants only.
+- Critical creations, approvals, payments, confirmations, cancellations, role changes, support access, and settings changes are auditable.
+- Audit history is append-only to ordinary application users.
+- Destructive migrations require an explicit data audit, verified backup/archive, compatibility analysis, rollback plan, and user approval.
+- Applied migrations are never rewritten.
 
-All financial operations must pass through services.
+## 6. Secure failure
 
-Invalid:
+- Invalid or unauthorized requests fail closed without mutation.
+- Raw stack traces, secrets, internal credentials, and sensitive financial values are not exposed to unauthorized users.
+- APIs return stable structured errors; HTML workflows return accessible field/non-field errors and actionable messages.
+- CSRF, IDOR, XSS, injection, mass-assignment, and hostile input risks are considered at every entry point.
 
-view.create_invoice()
+## 7. Release gates
 
-Valid:
-
-InvoiceService.create_invoice()
-3️⃣ FINANCIAL DATA INTEGRITY
-
-No invoice without customer.
-
-No receipt without invoice.
-
-No duplicate payments.
-
-No overlapping active subscriptions per vehicle/customer.
-
-Financial operations must use database transactions.
-
-Partial writes are forbidden.
-
-4️⃣ RBAC SECURITY
-
-All endpoints require authentication.
-
-Role-based access control enforced server-side.
-
-Object-level permissions required.
-
-No hidden frontend-only restrictions.
-
-Security must not depend on UI.
-
-5️⃣ PERFORMANCE DISCIPLINE
-
-Pagination required for list endpoints.
-
-No unbounded queries.
-
-Avoid N+1 queries.
-
-Frequently filtered fields must be indexed.
-
-Heavy operations must be async.
-
-If system slows as tenants grow, design is flawed.
-
-6️⃣ ERROR HANDLING STANDARD
-
-No raw stack traces exposed.
-
-All errors return structured response:
-
-message
-
-code
-
-actionable hint
-
-Silent failure is forbidden.
-
-7️⃣ AUDIT TRAIL
-
-Must log:
-
-Invoice creation
-
-Payment registration
-
-Status changes
-
-Role changes
-
-Critical settings modifications
-
-Audit logs must be immutable.
-
-8️⃣ CONSISTENCY RULES
-
-One naming convention.
-
-One response format.
-
-One validation strategy.
-
-One notification pattern.
-
-If two modules solve the same problem differently, refactor.
-
-9️⃣ ACCESSIBILITY BUILT-IN
-
-All forms have labels.
-
-Keyboard navigation supported.
-
-Color contrast meets accessibility standards.
-
-No action depends solely on color.
-
-Accessibility is not optional.
-
-🔟 UX SIMPLICITY RULE
-
-No feature without business justification.
-
-No form exceeding cognitive load threshold (split if needed).
-
-Dashboard must show:
-
-Active customers
-
-Unpaid invoices
-
-Expiring services
-
-Alerts
-
-User must understand system state in under 5 seconds.
-
-11️⃣ OBSERVABILITY
-
-System must support:
-
-Error logging
-
-Performance metrics
-
-Tenant usage tracking
-
-You cannot scale blind.
-
-12️⃣ TESTING REQUIREMENT
-
-Mandatory automated tests for:
-
-Tenant isolation
-
-Financial flows
-
-Permission enforcement
-
-Expiry logic
-
-Data integrity constraints
-
-No merge without tests.
-
-13️⃣ MIGRATION SAFETY
-
-All DB migrations reversible.
-
-No destructive changes without data preservation strategy.
-
-Backward compatibility preserved.
-
-14️⃣ NO OVER-ENGINEERING
-
-Avoid premature microservices.
-
-Avoid unnecessary abstractions.
-
-Solve today’s validated problem, not imagined future complexity.
-
-Elegance > complexity.
+- Tenant isolation, permission enforcement, financial/stock integrity, idempotency, immutability, and critical transitions require automated tests.
+- `check`, migration-drift validation, focused regression tests, and the full suite must pass before a phase is complete.
+- Tests cannot be weakened, skipped, deleted, or rewritten to hide a production defect.
+- A changed invariant requires a replacement contract test and documentation in the same phase.

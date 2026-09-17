@@ -160,6 +160,10 @@ class PurchaseLine(models.Model):
 
     @property
     def line_total(self):
+        # Preserve immutable totals captured by the earlier package-assisted
+        # workflow. New same-unit lines leave this null and use quantity × cost.
+        if self.authoritative_purchase_total is not None:
+            return self.authoritative_purchase_total
         return (self.quantity * self.unit_cost).quantize(Decimal('0.01'))
 
     def parsed_serial_numbers(self):
