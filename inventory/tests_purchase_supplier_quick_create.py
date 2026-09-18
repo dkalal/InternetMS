@@ -114,4 +114,3 @@ class PurchaseSupplierQuickCreateTests(TestCase):
         self.assertContains(response, 'data-supplier-quick-create-url=')
         self.assertContains(response, 'data-open-quick-supplier')
         self.assertContains(response, 'data-quick-supplier-dialog')
-
