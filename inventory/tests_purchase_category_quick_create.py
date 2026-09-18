@@ -74,12 +74,16 @@ class PurchaseCategoryQuickCreateTests(TestCase):
             'name': '  Network Equipment  ',
             'default_unit': self.unit.pk,
             'description': 'Must be ignored by the minimal form',
+            'icon': ProductCategory.Icon.CAMERA,
         })
 
         self.assertEqual(response.status_code, 201)
         category = ProductCategory.objects.get(tenant=self.organization)
         self.assertEqual(category.name, 'Network Equipment')
+        self.assertEqual(category.organization, self.organization)
+        self.assertEqual(category.tenant, self.organization)
         self.assertEqual(category.description, '')
+        self.assertEqual(category.icon, ProductCategory.Icon.GENERIC)
         self.assertEqual(category.default_unit, self.unit)
         self.assertEqual(list(category.allowed_units.all()), [self.unit])
         self.assertEqual(response.json()['category']['default_unit']['id'], self.unit.pk)
