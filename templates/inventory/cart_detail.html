@@ -60,9 +60,11 @@
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0"><h2 class="truncate font-semibold text-slate-950">{{ product.name }}</h2><p class="mt-1 truncate text-xs text-slate-500">{{ product.sku|default:"No SKU" }}</p></div>
                 </div>
+                {% if not product.pos_ready %}<p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900" role="status">{{ product.pos_readiness_message }}</p>{% endif %}
                 <div class="mt-auto flex items-end justify-between gap-2 pt-4">
                   <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity|quantity_display }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity|quantity_display }}</p></div>
-                  {% if product.is_serialized %}
+                  {% if not product.pos_ready %}<button class="jims-btn jims-btn-secondary jims-btn-compact" type="button" disabled>Pricing review</button>
+                  {% elif product.is_serialized %}
                     {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
                   {% elif product.item_type == "service" or product.available_stock > 0 %}
                     <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>

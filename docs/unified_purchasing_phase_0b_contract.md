@@ -93,3 +93,7 @@ The purchase workspace may create an active physical stock product from name, te
 ### Phase 4A receipt-review contract
 
 The purchase detail page is the authoritative receipt review. For drafts it derives the projected post-receipt weighted-average cost from current tenant inventory plus every line for the same product, including separate batch or expiry rows. It identifies selling modes that would be at or below that projected floor without blocking receipt. Cost values remain permission-protected; users without cost access see only generic pricing-review status. Confirmed purchases display readiness against the actual movement-backed cost floor. No readiness flag is persisted because the ledger and current prices remain the sources of truth.
+
+### Phase 4B cart-readiness contract
+
+The POS catalog derives readiness from the effective price for the cart's active pricing category and the authoritative current cost floor. For an existing cart line it evaluates the next quantity so quantity-break pricing is represented accurately. An unsafe product remains visible with generic pricing-review guidance, but every add/select action is disabled. Existing form, adjustment, discount, checkout, tenant, and permission validation remain the server-side enforcement boundaries; UI readiness never replaces them and no readiness state is persisted.

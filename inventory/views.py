@@ -974,11 +974,13 @@ def cart_detail(request, pk):
     query = request.GET.get('q', '').strip()
     category_id = request.GET.get('category', '').strip()
     existing_line = CartLine.objects.filter(cart=cart, product_id=OuterRef('pk'))
+    cost_movement = StockMovement.objects.filter(tenant=organization, product_id=OuterRef('pk'))
     catalog = Product.objects.filter(tenant=organization, is_active=True).select_related(
         'catalog_category', 'inventory_balance'
     ).annotate(
         in_cart=Exists(existing_line),
         cart_quantity=Subquery(existing_line.values('quantity')[:1]),
+        has_cost_movement=Exists(cost_movement),
     ).order_by('name')
     if query:
         catalog = catalog.filter(Q(name__icontains=query) | Q(sku__icontains=query) | Q(brand__icontains=query) | Q(model_number__icontains=query))
@@ -986,9 +988,21 @@ def cart_detail(request, pk):
         catalog = catalog.filter(catalog_category_id=category_id)
     catalog = list(catalog[:50])
     for product in catalog:
+        intended_quantity = (product.cart_quantity or Decimal('0')) + Decimal('1')
         product.pos_price, product.pos_pricing_mode = CartService.line_pricing(
-            product=product, quantity=Decimal('1.00'), customer=cart.customer,
+            product=product, quantity=intended_quantity, customer=cart.customer,
             sale_pricing_category=cart.sale_pricing_category,
+        )
+        balance = getattr(product, 'inventory_balance', None)
+        floor = (
+            Decimal(balance.average_cost)
+            if balance is not None and balance.quantity > 0 and product.has_cost_movement
+            else Decimal(product.buying_price or 0)
+        )
+        product.pos_ready = product.pos_price > floor
+        product.pos_readiness_message = (
+            '' if product.pos_ready else
+            'Pricing review required before this product can be added to a sale.'
         )
     return render(request, 'inventory/cart_detail.html', {
         'cart': cart, 'cart_form': cart_form, **workspace,
