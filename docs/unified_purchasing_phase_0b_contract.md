@@ -89,3 +89,7 @@ The purchase product workflow may create a category from name and one existing a
 ### Phase 3C product quick-create contract
 
 The purchase workspace may create an active physical stock product from name, tenant category, an allowed active sales/stock unit, selling price, and optional serial/expiry tracking. SKU is generated tenant-safely; quantity, stock, and initial buying cost start at zero and acquisition cost remains authoritative on the purchase line. Selling price remains required until a first-class pricing-required catalog state is introduced. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, atomic, and audited. A created product is appended to an ordinary purchase formset row and still passes the normal draft and confirmation boundaries.
+
+### Phase 4A receipt-review contract
+
+The purchase detail page is the authoritative receipt review. For drafts it derives the projected post-receipt weighted-average cost from current tenant inventory plus every line for the same product, including separate batch or expiry rows. It identifies selling modes that would be at or below that projected floor without blocking receipt. Cost values remain permission-protected; users without cost access see only generic pricing-review status. Confirmed purchases display readiness against the actual movement-backed cost floor. No readiness flag is persisted because the ledger and current prices remain the sources of truth.

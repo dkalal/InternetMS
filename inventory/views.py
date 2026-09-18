@@ -21,6 +21,7 @@ from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
 from internetservices.number_display import format_quantity
 from products.models import Product, ProductCategory, UnitOfMeasure
+from products.pricing import cost_floor_for
 from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
 
@@ -712,10 +713,55 @@ def purchase_detail(request, pk):
     # correct total for historical drafts that predate draft-total syncing.
     purchase_lines = list(purchase.lines.select_related('product'))
     line_items_total = sum((line.line_total for line in purchase_lines), Decimal('0.00'))
+    incoming_by_product = {}
+    for line in purchase_lines:
+        totals = incoming_by_product.setdefault(line.product_id, {'quantity': Decimal('0'), 'cost': Decimal('0')})
+        totals['quantity'] += line.quantity
+        totals['cost'] += line.line_total
+    balances = {
+        balance.product_id: balance
+        for balance in InventoryBalance.objects.filter(
+            tenant=organization, product_id__in=incoming_by_product,
+        )
+    }
+    pricing_reviews = []
+    seen_products = set()
+    for line in purchase_lines:
+        if line.product_id in seen_products:
+            continue
+        seen_products.add(line.product_id)
+        product = line.product
+        if purchase.status == Purchase.Status.CONFIRMED:
+            projected_floor = cost_floor_for(product)
+            warnings = product.pricing_warnings
+        else:
+            incoming = incoming_by_product[line.product_id]
+            balance = balances.get(line.product_id)
+            current_quantity = balance.quantity if balance and balance.quantity > 0 else Decimal('0')
+            current_cost = balance.average_cost if current_quantity > 0 else Decimal(product.buying_price or 0)
+            total_quantity = current_quantity + incoming['quantity']
+            projected_floor = (
+                ((current_quantity * current_cost) + incoming['cost']) / total_quantity
+                if total_quantity > 0 else current_cost
+            ).quantize(Decimal('0.000001'))
+            prices = [('Standard', product.selling_price), ('Technician', product.effective_technician_price)]
+            if product.allow_wholesale and product.wholesale_price is not None:
+                prices.append(('Wholesale', product.wholesale_price))
+            warnings = [label for label, price in prices if price is not None and Decimal(price) <= projected_floor]
+        if warnings:
+            pricing_reviews.append({
+                'product': product,
+                'projected_floor': projected_floor,
+                'categories': warnings,
+            })
     return render(request, 'inventory/purchase_detail.html', {
         'purchase': purchase,
         'purchase_lines': purchase_lines,
         'line_items_total': line_items_total,
+        'product_type_count': len(incoming_by_product),
+        'serialized_line_count': sum(1 for line in purchase_lines if line.product.is_serialized),
+        'expiry_line_count': sum(1 for line in purchase_lines if line.product.track_expiry),
+        'pricing_reviews': pricing_reviews,
     })
 
 
