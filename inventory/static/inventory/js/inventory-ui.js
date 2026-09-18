@@ -500,12 +500,55 @@
         var qpSerialized = quickProductDialog.querySelector("[data-quick-product-serialized]");
         var qpExpiry = quickProductDialog.querySelector("[data-quick-product-expiry]");
         var qpError = quickProductDialog.querySelector("[data-quick-product-error]");
+        var qpFieldErrors = {
+          name: quickProductDialog.querySelector("[data-quick-product-name-error]"),
+          catalog_category: quickProductDialog.querySelector("[data-quick-product-category-error]"),
+          sales_unit: quickProductDialog.querySelector("[data-quick-product-unit-error]"),
+          selling_price: quickProductDialog.querySelector("[data-quick-product-price-error]")
+        };
         var saveProduct = quickProductDialog.querySelector("[data-save-quick-product]");
         var categoryPanel = quickProductDialog.querySelector("[data-quick-category-panel]");
+        var quickCategoryName = quickProductDialog.querySelector("[data-quick-category-name]");
+        var quickCategoryUnit = quickProductDialog.querySelector("[data-quick-category-unit]");
+        var quickCategoryError = quickProductDialog.querySelector("[data-quick-category-error]");
+        var quickCategoryNameError = quickProductDialog.querySelector("[data-quick-category-name-error]");
+        var quickCategoryUnitError = quickProductDialog.querySelector("[data-quick-category-unit-error]");
 
         function showQuickError(node, message) {
           node.textContent = message || "";
           node.classList.toggle("hidden", !message);
+        }
+        function firstFieldError(errors, field) {
+          return errors && errors[field] && errors[field][0] ? errors[field][0].message : "";
+        }
+        function clearProductErrors() {
+          Object.keys(qpFieldErrors).forEach(function (field) { showQuickError(qpFieldErrors[field], ""); });
+          showQuickError(qpError, "");
+        }
+        function showProductErrors(errors) {
+          clearProductErrors();
+          Object.keys(qpFieldErrors).forEach(function (field) {
+            showQuickError(qpFieldErrors[field], firstFieldError(errors, field));
+          });
+          showQuickError(qpError, firstFieldError(errors, "__all__"));
+        }
+        function clearCategoryErrors() {
+          showQuickError(quickCategoryNameError, "");
+          showQuickError(quickCategoryUnitError, "");
+          showQuickError(quickCategoryError, "");
+        }
+        function resetQuickProduct() {
+          qpName.value = "";
+          qpCategory.value = "";
+          qpUnit.value = "";
+          qpPrice.value = "";
+          qpSerialized.checked = false;
+          qpExpiry.checked = false;
+          quickCategoryName.value = "";
+          quickCategoryUnit.value = "";
+          categoryPanel.classList.add("hidden");
+          clearCategoryErrors();
+          clearProductErrors();
         }
         function closeQuickProduct() {
           quickProductDialog.classList.add("hidden");
@@ -514,6 +557,8 @@
           openQuickProduct.focus();
         }
         openQuickProduct.addEventListener("click", function () {
+          clearProductErrors();
+          clearCategoryErrors();
           quickProductDialog.classList.remove("hidden");
           quickProductDialog.classList.add("flex");
           document.body.classList.add("overflow-hidden");
@@ -527,6 +572,7 @@
         });
         quickProductDialog.addEventListener("keydown", function (event) {
           if (event.key === "Escape") { closeQuickProduct(); return; }
+          if (event.key === "Enter") { event.preventDefault(); return; }
           if (event.key !== "Tab") return;
           var focusable = Array.prototype.filter.call(
             quickProductDialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled])"),
@@ -546,24 +592,29 @@
           categoryPanel.classList.toggle("hidden");
         });
         quickProductDialog.querySelector("[data-save-quick-category]").addEventListener("click", function () {
-          var name = quickProductDialog.querySelector("[data-quick-category-name]");
-          var unit = quickProductDialog.querySelector("[data-quick-category-unit]");
-          var error = quickProductDialog.querySelector("[data-quick-category-error]");
-          fetch(categoryUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: new URLSearchParams({ name: name.value.trim(), default_unit: unit.value }).toString() })
+          clearCategoryErrors();
+          fetch(categoryUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: new URLSearchParams({ name: quickCategoryName.value.trim(), default_unit: quickCategoryUnit.value }).toString() })
             .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
             .then(function (result) {
-              if (!result.ok) { showQuickError(error, "Check the category name and default unit."); return; }
+              if (!result.ok) {
+                showQuickError(quickCategoryNameError, firstFieldError(result.payload.errors, "name"));
+                showQuickError(quickCategoryUnitError, firstFieldError(result.payload.errors, "default_unit"));
+                showQuickError(quickCategoryError, firstFieldError(result.payload.errors, "__all__"));
+                return;
+              }
               var category = result.payload.category;
               var option = new Option(category.text, String(category.id), true, true);
               option.dataset.defaultUnit = String(category.default_unit.id);
               qpCategory.appendChild(option);
               qpUnit.value = String(category.default_unit.id);
               categoryPanel.classList.add("hidden");
-              showQuickError(error, "");
-            }).catch(function () { showQuickError(error, "Category could not be saved. Check the connection."); });
+              quickCategoryName.value = "";
+              quickCategoryUnit.value = "";
+              clearCategoryErrors();
+            }).catch(function () { showQuickError(quickCategoryError, "Category could not be saved. Check the connection."); });
         });
         saveProduct.addEventListener("click", function () {
-          showQuickError(qpError, "");
+          clearProductErrors();
           var body = new URLSearchParams({
             name: qpName.value.trim(), catalog_category: qpCategory.value, sales_unit: qpUnit.value,
             selling_price: qpPrice.value, is_serialized: qpSerialized.checked ? "on" : "",
@@ -573,9 +624,10 @@
           fetch(productUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body.toString() })
             .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
             .then(function (result) {
-              if (!result.ok) { showQuickError(qpError, "Check the required product fields and selected unit."); return; }
+              if (!result.ok) { showProductErrors(result.payload.errors); return; }
               var line = appendLine(result.payload.product);
               var quantity = line.querySelector("input[name$='-quantity']");
+              resetQuickProduct();
               closeQuickProduct();
               if (quantity) quantity.focus();
             }).catch(function () { showQuickError(qpError, "Product could not be saved. Check the connection."); })
