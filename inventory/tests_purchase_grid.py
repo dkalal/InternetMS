@@ -153,6 +153,7 @@ class CompactPurchaseGridTests(TestCase):
         self.assertContains(response, 'data-open-bulk-products')
         self.assertContains(response, 'data-bulk-product-dialog')
         self.assertContains(response, 'data-purchase-workspace')
+        self.assertContains(response, 'data-purchase-items-panel')
         self.assertContains(response, 'pb-64 sm:pb-24')
         self.assertContains(response, 'GRID-RTR-A')
         self.assertNotContains(response, 'GRID-RTR-B')
@@ -165,6 +166,12 @@ class CompactPurchaseGridTests(TestCase):
         self.assertIn('select.hidden = true;', script)
         self.assertIn('select.style.setProperty("display", "none", "important");', script)
         self.assertIn('select.setAttribute("aria-hidden", "true");', script)
+
+    def test_purchase_items_panel_does_not_clip_remote_search_results(self):
+        template = (Path(__file__).parent.parent / 'templates/inventory/purchase_form.html').read_text(encoding='utf-8')
+
+        self.assertIn('class="jims-panel" data-purchase-items-panel', template)
+        self.assertNotIn('class="jims-panel overflow-hidden" data-purchase-items-panel', template)
 
     def test_high_volume_workspace_saves_many_remote_selected_products_as_one_draft(self):
         products = [self.product, self.unselected_product]
