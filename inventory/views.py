@@ -32,6 +32,7 @@ from .forms import (
     ProductCategoryForm,
     PurchaseForm,
     PurchaseLinesFormSet,
+    QuickProductCategoryForm,
     QuickSupplierForm,
     StockAdjustmentForm,
     SupplierForm,
@@ -248,6 +249,56 @@ def category_form(request, pk=None):
         'form': form, 'category': category, 'title': 'Edit category' if category else 'Add category',
         'cancel_url': 'inventory:category_list', 'submit_label': 'Save category',
     })
+
+
+@login_required
+@require_POST
+def purchase_category_quick_create(request):
+    organization = _scope(request, PermissionCode.CATEGORY_MANAGE)
+    form = QuickProductCategoryForm(request.POST, organization=organization)
+    if not form.is_valid():
+        return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
+
+    try:
+        with transaction.atomic():
+            category = form.save(commit=False)
+            category.organization = category.tenant = organization
+            category.is_active = True
+            category.save()
+            category.allowed_units.set([form.cleaned_data['default_unit']])
+            audit(
+                organization=organization,
+                actor=request.user,
+                action='inventory.category.created_quick',
+                obj=category,
+                old_value={},
+                new_value={
+                    'name': category.name,
+                    'default_unit_id': category.default_unit_id,
+                    'allowed_unit_ids': [category.default_unit_id],
+                    'is_active': category.is_active,
+                },
+            )
+    except IntegrityError:
+        if ProductCategory.objects.unscoped().filter(
+            tenant=organization,
+            name__iexact=form.cleaned_data['name'],
+        ).exists():
+            errors = {'name': [{'message': 'A category with this name already exists.', 'code': 'unique'}]}
+        else:
+            errors = {'__all__': [{'message': 'Category could not be saved. Try again.', 'code': 'integrity'}]}
+        return JsonResponse({'errors': errors}, status=409)
+
+    return JsonResponse({
+        'category': {
+            'id': category.pk,
+            'text': category.name,
+            'default_unit': {
+                'id': category.default_unit_id,
+                'text': category.default_unit.label,
+            },
+        },
+    }, status=201)
 
 
 @login_required

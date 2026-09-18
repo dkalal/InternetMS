@@ -106,6 +106,40 @@ class ProductCategoryForm(TenantFormMixin, forms.ModelForm):
         return instance
 
 
+class QuickProductCategoryForm(TenantFormMixin, forms.ModelForm):
+    """Minimal, tenant-safe category input for the purchase product workflow."""
+
+    class Meta:
+        model = ProductCategory
+        fields = ['name', 'default_unit']
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, organization=organization, **kwargs)
+        self.fields['name'].required = True
+        self.fields['default_unit'].required = True
+        self.fields['default_unit'].queryset = UnitOfMeasure.objects.filter(
+            tenant=organization,
+            is_active=True,
+        ).order_by('name')
+
+    def clean_name(self):
+        name = (self.cleaned_data.get('name') or '').strip()
+        if ProductCategory.objects.unscoped().filter(
+            tenant=self.organization,
+            name__iexact=name,
+        ).exists():
+            raise forms.ValidationError('A category with this name already exists.')
+        return name
+
+    def save(self, commit=True):
+        category = super().save(commit=False)
+        category.measure_unit = self.cleaned_data['default_unit'].label
+        if commit:
+            category.save()
+            category.allowed_units.set([self.cleaned_data['default_unit']])
+        return category
+
+
 class SupplierForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = Supplier

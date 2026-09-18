@@ -16,6 +16,7 @@ urlpatterns = [
     path('suppliers/<int:pk>/payments/new/', views.supplier_payment_create, name='supplier_payment_create'),
     path('purchases/', views.purchase_list, name='purchase_list'),
     path('purchases/products/search/', views.purchase_product_search, name='purchase_product_search'),
+    path('purchases/categories/quick-create/', views.purchase_category_quick_create, name='purchase_category_quick_create'),
     path('purchases/suppliers/quick-create/', views.purchase_supplier_quick_create, name='purchase_supplier_quick_create'),
     path('purchases/new/', views.purchase_create, name='purchase_create'),
     path('purchases/<int:pk>/edit/', views.purchase_edit, name='purchase_edit'),

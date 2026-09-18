@@ -81,3 +81,7 @@ The bulk picker reuses the same protected search endpoint and only creates ordin
 ### Phase 3A supplier quick-create contract
 
 The purchase workspace may create a supplier from company name and phone only. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It ignores unsupported advanced fields, returns structured validation errors, and selects the created active supplier without submitting or clearing the purchase workspace. Advanced supplier details remain owned by the full Suppliers workflow.
+
+### Phase 3B category quick-create contract
+
+The purchase product workflow may create a category from name and one existing active tenant unit only. The selected default unit is also the category's sole initial allowed unit. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It rejects foreign-tenant and inactive units, ignores unsupported advanced category fields, and returns structured validation errors. This endpoint is a foundation for the product quick-create dialog; it must not add a disconnected category control to the purchase workspace.
