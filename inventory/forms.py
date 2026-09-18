@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django import forms
 from django.forms import BaseInlineFormSet, inlineformset_factory
+from django.utils.text import slugify
 
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
@@ -138,6 +139,54 @@ class QuickProductCategoryForm(TenantFormMixin, forms.ModelForm):
             category.save()
             category.allowed_units.set([self.cleaned_data['default_unit']])
         return category
+
+
+class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
+    selling_price = forms.DecimalField(required=True, min_value=Decimal('0.01'), decimal_places=2)
+
+    class Meta:
+        model = Product
+        fields = ['name', 'catalog_category', 'sales_unit', 'selling_price', 'is_serialized', 'track_expiry']
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, organization=organization, **kwargs)
+        self.fields['catalog_category'].queryset = ProductCategory.objects.filter(tenant=organization, is_active=True)
+        self.fields['sales_unit'].queryset = UnitOfMeasure.objects.filter(tenant=organization, is_active=True)
+
+    def clean_name(self):
+        value = (self.cleaned_data.get('name') or '').strip()
+        if Product.objects.unscoped().filter(tenant=self.organization, name__iexact=value, is_active=True).exists():
+            raise forms.ValidationError('An active product with this name already exists.')
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        category = cleaned.get('catalog_category')
+        unit = cleaned.get('sales_unit')
+        if category and unit and not category.allowed_units.filter(pk=unit.pk).exists():
+            self.add_error('sales_unit', 'Select a unit allowed by the chosen category.')
+        return cleaned
+
+    def save(self, commit=True):
+        product = super().save(commit=False)
+        base = (slugify(product.name).replace('-', '')[:24] or 'ITEM').upper()
+        sku = base
+        suffix = 1
+        while Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku).exists():
+            suffix += 1
+            sku = f'{base}-{suffix}'
+        product.sku = sku
+        product.item_type = Product.ItemType.PHYSICAL
+        product.track_stock = True
+        product.quantity = Decimal('0.000000')
+        product.stock = 0
+        product.buying_price = Decimal('0.000000')
+        product.selling_price = self.cleaned_data['selling_price']
+        product.measure_unit = self.cleaned_data['sales_unit'].label
+        product.is_active = True
+        if commit:
+            product.save()
+        return product
 
 
 class SupplierForm(TenantFormMixin, forms.ModelForm):

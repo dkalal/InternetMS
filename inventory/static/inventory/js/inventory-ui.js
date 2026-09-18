@@ -487,6 +487,102 @@
         });
       }
 
+      var quickProductDialog = document.querySelector("[data-quick-product-dialog]");
+      var openQuickProduct = document.querySelector("[data-open-quick-product]");
+      if (quickProductDialog && openQuickProduct && purchaseForm) {
+        var productUrl = purchaseForm.dataset.productQuickCreateUrl;
+        var categoryUrl = purchaseForm.dataset.categoryQuickCreateUrl;
+        var csrf = purchaseForm.querySelector("input[name='csrfmiddlewaretoken']");
+        var qpName = quickProductDialog.querySelector("[data-quick-product-name]");
+        var qpCategory = quickProductDialog.querySelector("[data-quick-product-category]");
+        var qpUnit = quickProductDialog.querySelector("[data-quick-product-unit]");
+        var qpPrice = quickProductDialog.querySelector("[data-quick-product-price]");
+        var qpSerialized = quickProductDialog.querySelector("[data-quick-product-serialized]");
+        var qpExpiry = quickProductDialog.querySelector("[data-quick-product-expiry]");
+        var qpError = quickProductDialog.querySelector("[data-quick-product-error]");
+        var saveProduct = quickProductDialog.querySelector("[data-save-quick-product]");
+        var categoryPanel = quickProductDialog.querySelector("[data-quick-category-panel]");
+
+        function showQuickError(node, message) {
+          node.textContent = message || "";
+          node.classList.toggle("hidden", !message);
+        }
+        function closeQuickProduct() {
+          quickProductDialog.classList.add("hidden");
+          quickProductDialog.classList.remove("flex");
+          document.body.classList.remove("overflow-hidden");
+          openQuickProduct.focus();
+        }
+        openQuickProduct.addEventListener("click", function () {
+          quickProductDialog.classList.remove("hidden");
+          quickProductDialog.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+          qpName.focus();
+        });
+        quickProductDialog.querySelectorAll("[data-close-quick-product], [data-cancel-quick-product]").forEach(function (button) {
+          button.addEventListener("click", closeQuickProduct);
+        });
+        quickProductDialog.addEventListener("click", function (event) {
+          if (event.target === quickProductDialog) closeQuickProduct();
+        });
+        quickProductDialog.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") { closeQuickProduct(); return; }
+          if (event.key !== "Tab") return;
+          var focusable = Array.prototype.filter.call(
+            quickProductDialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled])"),
+            function (element) { return element.offsetParent !== null; }
+          );
+          if (!focusable.length) return;
+          var first = focusable[0];
+          var last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        });
+        qpCategory.addEventListener("change", function () {
+          var option = qpCategory.options[qpCategory.selectedIndex];
+          if (option && option.dataset.defaultUnit) qpUnit.value = option.dataset.defaultUnit;
+        });
+        quickProductDialog.querySelector("[data-toggle-quick-category]").addEventListener("click", function () {
+          categoryPanel.classList.toggle("hidden");
+        });
+        quickProductDialog.querySelector("[data-save-quick-category]").addEventListener("click", function () {
+          var name = quickProductDialog.querySelector("[data-quick-category-name]");
+          var unit = quickProductDialog.querySelector("[data-quick-category-unit]");
+          var error = quickProductDialog.querySelector("[data-quick-category-error]");
+          fetch(categoryUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: new URLSearchParams({ name: name.value.trim(), default_unit: unit.value }).toString() })
+            .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
+            .then(function (result) {
+              if (!result.ok) { showQuickError(error, "Check the category name and default unit."); return; }
+              var category = result.payload.category;
+              var option = new Option(category.text, String(category.id), true, true);
+              option.dataset.defaultUnit = String(category.default_unit.id);
+              qpCategory.appendChild(option);
+              qpUnit.value = String(category.default_unit.id);
+              categoryPanel.classList.add("hidden");
+              showQuickError(error, "");
+            }).catch(function () { showQuickError(error, "Category could not be saved. Check the connection."); });
+        });
+        saveProduct.addEventListener("click", function () {
+          showQuickError(qpError, "");
+          var body = new URLSearchParams({
+            name: qpName.value.trim(), catalog_category: qpCategory.value, sales_unit: qpUnit.value,
+            selling_price: qpPrice.value, is_serialized: qpSerialized.checked ? "on" : "",
+            track_expiry: qpExpiry.checked ? "on" : ""
+          });
+          saveProduct.disabled = true;
+          fetch(productUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body.toString() })
+            .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
+            .then(function (result) {
+              if (!result.ok) { showQuickError(qpError, "Check the required product fields and selected unit."); return; }
+              var line = appendLine(result.payload.product);
+              var quantity = line.querySelector("input[name$='-quantity']");
+              closeQuickProduct();
+              if (quantity) quantity.focus();
+            }).catch(function () { showQuickError(qpError, "Product could not be saved. Check the connection."); })
+            .finally(function () { saveProduct.disabled = false; });
+        });
+      }
+
       var bulkDialog = document.querySelector("[data-bulk-product-dialog]");
       var openBulk = document.querySelector("[data-open-bulk-products]");
       if (bulkDialog && openBulk && totalForms && template && productSearchUrl) {

@@ -85,3 +85,7 @@ The purchase workspace may create a supplier from company name and phone only. T
 ### Phase 3B category quick-create contract
 
 The purchase product workflow may create a category from name and one existing active tenant unit only. The selected default unit is also the category's sole initial allowed unit. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It rejects foreign-tenant and inactive units, ignores unsupported advanced category fields, and returns structured validation errors. This endpoint is a foundation for the product quick-create dialog; it must not add a disconnected category control to the purchase workspace.
+
+### Phase 3C product quick-create contract
+
+The purchase workspace may create an active physical stock product from name, tenant category, an allowed active sales/stock unit, selling price, and optional serial/expiry tracking. SKU is generated tenant-safely; quantity, stock, and initial buying cost start at zero and acquisition cost remains authoritative on the purchase line. Selling price remains required until a first-class pricing-required catalog state is introduced. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, atomic, and audited. A created product is appended to an ordinary purchase formset row and still passes the normal draft and confirmation boundaries.

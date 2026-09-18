@@ -20,7 +20,7 @@ from django.views.decorators.http import require_GET, require_POST
 from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
 from internetservices.number_display import format_quantity
-from products.models import Product, ProductCategory
+from products.models import Product, ProductCategory, UnitOfMeasure
 from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
 
@@ -33,6 +33,7 @@ from .forms import (
     PurchaseForm,
     PurchaseLinesFormSet,
     QuickProductCategoryForm,
+    QuickPurchaseProductForm,
     QuickSupplierForm,
     StockAdjustmentForm,
     SupplierForm,
@@ -442,6 +443,40 @@ def purchase_product_search(request):
 
 @login_required
 @require_POST
+def purchase_product_quick_create(request):
+    organization = _scope(request, PermissionCode.PRODUCT_MANAGE)
+    form = QuickPurchaseProductForm(request.POST, organization=organization)
+    if not form.is_valid():
+        return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
+    try:
+        with transaction.atomic():
+            product = form.save(commit=False)
+            product.organization = product.tenant = organization
+            product.save()
+            audit(
+                organization=organization, actor=request.user,
+                action='inventory.product.created_quick', obj=product,
+                new_value={
+                    'name': product.name, 'sku': product.sku,
+                    'catalog_category_id': product.catalog_category_id,
+                    'sales_unit_id': product.sales_unit_id,
+                    'is_serialized': product.is_serialized,
+                    'track_expiry': product.track_expiry,
+                },
+            )
+    except IntegrityError:
+        return JsonResponse({'errors': {'__all__': [{
+            'message': 'Product could not be saved safely. Refresh and try again.', 'code': 'integrity',
+        }]}}, status=409)
+    return JsonResponse({'product': {
+        'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
+        'unit': product.sales_unit.label, 'serialized': product.is_serialized,
+        'expiry': product.track_expiry,
+    }}, status=201)
+
+
+@login_required
+@require_POST
 def purchase_supplier_quick_create(request):
     organization = _scope(request, PermissionCode.SUPPLIER_MANAGE)
     form = QuickSupplierForm(request.POST, organization=organization)
@@ -531,6 +566,10 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'product_meta': _purchase_product_meta(organization, formset),
         'product_search_url': reverse('inventory:purchase_product_search'),
         'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
+        'category_quick_create_url': reverse('inventory:purchase_category_quick_create'),
+        'product_quick_create_url': reverse('inventory:purchase_product_quick_create'),
+        'quick_product_categories': ProductCategory.objects.filter(tenant=organization, is_active=True),
+        'quick_product_units': UnitOfMeasure.objects.filter(tenant=organization, is_active=True).order_by('name'),
         'valid_line_count': line_count,
         'authoritative_total': authoritative_total.quantize(Decimal('0.01')),
         'can_confirm_purchase': has_tenant_permission(

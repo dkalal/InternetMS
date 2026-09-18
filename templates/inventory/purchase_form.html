@@ -15,7 +15,7 @@
     <div class="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span aria-hidden="true">●</span><p><strong>Draft — stock has not changed.</strong> Stock movements are created only after the separate confirmation review.</p></div>
   </header>
 
-  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock data-product-search-url="{{ product_search_url }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}">
+  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock data-product-search-url="{{ product_search_url }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}" data-product-quick-create-url="{{ product_quick_create_url }}" data-category-quick-create-url="{{ category_quick_create_url }}">
     {% csrf_token %}{{ form.auto_generated_reference }}
     {% if form.non_field_errors %}<div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert"><p class="font-semibold">The purchase could not be saved.</p>{{ form.non_field_errors }}</div>{% endif %}
     <section class="jims-panel">
@@ -42,7 +42,7 @@
     <section class="jims-panel" data-purchase-items-panel>
       <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2</p><h2 class="mt-1 font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">Enter quantity and unit cost in each product's selected sales/stock unit.</p></div>
-        <div class="flex flex-wrap gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add one row</button><button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products>Add multiple products</button></div>
+        <div class="flex flex-wrap gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-open-quick-product>+ New product</button><button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add one row</button><button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products>Add multiple products</button></div>
       </div>
       {{ formset.management_form }}
       {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><p class="font-semibold">Check the purchase items.</p>{{ formset.non_form_errors }}</div>{% endif %}
@@ -85,6 +85,22 @@
         </article>
       </template>
     </section>
+
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-quick-product-dialog role="dialog" aria-modal="true" aria-labelledby="quick-product-title">
+      <div class="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-5"><div><h2 id="quick-product-title" class="text-lg font-bold text-slate-950">New stock product</h2><p class="mt-1 text-sm text-slate-600">Create the essentials now; complete advanced catalog details later.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-quick-product>Close</button></div>
+        <div class="space-y-4 p-5">
+          <div><label class="block text-sm font-medium text-slate-700">Product name *</label><input type="text" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-name><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-name-error></p></div>
+          <div><label class="block text-sm font-medium text-slate-700">Category *</label><select class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-category><option value="">Select category</option>{% for category in quick_product_categories %}<option value="{{ category.pk }}" data-default-unit="{{ category.default_unit_id|default:'' }}">{{ category.name }}</option>{% endfor %}</select><button type="button" class="mt-2 text-sm font-semibold text-brand-700" data-toggle-quick-category>+ New category</button><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-category-error></p></div>
+          <div class="hidden space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3" data-quick-category-panel><p class="text-sm font-semibold text-slate-900">Create category</p><input type="text" placeholder="Category name" class="block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-category-name><select class="block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-category-unit><option value="">Default unit</option>{% for unit in quick_product_units %}<option value="{{ unit.pk }}">{{ unit.label }}</option>{% endfor %}</select><p class="hidden text-sm text-rose-600" data-quick-category-error></p><button type="button" class="jims-btn jims-btn-secondary" data-save-quick-category>Create category</button></div>
+          <div><label class="block text-sm font-medium text-slate-700">Sales/stock unit *</label><select class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-unit><option value="">Select unit</option>{% for unit in quick_product_units %}<option value="{{ unit.pk }}">{{ unit.label }}</option>{% endfor %}</select><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-unit-error></p></div>
+          <div><label class="block text-sm font-medium text-slate-700">Selling price *</label><input type="number" min="0.01" step="0.01" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-price><p class="mt-1 text-xs text-slate-500">Required by the current catalog safety rule. Receiving will still re-check it against the resulting cost floor.</p></div>
+          <div class="flex flex-wrap gap-5"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-quick-product-serialized> Serialized</label><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-quick-product-expiry> Track expiry</label></div>
+          <p class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700" data-quick-product-error></p>
+        </div>
+        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4"><button type="button" class="jims-btn jims-btn-secondary" data-cancel-quick-product>Cancel</button><button type="button" class="jims-btn jims-btn-primary" data-save-quick-product>Save &amp; add product</button></div>
+      </div>
+    </div>
 
     <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-bulk-product-dialog role="dialog" aria-modal="true" aria-labelledby="bulk-product-title">
       <div class="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
