@@ -45,7 +45,7 @@
   {% endif %}
 
   <section class="jims-panel overflow-hidden" aria-labelledby="receipt-readiness-heading">
-    <div class="jims-panel-header"><h2 id="receipt-readiness-heading" class="font-semibold text-slate-950">Receipt readiness</h2><p class="mt-1 text-sm text-slate-600">Server-derived checks for this complete purchase.</p></div>
+    <div class="jims-panel-header"><h2 id="receipt-readiness-heading" class="font-semibold text-slate-950">Receipt readiness</h2><p class="mt-1 text-sm text-slate-600">{% if purchase.status == 'confirmed' %}Actual cost-floor pricing review from posted inventory.{% else %}Projected readiness checks before stock is received.{% endif %}</p></div>
     <dl class="grid gap-px bg-slate-200 sm:grid-cols-4">
       <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Product types</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ product_type_count }}</dd></div>
       <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchase lines</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ purchase_lines|length }}</dd></div>
@@ -56,10 +56,10 @@
       <div class="border-t border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
         <p class="font-semibold">Receiving is allowed, but affected selling modes will remain blocked by cost-floor validation until prices are updated.</p>
         <ul class="mt-2 space-y-1">
-          {% for review in pricing_reviews %}<li><strong>{{ review.product.name }}</strong> — {{ review.categories|join:", " }}{% if INVENTORY_CAN_VIEW_COSTS %}; projected cost floor {{ review.projected_floor|floatformat:"-6g" }} TZS / {{ review.product.get_measure_unit_display }}{% endif %}</li>{% endfor %}
+          {% for review in pricing_reviews %}<li><strong>{{ review.product.name }}</strong> — {{ review.categories|join:", " }}{% if INVENTORY_CAN_VIEW_COSTS %}; {% if purchase.status == 'confirmed' %}actual{% else %}projected{% endif %} cost floor {{ review.projected_floor|floatformat:"-6g" }} TZS / {{ review.product.get_measure_unit_display }}{% endif %}</li>{% endfor %}
         </ul>
       </div>
-    {% else %}<p class="border-t border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">No projected cost-floor pricing conflicts were found.</p>{% endif %}
+    {% else %}<p class="border-t border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">No {% if purchase.status == 'confirmed' %}actual{% else %}projected{% endif %} cost-floor pricing conflicts were found.</p>{% endif %}
   </section>
 
   <section class="jims-panel overflow-hidden">
