@@ -6,7 +6,7 @@
 {% include "inventory/includes/module_nav.html" %}
 {{ product_meta|json_script:"purchase-product-meta" }}
 
-<div class="space-y-5 pb-36 sm:pb-24">
+<div class="space-y-5 pb-64 sm:pb-24" data-purchase-workspace>
   <header class="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div><p class="text-xs font-bold uppercase tracking-wider text-brand-700">Purchasing workspace</p><h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">{{ workspace_title }}</h1><p class="mt-1 text-sm text-slate-600">Build and review this supplier purchase safely. Saving a draft never changes stock.</p></div>

@@ -506,7 +506,12 @@
         });
         addBulk.addEventListener("click", function () {
           var firstAdded = null;
-          selectedBulk.forEach(function (result) { if (!existingProductIds().has(String(result.id))) firstAdded = firstAdded || appendLine(result); });
+          selectedBulk.forEach(function (result) {
+            if (!existingProductIds().has(String(result.id))) {
+              var addedLine = appendLine(result);
+              if (!firstAdded) firstAdded = addedLine;
+            }
+          });
           closeBulkDialog();
           if (firstAdded) {
             var quantity = firstAdded.querySelector("input[name$='-quantity']");

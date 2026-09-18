@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -151,6 +152,8 @@ class CompactPurchaseGridTests(TestCase):
         self.assertContains(response, 'data-purchase-product-select=')
         self.assertContains(response, 'data-open-bulk-products')
         self.assertContains(response, 'data-bulk-product-dialog')
+        self.assertContains(response, 'data-purchase-workspace')
+        self.assertContains(response, 'pb-64 sm:pb-24')
         self.assertContains(response, 'GRID-RTR-A')
         self.assertNotContains(response, 'GRID-RTR-B')
         self.assertNotContains(response, 'PRIVATE-GRID-RTR')
@@ -194,3 +197,9 @@ class CompactPurchaseGridTests(TestCase):
         self.assertEqual(purchase.lines.count(), 25)
         self.assertEqual(purchase.total_cost, Decimal('5000.00'))
         self.assertEqual(purchase.status, Purchase.Status.DRAFT)
+
+    def test_bulk_picker_appends_every_selected_product(self):
+        script = (Path(__file__).parent / 'static/inventory/js/inventory-ui.js').read_text()
+
+        self.assertIn('var addedLine = appendLine(result);', script)
+        self.assertNotIn('firstAdded = firstAdded || appendLine(result)', script)
