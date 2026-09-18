@@ -277,6 +277,12 @@
         if (!select || select.dataset.remoteReady === "true" || !productSearchUrl) return;
         select.dataset.remoteReady = "true";
         select.hidden = true;
+        // Tailwind's `block` utility on Django form widgets can override the
+        // browser's default `[hidden]` rule. Keep the tenant-filtered select as
+        // the submitted source of truth, but make it reliably non-visual once
+        // the remote combobox has taken over the interaction.
+        select.style.setProperty("display", "none", "important");
+        select.setAttribute("aria-hidden", "true");
         select.tabIndex = -1;
 
         var wrapper = document.createElement("div");

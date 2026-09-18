@@ -158,6 +158,14 @@ class CompactPurchaseGridTests(TestCase):
         self.assertNotContains(response, 'GRID-RTR-B')
         self.assertNotContains(response, 'PRIVATE-GRID-RTR')
 
+    def test_remote_combobox_reliably_hides_its_backing_product_select(self):
+        script_path = Path(__file__).parent / 'static/inventory/js/inventory-ui.js'
+        script = script_path.read_text(encoding='utf-8')
+
+        self.assertIn('select.hidden = true;', script)
+        self.assertIn('select.style.setProperty("display", "none", "important");', script)
+        self.assertIn('select.setAttribute("aria-hidden", "true");', script)
+
     def test_high_volume_workspace_saves_many_remote_selected_products_as_one_draft(self):
         products = [self.product, self.unselected_product]
         for number in range(3, 26):
