@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
@@ -32,6 +32,7 @@ from .forms import (
     ProductCategoryForm,
     PurchaseForm,
     PurchaseLinesFormSet,
+    QuickSupplierForm,
     StockAdjustmentForm,
     SupplierForm,
     SupplierPaymentForm,
@@ -388,6 +389,47 @@ def purchase_product_search(request):
     })
 
 
+@login_required
+@require_POST
+def purchase_supplier_quick_create(request):
+    organization = _scope(request, PermissionCode.SUPPLIER_MANAGE)
+    form = QuickSupplierForm(request.POST, organization=organization)
+    if not form.is_valid():
+        return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
+    try:
+        with transaction.atomic():
+            supplier = form.save(commit=False)
+            supplier.organization = supplier.tenant = organization
+            supplier.created_by = request.user
+            supplier.is_active = True
+            supplier.save()
+            audit(
+                organization=organization,
+                actor=request.user,
+                action='inventory.supplier.created_quick',
+                obj=supplier,
+                new_value={'company_name': supplier.company_name, 'phone': supplier.phone, 'is_active': True},
+            )
+    except IntegrityError:
+        duplicate = Supplier.objects.unscoped().filter(
+            tenant=organization,
+            company_name__iexact=form.cleaned_data['company_name'],
+        ).exists()
+        return JsonResponse({
+            'errors': (
+                {'company_name': [{
+                    'message': 'This supplier already exists in your organization.',
+                    'code': 'unique',
+                }]}
+                if duplicate else
+                {'__all__': [{'message': 'Supplier could not be saved safely. Try again.', 'code': 'integrity'}]}
+            ),
+        }, status=409)
+    return JsonResponse({
+        'supplier': {'id': supplier.pk, 'text': supplier.company_name, 'phone': supplier.phone},
+    }, status=201)
+
+
 def _purchase_product_meta(organization, formset):
     product_ids = {
         form.instance.product_id
@@ -437,6 +479,7 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'workspace_title': 'Edit Purchase' if purchase.pk else 'New Purchase',
         'product_meta': _purchase_product_meta(organization, formset),
         'product_search_url': reverse('inventory:purchase_product_search'),
+        'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
         'valid_line_count': line_count,
         'authoritative_total': authoritative_total.quantize(Decimal('0.01')),
         'can_confirm_purchase': has_tenant_permission(

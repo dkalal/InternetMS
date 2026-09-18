@@ -136,6 +136,104 @@
       }
     }
 
+    var quickSupplierDialog = document.querySelector("[data-quick-supplier-dialog]");
+    var openQuickSupplier = document.querySelector("[data-open-quick-supplier]");
+    if (quickSupplierDialog && openQuickSupplier) {
+      var supplierForm = quickSupplierDialog.closest("form");
+      var supplierUrl = supplierForm.dataset.supplierQuickCreateUrl;
+      var supplierSelect = document.getElementById("id_supplier");
+      var supplierName = quickSupplierDialog.querySelector("[data-quick-supplier-name]");
+      var supplierPhone = quickSupplierDialog.querySelector("[data-quick-supplier-phone]");
+      var supplierNameError = quickSupplierDialog.querySelector("[data-quick-supplier-name-error]");
+      var supplierPhoneError = quickSupplierDialog.querySelector("[data-quick-supplier-phone-error]");
+      var supplierGeneralError = quickSupplierDialog.querySelector("[data-quick-supplier-error]");
+      var saveSupplier = quickSupplierDialog.querySelector("[data-save-quick-supplier]");
+      var closeSupplierButtons = quickSupplierDialog.querySelectorAll("[data-close-quick-supplier], [data-cancel-quick-supplier]");
+
+      function setSupplierError(node, message) {
+        node.textContent = message || "";
+        node.classList.toggle("hidden", !message);
+      }
+
+      function resetSupplierErrors() {
+        setSupplierError(supplierNameError, "");
+        setSupplierError(supplierPhoneError, "");
+        setSupplierError(supplierGeneralError, "");
+      }
+
+      function closeSupplierDialog() {
+        quickSupplierDialog.classList.add("hidden");
+        quickSupplierDialog.classList.remove("flex");
+        document.body.classList.remove("overflow-hidden");
+        openQuickSupplier.focus();
+      }
+
+      openQuickSupplier.addEventListener("click", function () {
+        resetSupplierErrors();
+        supplierName.value = "";
+        supplierPhone.value = "";
+        quickSupplierDialog.classList.remove("hidden");
+        quickSupplierDialog.classList.add("flex");
+        document.body.classList.add("overflow-hidden");
+        supplierName.focus();
+      });
+      closeSupplierButtons.forEach(function (button) { button.addEventListener("click", closeSupplierDialog); });
+      quickSupplierDialog.addEventListener("click", function (event) { if (event.target === quickSupplierDialog) closeSupplierDialog(); });
+      quickSupplierDialog.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") { closeSupplierDialog(); return; }
+        if (event.key !== "Tab") return;
+        var focusable = Array.prototype.filter.call(
+          quickSupplierDialog.querySelectorAll("button:not([disabled]), input:not([disabled])"),
+          function (element) { return element.offsetParent !== null; }
+        );
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      });
+      saveSupplier.addEventListener("click", function () {
+        resetSupplierErrors();
+        saveSupplier.disabled = true;
+        saveSupplier.textContent = "Saving…";
+        var csrf = supplierForm.querySelector("input[name='csrfmiddlewaretoken']");
+        var body = new URLSearchParams({ company_name: supplierName.value.trim(), phone: supplierPhone.value.trim() });
+        fetch(supplierUrl, {
+          method: "POST",
+          headers: { "X-CSRFToken": csrf.value, "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: body.toString()
+        }).then(function (response) {
+          return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
+        }).then(function (result) {
+          if (!result.ok) {
+            var errors = result.payload.errors || {};
+            setSupplierError(supplierNameError, errors.company_name && errors.company_name[0] ? errors.company_name[0].message : "");
+            setSupplierError(supplierPhoneError, errors.phone && errors.phone[0] ? errors.phone[0].message : "");
+            if (!errors.company_name && !errors.phone) setSupplierError(supplierGeneralError, "Supplier could not be saved. Try again.");
+            return;
+          }
+          var supplier = result.payload.supplier;
+          supplierSelect.appendChild(new Option(supplier.text, String(supplier.id), true, true));
+          supplierSelect.value = String(supplier.id);
+          supplierSelect.dispatchEvent(new Event("change", { bubbles: true }));
+          closeSupplierDialog();
+        }).catch(function () {
+          setSupplierError(supplierGeneralError, "Supplier could not be saved. Check the connection and try again.");
+        }).finally(function () {
+          saveSupplier.disabled = false;
+          saveSupplier.textContent = "Save supplier";
+        });
+      });
+      [supplierName, supplierPhone].forEach(function (input) {
+        input.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            if (!saveSupplier.disabled) saveSupplier.click();
+          }
+        });
+      });
+    }
+
     var formset = document.querySelector("[data-purchase-formset]");
     if (formset) {
       var totalForms = document.getElementById("id_lines-TOTAL_FORMS");

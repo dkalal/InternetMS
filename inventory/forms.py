@@ -127,6 +127,28 @@ class SupplierForm(TenantFormMixin, forms.ModelForm):
         return value
 
 
+class QuickSupplierForm(TenantFormMixin, forms.ModelForm):
+    """Minimal supplier input used only inside the purchasing workspace."""
+
+    class Meta:
+        model = Supplier
+        fields = ['company_name', 'phone']
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, organization=organization, **kwargs)
+        self.fields['company_name'].required = True
+        self.fields['phone'].required = True
+
+    def clean_company_name(self):
+        value = (self.cleaned_data.get('company_name') or '').strip()
+        if Supplier.objects.unscoped().filter(tenant=self.organization, company_name__iexact=value).exists():
+            raise forms.ValidationError('This supplier already exists in your organization.')
+        return value
+
+    def clean_phone(self):
+        return (self.cleaned_data.get('phone') or '').strip()
+
+
 class SupplierPaymentForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = SupplierPaymentRecord

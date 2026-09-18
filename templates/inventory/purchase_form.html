@@ -15,17 +15,29 @@
     <div class="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span aria-hidden="true">●</span><p><strong>Draft — stock has not changed.</strong> Stock movements are created only after the separate confirmation review.</p></div>
   </header>
 
-  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock data-product-search-url="{{ product_search_url }}">
+  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock data-product-search-url="{{ product_search_url }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}">
     {% csrf_token %}{{ form.auto_generated_reference }}
     {% if form.non_field_errors %}<div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert"><p class="font-semibold">The purchase could not be saved.</p>{{ form.non_field_errors }}</div>{% endif %}
     <section class="jims-panel">
       <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 1</p><h2 class="mt-1 font-semibold text-slate-950">Supplier and purchase information</h2><p class="mt-1 text-sm text-slate-600">Choose an active supplier in this organization and record the delivery reference and date.</p></div>
       <div class="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="lg:col-span-2">{% include "components/form_field.html" with field=form.supplier %}</div>
+        <div class="lg:col-span-2">{% include "components/form_field.html" with field=form.supplier %}<button type="button" class="mt-2 text-sm font-semibold text-brand-700 hover:text-brand-900" data-open-quick-supplier>+ New supplier</button></div>
         {% include "components/form_field.html" with field=form.reference_number %}{% include "components/form_field.html" with field=form.purchase_date %}
         <div class="sm:col-span-2 lg:col-span-4">{% include "components/form_field.html" with field=form.notes %}</div>
       </div>
     </section>
+
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-quick-supplier-dialog role="dialog" aria-modal="true" aria-labelledby="quick-supplier-title">
+      <div class="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-5"><div><h2 id="quick-supplier-title" class="text-lg font-bold text-slate-950">New supplier</h2><p class="mt-1 text-sm text-slate-600">Add the essential details now. Complete advanced details later from Suppliers.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-quick-supplier aria-label="Close new supplier dialog">Close</button></div>
+        <div class="space-y-4 p-5">
+          <div><label for="quick-supplier-name" class="block text-sm font-medium text-slate-700">Supplier/company name <span class="text-rose-600">*</span></label><input id="quick-supplier-name" type="text" maxlength="200" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" autocomplete="organization" data-quick-supplier-name><p class="mt-1 hidden text-sm text-rose-600" data-quick-supplier-name-error role="alert"></p></div>
+          <div><label for="quick-supplier-phone" class="block text-sm font-medium text-slate-700">Phone <span class="text-rose-600">*</span></label><input id="quick-supplier-phone" type="tel" maxlength="40" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="+255…" autocomplete="tel" data-quick-supplier-phone><p class="mt-1 hidden text-sm text-rose-600" data-quick-supplier-phone-error role="alert"></p></div>
+          <p class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700" data-quick-supplier-error role="alert"></p>
+        </div>
+        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4"><button type="button" class="jims-btn jims-btn-secondary" data-cancel-quick-supplier>Cancel</button><button type="button" class="jims-btn jims-btn-primary" data-save-quick-supplier data-loading-label="Saving…">Save supplier</button></div>
+      </div>
+    </div>
 
     <section class="jims-panel overflow-hidden">
       <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
