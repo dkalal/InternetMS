@@ -97,3 +97,7 @@ The purchase detail page is the authoritative receipt review. For drafts it deri
 ### Phase 4B cart-readiness contract
 
 The POS catalog derives readiness from the effective price for the cart's active pricing category and the authoritative current cost floor. For an existing cart line it evaluates the next quantity so quantity-break pricing is represented accurately. An unsafe product remains visible with generic pricing-review guidance, but every add/select action is disabled. Existing form, adjustment, discount, checkout, tenant, and permission validation remain the server-side enforcement boundaries; UI readiness never replaces them and no readiness state is persisted.
+
+### Phase 5A pasted-row contract
+
+The purchase workspace may preview up to 200 tab-separated spreadsheet rows identified by exact SKU. Preview is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, size-limited, and non-mutating. It accepts quantity and unit cost in the product's same sales/stock unit plus optional batch, ISO expiry date, and comma-separated serials. Only server-validated rows may be appended to ordinary purchase formset rows; invalid rows remain visible in preview and are never added. Draft save and final confirmation remain the only persistence and stock-posting boundaries.

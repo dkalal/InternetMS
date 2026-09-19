@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import timedelta
+import csv
+from datetime import date, timedelta
 from decimal import Decimal
+from io import StringIO
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -393,6 +395,7 @@ def purchase_list(request):
 
 PURCHASE_WORKSPACE_ACTIONS = frozenset({'save_continue', 'save_review', 'confirm_receive'})
 PURCHASE_PRODUCT_SEARCH_PAGE_SIZE = 20
+PURCHASE_PASTE_MAX_ROWS = 200
 
 
 @login_required
@@ -439,6 +442,83 @@ def purchase_product_search(request):
             for product in rows[:PURCHASE_PRODUCT_SEARCH_PAGE_SIZE]
         ],
         'pagination': {'page': page, 'more': more},
+    })
+
+
+@login_required
+@require_POST
+def purchase_rows_preview(request):
+    """Validate spreadsheet-style purchase rows without mutating any record."""
+    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
+    raw_text = request.POST.get('rows', '')
+    if len(raw_text) > 100_000:
+        return JsonResponse({'error': 'Pasted data is too large.'}, status=400)
+    parsed = [row for row in csv.reader(StringIO(raw_text), delimiter='\t') if any(cell.strip() for cell in row)]
+    if parsed and parsed[0] and parsed[0][0].strip().lower() in {'sku', 'product sku'}:
+        parsed = parsed[1:]
+    if not parsed:
+        return JsonResponse({'error': 'Paste at least one purchase row.'}, status=400)
+    if len(parsed) > PURCHASE_PASTE_MAX_ROWS:
+        return JsonResponse({'error': f'Paste no more than {PURCHASE_PASTE_MAX_ROWS} rows at a time.'}, status=400)
+    sku_values = {row[0].strip().upper() for row in parsed if row and row[0].strip()}
+    products = {
+        product.sku.upper(): product
+        for product in Product.objects.filter(
+            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL,
+            track_stock=True, sku__in=sku_values,
+        ).select_related('sales_unit')
+    }
+    results = []
+    for index, cells in enumerate(parsed, start=1):
+        cells = [cell.strip() for cell in cells] + [''] * 6
+        sku, quantity_raw, cost_raw, batch, expiry_raw, serial_raw = cells[:6]
+        errors = []
+        product = products.get(sku.upper()) if sku else None
+        if not sku:
+            errors.append('SKU is required.')
+        elif product is None:
+            errors.append('No active stock product matches this SKU.')
+        try:
+            quantity = Decimal(quantity_raw)
+            if quantity <= 0:
+                raise ValueError
+        except (ArithmeticError, ValueError):
+            quantity = None
+            errors.append('Quantity must be greater than zero.')
+        try:
+            unit_cost = Decimal(cost_raw)
+            if unit_cost < 0:
+                raise ValueError
+        except (ArithmeticError, ValueError):
+            unit_cost = None
+            errors.append('Unit cost must be zero or greater.')
+        expiry = None
+        if expiry_raw:
+            try:
+                expiry = date.fromisoformat(expiry_raw)
+            except ValueError:
+                errors.append('Expiry must use YYYY-MM-DD.')
+        serials = [value.strip() for value in serial_raw.replace('|', ',').split(',') if value.strip()]
+        if product and product.is_serialized and quantity is not None:
+            if quantity != quantity.to_integral_value() or len(serials) != int(quantity):
+                errors.append('Serialized products require one serial number per whole unit.')
+            if len({value.upper() for value in serials}) != len(serials):
+                errors.append('Serial numbers must be unique within the row.')
+        results.append({
+            'row': index, 'valid': not errors, 'errors': errors,
+            'product': ({
+                'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
+                'unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
+                'serialized': product.is_serialized, 'expiry': product.track_expiry,
+            } if product else None),
+            'quantity': str(quantity) if quantity is not None else quantity_raw,
+            'unit_cost': str(unit_cost) if unit_cost is not None else cost_raw,
+            'batch_reference': batch, 'expiry_date': expiry.isoformat() if expiry else expiry_raw,
+            'serial_numbers': '\n'.join(serials),
+        })
+    return JsonResponse({
+        'rows': results,
+        'summary': {'total': len(results), 'valid': sum(row['valid'] for row in results)},
     })
 
 
@@ -566,6 +646,7 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'workspace_title': 'Edit Purchase' if purchase.pk else 'New Purchase',
         'product_meta': _purchase_product_meta(organization, formset),
         'product_search_url': reverse('inventory:purchase_product_search'),
+        'purchase_rows_preview_url': reverse('inventory:purchase_rows_preview'),
         'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
         'category_quick_create_url': reverse('inventory:purchase_category_quick_create'),
         'product_quick_create_url': reverse('inventory:purchase_product_quick_create'),

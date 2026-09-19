@@ -635,6 +635,108 @@
         });
       }
 
+      var pasteDialog = document.querySelector("[data-paste-rows-dialog]");
+      var openPaste = document.querySelector("[data-open-paste-rows]");
+      if (pasteDialog && openPaste && purchaseForm) {
+        var pasteUrl = purchaseForm.dataset.purchaseRowsPreviewUrl;
+        var pasteInput = pasteDialog.querySelector("[data-paste-rows-input]");
+        var pasteError = pasteDialog.querySelector("[data-paste-rows-error]");
+        var previewPaste = pasteDialog.querySelector("[data-preview-paste-rows]");
+        var addPasted = pasteDialog.querySelector("[data-add-pasted-rows]");
+        var pastePreview = pasteDialog.querySelector("[data-paste-rows-preview]");
+        var pasteResults = pasteDialog.querySelector("[data-paste-rows-results]");
+        var pasteSummary = pasteDialog.querySelector("[data-paste-rows-summary]");
+        var previewedRows = [];
+
+        function pasteMessage(message) {
+          pasteError.textContent = message || "";
+          pasteError.classList.toggle("hidden", !message);
+        }
+        function closePaste() {
+          pasteDialog.classList.add("hidden");
+          pasteDialog.classList.remove("flex");
+          document.body.classList.remove("overflow-hidden");
+          openPaste.focus();
+        }
+        openPaste.addEventListener("click", function () {
+          pasteMessage("");
+          pasteDialog.classList.remove("hidden");
+          pasteDialog.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+          pasteInput.focus();
+        });
+        pasteInput.addEventListener("input", function () {
+          previewedRows = [];
+          pastePreview.classList.add("hidden");
+          addPasted.disabled = true;
+          pasteMessage("");
+        });
+        pasteDialog.querySelectorAll("[data-close-paste-rows], [data-cancel-paste-rows]").forEach(function (button) {
+          button.addEventListener("click", closePaste);
+        });
+        pasteDialog.addEventListener("click", function (event) { if (event.target === pasteDialog) closePaste(); });
+        pasteDialog.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") { closePaste(); return; }
+          if (event.key !== "Tab") return;
+          var focusable = Array.prototype.filter.call(
+            pasteDialog.querySelectorAll("button:not([disabled]), textarea:not([disabled])"),
+            function (element) { return element.offsetParent !== null; }
+          );
+          if (!focusable.length) return;
+          var first = focusable[0];
+          var last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        });
+        previewPaste.addEventListener("click", function () {
+          pasteMessage("");
+          previewPaste.disabled = true;
+          var csrf = purchaseForm.querySelector("input[name='csrfmiddlewaretoken']");
+          fetch(pasteUrl, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+            body: new URLSearchParams({ rows: pasteInput.value }).toString()
+          }).then(function (response) {
+            return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
+          }).then(function (result) {
+            if (!result.ok) { pasteMessage(result.payload.error || "Check the pasted rows."); return; }
+            previewedRows = result.payload.rows || [];
+            pasteResults.replaceChildren();
+            previewedRows.forEach(function (row) {
+              var tr = document.createElement("tr");
+              tr.className = row.valid ? "border-t border-slate-200" : "border-t border-rose-200 bg-rose-50";
+              [row.row, row.product ? row.product.name + " · " + row.product.sku : "—", row.quantity || "—", row.unit_cost || "—", row.valid ? "Ready" : row.errors.join(" ")].forEach(function (value) {
+                var td = document.createElement("td"); td.className = "p-2 align-top"; td.textContent = value; tr.appendChild(td);
+              });
+              pasteResults.appendChild(tr);
+            });
+            pasteSummary.textContent = result.payload.summary.valid + " of " + result.payload.summary.total + " rows ready";
+            pastePreview.classList.remove("hidden");
+            addPasted.disabled = result.payload.summary.valid === 0;
+          }).catch(function () { pasteMessage("Rows could not be previewed. Check the connection."); })
+            .finally(function () { previewPaste.disabled = false; });
+        });
+        addPasted.addEventListener("click", function () {
+          var firstLine = null;
+          previewedRows.filter(function (row) { return row.valid; }).forEach(function (row) {
+            var line = appendLine(row.product);
+            if (!firstLine) firstLine = line;
+            line.querySelector("input[name$='-quantity']").value = row.quantity;
+            line.querySelector("input[name$='-unit_cost']").value = row.unit_cost;
+            line.querySelector("input[name$='-batch_reference']").value = row.batch_reference;
+            line.querySelector("input[name$='-expiry_date']").value = row.expiry_date;
+            line.querySelector("textarea[name$='-serial_numbers']").value = row.serial_numbers;
+            syncLine(line);
+          });
+          closePaste();
+          if (firstLine) firstLine.querySelector("input[name$='-quantity']").focus();
+          previewedRows = [];
+          pasteInput.value = "";
+          pastePreview.classList.add("hidden");
+          addPasted.disabled = true;
+        });
+      }
+
       var bulkDialog = document.querySelector("[data-bulk-product-dialog]");
       var openBulk = document.querySelector("[data-open-bulk-products]");
       if (bulkDialog && openBulk && totalForms && template && productSearchUrl) {
