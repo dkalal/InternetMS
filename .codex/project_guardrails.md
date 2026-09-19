@@ -1,4 +1,4 @@
-# JIMS non-negotiable guardrails — v2.0
+# JS Business Management System (JIMS) non-negotiable guardrails — v2.0
 
 An implementation that violates these guardrails is invalid even if its UI works or its happy-path tests pass.
 
