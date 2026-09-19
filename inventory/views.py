@@ -7,8 +7,11 @@ from io import StringIO
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, OuterRef, Q, Subquery, Sum
+from django.db.models.functions import Upper
 from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
@@ -396,6 +399,7 @@ def purchase_list(request):
 PURCHASE_WORKSPACE_ACTIONS = frozenset({'save_continue', 'save_review', 'confirm_receive'})
 PURCHASE_PRODUCT_SEARCH_PAGE_SIZE = 20
 PURCHASE_PASTE_MAX_ROWS = 200
+PURCHASE_PASTE_DECIMAL_VALIDATOR = DecimalValidator(max_digits=16, decimal_places=6)
 
 
 @login_required
@@ -453,7 +457,10 @@ def purchase_rows_preview(request):
     raw_text = request.POST.get('rows', '')
     if len(raw_text) > 100_000:
         return JsonResponse({'error': 'Pasted data is too large.'}, status=400)
-    parsed = [row for row in csv.reader(StringIO(raw_text), delimiter='\t') if any(cell.strip() for cell in row)]
+    try:
+        parsed = [row for row in csv.reader(StringIO(raw_text), delimiter='\t', strict=True) if any(cell.strip() for cell in row)]
+    except csv.Error:
+        return JsonResponse({'error': 'Pasted rows contain invalid spreadsheet quoting.'}, status=400)
     if parsed and parsed[0] and parsed[0][0].strip().lower() in {'sku', 'product sku'}:
         parsed = parsed[1:]
     if not parsed:
@@ -463,9 +470,9 @@ def purchase_rows_preview(request):
     sku_values = {row[0].strip().upper() for row in parsed if row and row[0].strip()}
     products = {
         product.sku.upper(): product
-        for product in Product.objects.filter(
+        for product in Product.objects.annotate(normalized_sku=Upper('sku')).filter(
             tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL,
-            track_stock=True, sku__in=sku_values,
+            track_stock=True, normalized_sku__in=sku_values,
         ).select_related('sales_unit')
     }
     results = []
@@ -473,6 +480,10 @@ def purchase_rows_preview(request):
         cells = [cell.strip() for cell in cells] + [''] * 6
         sku, quantity_raw, cost_raw, batch, expiry_raw, serial_raw = cells[:6]
         errors = []
+        if any(cell.strip() for cell in cells[6:]):
+            errors.append('Use no more than six columns.')
+        if len(batch) > 100:
+            errors.append('Batch reference must be 100 characters or fewer.')
         product = products.get(sku.upper()) if sku else None
         if not sku:
             errors.append('SKU is required.')
@@ -480,16 +491,18 @@ def purchase_rows_preview(request):
             errors.append('No active stock product matches this SKU.')
         try:
             quantity = Decimal(quantity_raw)
-            if quantity <= 0:
+            if not quantity.is_finite() or quantity <= 0:
                 raise ValueError
-        except (ArithmeticError, ValueError):
+            PURCHASE_PASTE_DECIMAL_VALIDATOR(quantity)
+        except (ArithmeticError, ValueError, ValidationError):
             quantity = None
             errors.append('Quantity must be greater than zero.')
         try:
             unit_cost = Decimal(cost_raw)
-            if unit_cost < 0:
+            if not unit_cost.is_finite() or unit_cost < 0:
                 raise ValueError
-        except (ArithmeticError, ValueError):
+            PURCHASE_PASTE_DECIMAL_VALIDATOR(unit_cost)
+        except (ArithmeticError, ValueError, ValidationError):
             unit_cost = None
             errors.append('Unit cost must be zero or greater.')
         expiry = None

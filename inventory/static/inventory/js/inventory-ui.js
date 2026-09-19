@@ -647,6 +647,7 @@
         var pasteResults = pasteDialog.querySelector("[data-paste-rows-results]");
         var pasteSummary = pasteDialog.querySelector("[data-paste-rows-summary]");
         var previewedRows = [];
+        var pasteRevision = 0;
 
         function pasteMessage(message) {
           pasteError.textContent = message || "";
@@ -666,8 +667,10 @@
           pasteInput.focus();
         });
         pasteInput.addEventListener("input", function () {
+          pasteRevision += 1;
           previewedRows = [];
           pastePreview.classList.add("hidden");
+          pasteSummary.textContent = "";
           addPasted.disabled = true;
           pasteMessage("");
         });
@@ -690,15 +693,19 @@
         });
         previewPaste.addEventListener("click", function () {
           pasteMessage("");
+          pasteSummary.textContent = "";
           previewPaste.disabled = true;
+          var requestedRevision = pasteRevision;
+          var requestedText = pasteInput.value;
           var csrf = purchaseForm.querySelector("input[name='csrfmiddlewaretoken']");
           fetch(pasteUrl, {
             method: "POST",
             headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-            body: new URLSearchParams({ rows: pasteInput.value }).toString()
+            body: new URLSearchParams({ rows: requestedText }).toString()
           }).then(function (response) {
             return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
           }).then(function (result) {
+            if (requestedRevision !== pasteRevision || pasteInput.value !== requestedText) return;
             if (!result.ok) { pasteMessage(result.payload.error || "Check the pasted rows."); return; }
             previewedRows = result.payload.rows || [];
             pasteResults.replaceChildren();
