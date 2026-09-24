@@ -4,9 +4,11 @@ from decimal import Decimal
 
 from django import forms
 from django.forms import BaseInlineFormSet, inlineformset_factory
+from django.db.models import Q
 
 from internetservices.tailwind import apply_tailwind
 from customers.models import CustomerSite
+from customers.models import Customer
 
 from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion
 
@@ -26,10 +28,18 @@ class BillingDocumentForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"rows": 3}),
         }
 
-    def __init__(self, *args, organization=None, doc_type=None, **kwargs):
+    def __init__(self, *args, organization=None, doc_type=None, walk_in_account_id=None, walk_in_name=None, **kwargs):
         super().__init__(*args, **kwargs)
         if organization is not None:
-            self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
+            if walk_in_account_id is not None:
+                self.fields["customer"].queryset = Customer.all_objects.filter(
+                    organization=organization, is_deleted=False,
+                ).filter(Q(is_pos_placeholder=False) | Q(pk=walk_in_account_id, is_pos_placeholder=True))
+                self.fields["customer"].label_from_instance = lambda obj: (
+                    f"Walk-in: {walk_in_name}" if obj.pk == walk_in_account_id else obj.name
+                )
+            else:
+                self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
             self.fields["site"].queryset = CustomerSite.objects.filter(organization=organization, is_active=True).select_related("customer").order_by("customer__name", "-is_primary", "name")
             self.fields["site"].label_from_instance = lambda obj: f"{obj.customer.name} — {obj.name} ({obj.location})"
         if doc_type == BillingDocument.DocumentType.INVOICE:
