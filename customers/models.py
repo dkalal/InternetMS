@@ -109,6 +109,10 @@ class Customer(models.Model):
                 condition=Q(pricing_tier__in=['retail', 'technician', 'wholesale']),
                 name='customer_valid_pricing_tier',
             ),
+            models.UniqueConstraint(
+                fields=['tenant'], condition=Q(is_pos_placeholder=True),
+                name='uniq_pos_placeholder_per_tenant',
+            ),
         ]
         indexes = [
             models.Index(fields=['organization', 'customer_type']),
@@ -121,10 +125,6 @@ class Customer(models.Model):
             models.Index(fields=['organization', 'ip_address'], name="customers_org_ip_idx"),
             models.Index(fields=['organization', 'vlan_id'], name="customers_org_vlan_idx"),
         ]
-        constraints = [models.UniqueConstraint(
-            fields=['tenant'], condition=Q(is_pos_placeholder=True),
-            name='uniq_pos_placeholder_per_tenant',
-        )]
         verbose_name = 'Customer'
         verbose_name_plural = 'Customers'
     
