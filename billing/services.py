@@ -346,6 +346,7 @@ class BillingService:
         invoices = BillingDocument.objects.filter(
             organization=organization,
             customer=customer,
+            is_walk_in_sale=False,
             document_type=BillingDocument.DocumentType.INVOICE,
             status__in=[
                 BillingDocument.Status.SENT,
@@ -419,12 +420,14 @@ class BillingService:
         current_total = invoice.total.quantize(Decimal('0.01'))
         payment_received = state['paid_total']
         total_amount_due = (previous_outstanding + current_total).quantize(Decimal('0.01'))
-        open_account_balance = cls.customer_open_invoice_balance(
-            organization=organization,
-            customer=invoice.customer,
-        )
-        if invoice.status == BillingDocument.Status.DRAFT:
-            open_account_balance = (open_account_balance + state['remaining_balance']).quantize(Decimal('0.01'))
+        if invoice.is_walk_in_sale:
+            open_account_balance = state['remaining_balance']
+        else:
+            open_account_balance = cls.customer_open_invoice_balance(
+                organization=organization, customer=invoice.customer,
+            )
+            if invoice.status == BillingDocument.Status.DRAFT:
+                open_account_balance = (open_account_balance + state['remaining_balance']).quantize(Decimal('0.01'))
         return {
             'previous_outstanding_balance': previous_outstanding,
             'current_invoice_total': current_total,
@@ -652,6 +655,8 @@ class BillingService:
             "number": document.number,
             "status": document.status,
             "customer_id": document.customer_id,
+            "is_walk_in_sale": document.is_walk_in_sale,
+            "walk_in_name_snapshot": document.walk_in_name_snapshot,
             "issue_date": document.issue_date.isoformat() if document.issue_date else None,
             "issued_at": document.issued_at.isoformat() if document.issued_at else None,
             "sent_at": document.sent_at.isoformat() if document.sent_at else None,
@@ -925,6 +930,7 @@ class BillingService:
         payment_method: str = "",
         payment_reference: str = "",
         balance_brought_forward: Decimal = Decimal("0.00"),
+        walk_in_name: str | None = None,
         number: str | None = None,
         version_number: int = 1,
         parent_quotation: BillingDocument | None = None,
@@ -969,6 +975,8 @@ class BillingService:
             document_type=document_type,
             number=number,
             customer=customer,
+            is_walk_in_sale=walk_in_name is not None,
+            walk_in_name_snapshot=walk_in_name or '',
             site=site,
             issue_date=issue_date,
             due_date=due_date,
@@ -1066,6 +1074,7 @@ class BillingService:
         payment_reference: str = "",
         items: list[LineItemInput] | None = None,
         sale_pricing_category: str = BillingDocument.SalePricingCategory.CUSTOMER_TIER,
+        walk_in_name: str | None = None,
     ) -> BillingDocument:
         if issue_date is None:
             issue_date = timezone.localdate()
@@ -1074,6 +1083,16 @@ class BillingService:
         cls._validate_document_status(document_type=document_type, status=status)
 
         customer = cls._resolve_customer(organization=organization, customer_id=customer_id)
+        if walk_in_name is not None:
+            if not customer.is_pos_placeholder or document_type not in {
+                BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.QUOTATION,
+            }:
+                raise BillingServiceError('Walk-in identity requires a POS sale account.')
+            walk_in_name = walk_in_name.strip() or 'Walk-in Customer'
+            if len(walk_in_name) > 200:
+                raise BillingServiceError('Walk-in name cannot exceed 200 characters.')
+        elif customer.is_pos_placeholder and document_type != BillingDocument.DocumentType.RECEIPT:
+            raise BillingServiceError('A POS sale account requires a walk-in identity.')
         site = None
         if site_id is not None:
             site = CustomerSite.objects.filter(
@@ -1115,7 +1134,7 @@ class BillingService:
 
         with transaction.atomic():
             balance_brought_forward = Decimal("0.00")
-            if document_type == BillingDocument.DocumentType.INVOICE:
+            if document_type == BillingDocument.DocumentType.INVOICE and walk_in_name is None:
                 balance_brought_forward = cls.customer_open_invoice_balance(
                     organization=organization,
                     customer=customer,
@@ -1141,6 +1160,7 @@ class BillingService:
                 payment_method=payment_method,
                 payment_reference=payment_reference,
                 balance_brought_forward=balance_brought_forward,
+                walk_in_name=walk_in_name if invoice is None else invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
             )
 
             action_type = {
@@ -1264,6 +1284,7 @@ class BillingService:
                 root_quotation=root,
                 is_current_version=True,
                 sale_pricing_category=sale_pricing_category,
+                walk_in_name=(previous.walk_in_name_snapshot if previous.is_walk_in_sale and previous.customer_id == customer.id else None),
             )
             from inventory.services import CartService
 
@@ -1508,6 +1529,7 @@ class BillingService:
                 notes=quotation.notes,
                 items=items,
                 sale_pricing_category=quotation.sale_pricing_category,
+                walk_in_name=quotation.walk_in_name_snapshot if quotation.is_walk_in_sale else None,
             )
             BillingDocument.objects.filter(pk=invoice.pk).update(source_quotation=quotation)
             BillingDocument.objects.filter(pk=quotation.pk).update(
@@ -1715,6 +1737,7 @@ class BillingService:
                 items=items,
                 sale_pricing_category=invoice.sale_pricing_category,
                 original_invoice=invoice,
+                walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
             )
             from inventory.services import CartService, InventoryService
 
@@ -1815,6 +1838,7 @@ class BillingService:
                 items=[item],
                 sale_pricing_category=invoice.sale_pricing_category,
                 corrected_invoice=invoice,
+                walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
             )
             cls._sync_invoice_after_credit_change(
                 organization=organization,
@@ -2063,6 +2087,7 @@ class BillingService:
                     payment_date=payment_date,
                     payment_method=payment_method,
                     payment_reference=payment_reference,
+                    walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
                 )
             except IntegrityError as exc:
                 if payment_reference:

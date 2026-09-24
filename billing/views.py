@@ -71,9 +71,13 @@ def _receipt_print_context(*, document, organization, logo_data_uri=None):
         .order_by("id")
     )
 
-    is_walk_in = False
-    customer_name = document.customer.name
-    if source_invoice is not None:
+    is_walk_in = document.is_walk_in_sale or (source_invoice is not None and source_invoice.is_walk_in_sale)
+    customer_name = (
+        document.display_customer_name if document.is_walk_in_sale
+        else source_invoice.display_customer_name if source_invoice is not None and source_invoice.is_walk_in_sale
+        else document.customer.name
+    )
+    if source_invoice is not None and not is_walk_in:
         # A POS walk-in is deliberately represented by a customer record when
         # billing is issued. The cart remains the reliable record of whether a
         # registered customer was selected for that transaction.
@@ -392,6 +396,7 @@ def document_list(request, doc_type: str):
         documents = documents.filter(
             Q(number__icontains=q)
             | Q(customer__name__icontains=q)
+            | Q(walk_in_name_snapshot__icontains=q)
             | Q(invoice__number__icontains=q)
             | Q(payment_reference__icontains=q)
         )
@@ -748,7 +753,11 @@ def document_edit(request, doc_type: str, pk: int):
 
     if doc_type == BillingDocument.DocumentType.QUOTATION:
         form_class = BillingDocumentForm
-        form_kwargs = {"organization": organization, "doc_type": doc_type}
+        form_kwargs = {
+            "organization": organization, "doc_type": doc_type,
+            "walk_in_account_id": document.customer_id if document.is_walk_in_sale else None,
+            "walk_in_name": document.walk_in_name_snapshot if document.is_walk_in_sale else None,
+        }
         quotation_state = QuotationLifecycleService.get_action_state(organization=organization, quotation=document)
         if not quotation_state["can_edit"]:
             messages.error(request, "Only the current draft quotation can be revised from this screen.")

@@ -135,7 +135,7 @@
           {% for document in documents %}
             <tr class="hover:bg-slate-50">
               <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ document.number }}</td>
-              <td class="px-4 py-3 text-sm text-slate-700">{{ document.customer.name }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">{{ document.display_customer_name }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ document.issue_date|date:"d M Y" }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{% include "components/status_badge.html" with value=document.status label=document.get_status_display %}</td>
               {% if doc_type == "invoice" %}

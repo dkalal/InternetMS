@@ -52,6 +52,7 @@ class Customer(models.Model):
     uuid = models.UUIDField(default=uuid_lib.uuid4, editable=False, unique=True, db_index=True)
     name = models.CharField(max_length=200, db_index=True)
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, db_index=True)
+    is_pos_placeholder = models.BooleanField(default=False, editable=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     pricing_tier = models.CharField(max_length=20, choices=PricingTier.choices, default=PricingTier.RETAIL, db_index=True)
 
@@ -120,6 +121,10 @@ class Customer(models.Model):
             models.Index(fields=['organization', 'ip_address'], name="customers_org_ip_idx"),
             models.Index(fields=['organization', 'vlan_id'], name="customers_org_vlan_idx"),
         ]
+        constraints = [models.UniqueConstraint(
+            fields=['tenant'], condition=Q(is_pos_placeholder=True),
+            name='uniq_pos_placeholder_per_tenant',
+        )]
         verbose_name = 'Customer'
         verbose_name_plural = 'Customers'
     

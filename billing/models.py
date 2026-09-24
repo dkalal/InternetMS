@@ -70,6 +70,8 @@ class BillingDocument(models.Model):
     number = models.CharField(max_length=60)
 
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_documents")
+    is_walk_in_sale = models.BooleanField(default=False, editable=False)
+    walk_in_name_snapshot = models.CharField(max_length=200, blank=True, default='', editable=False)
     site = models.ForeignKey(
         "customers.CustomerSite",
         on_delete=models.PROTECT,
@@ -252,6 +254,10 @@ class BillingDocument(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_document_type_display()} #{self.number}"
+
+    @property
+    def display_customer_name(self) -> str:
+        return self.walk_in_name_snapshot if self.is_walk_in_sale else self.customer.name
 
     @classmethod
     def invoice_status_choices(cls):

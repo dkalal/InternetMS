@@ -143,7 +143,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
 class InvoiceSerializer(serializers.ModelSerializer):
     items = InvoiceLineSerializer(many=True, read_only=True)
-    customer_name = serializers.CharField(source='customer.name')
+    customer_name = serializers.CharField(source='display_customer_name', read_only=True)
 
     class Meta:
         model = BillingDocument
@@ -159,7 +159,7 @@ class InvoiceItemInputSerializer(serializers.Serializer):
 
 class InvoiceCreateSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(required=False, allow_null=True)
-    walk_in_name = serializers.CharField(required=False, allow_blank=True)
+    walk_in_name = serializers.CharField(required=False, allow_blank=True, max_length=200)
     sale_pricing_category = serializers.ChoiceField(
         choices=(
             BillingDocument.SalePricingCategory.CUSTOMER_TIER,
@@ -179,7 +179,9 @@ class InvoiceCreateSerializer(serializers.Serializer):
         request = self.context['request']
         organization = resolve_integration_consumer(request).organization
         customer_id = validated_data.get('customer_id')
+        walk_in_name = None
         if customer_id is None:
+            walk_in_name = validated_data.get('walk_in_name', '').strip() or 'Walk-in Customer'
             customer_id = CartService._walk_in_customer(organization=organization, label=validated_data.get('walk_in_name', '')).pk
         customer = Customer.all_objects.filter(pk=customer_id, tenant=organization, is_deleted=False).first()
         if customer is None:
@@ -230,6 +232,7 @@ class InvoiceCreateSerializer(serializers.Serializer):
                 customer_id=customer_id, status=validated_data['status'], tax_rate=validated_data['tax_rate'],
                 discount_amount=validated_data['discount_amount'], notes=validated_data.get('notes', ''), items=inputs,
                 sale_pricing_category=sale_pricing_category,
+                walk_in_name=walk_in_name,
             )
         except BillingServiceError as exc:
             raise serializers.ValidationError(str(exc)) from exc
