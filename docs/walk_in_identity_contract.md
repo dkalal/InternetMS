@@ -30,19 +30,27 @@ restored pre-migration backup if full rollback is required.
 
 ### Office deployment preflight
 
-Run this from the repository root on the office host, with the PR branch
-checked out, **before starting the updated web container** (its startup
-command runs migrations automatically). Keep the backup outside the repo:
+Run this from the existing repository root on the office host, **before
+starting the updated web container** (its startup command runs migrations
+automatically). Fetching the PR branch only downloads its Git objects; it does
+not switch the office checkout, replace its files, or restart its containers.
+Keep the backup outside the repo:
 
 ```bash
+git fetch origin refs/heads/fix/walk-in-sale-identity:refs/remotes/origin/fix/walk-in-sale-identity
 umask 077
 walk_in_backup="../jims-pre-walk-in-$(date -u +%Y%m%dT%H%M%SZ).dump"
 docker compose exec -T db pg_dump -U postgres -d js_internetservices -Fc > "$walk_in_backup"
 test -s "$walk_in_backup"
 docker compose exec -T db pg_restore --list < "$walk_in_backup" > /dev/null
-docker compose exec -T db psql -X -U postgres -d js_internetservices -v ON_ERROR_STOP=1 < docs/walk_in_predeploy_audit.sql
+set -o pipefail
+git show origin/fix/walk-in-sale-identity:docs/walk_in_predeploy_audit.sql | \
+  docker compose exec -T db psql -X -U postgres -d js_internetservices -v ON_ERROR_STOP=1
 ```
 
+The `git show` command reads the audit file directly from the fetched branch.
+Do not run `git pull`, `git switch`, or `docker compose up` to perform this
+preflight. Confirm that the fetch succeeds before running the other commands.
 `pg_restore --list` verifies that the archive can be read; verify a full restore
 in an isolated database before relying on it as a recovery plan. The SQL file
 uses a read-only transaction and the pre-migration schema. Review every invoice
