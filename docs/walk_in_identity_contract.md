@@ -28,5 +28,35 @@ correction workflow. Rollback of the schema migration would
 remove the added snapshots, so deploy the previous app version against a
 restored pre-migration backup if full rollback is required.
 
+### Office deployment preflight
+
+Run this from the repository root on the office host, with the PR branch
+checked out, **before starting the updated web container** (its startup
+command runs migrations automatically). Keep the backup outside the repo:
+
+```bash
+umask 077
+walk_in_backup="../jims-pre-walk-in-$(date -u +%Y%m%dT%H%M%SZ).dump"
+docker compose exec -T db pg_dump -U postgres -d js_internetservices -Fc > "$walk_in_backup"
+test -s "$walk_in_backup"
+docker compose exec -T db pg_restore --list < "$walk_in_backup" > /dev/null
+docker compose exec -T db psql -X -U postgres -d js_internetservices -v ON_ERROR_STOP=1 < docs/walk_in_predeploy_audit.sql
+```
+
+`pg_restore --list` verifies that the archive can be read; verify a full restore
+in an isolated database before relying on it as a recovery plan. The SQL file
+uses a read-only transaction and the pre-migration schema. Review every invoice
+in `review_references` with the authorized finance owner; a nonzero prior
+balance remains as issued and must be corrected through the approved financial
+workflow. No rows means no invoices with a qualifying POS cart were found; it
+does not prove manually created invoices are walk-in sales. Do not share raw
+audit output or the backup publicly.
+
+After backup, audit, review and a staging migration, smoke test two unpaid
+walk-in invoices with the same name, a registered customer with that name,
+quotation conversion, a receipt, reissue and tenant isolation. Check names
+on detail and print views and that a new walk-in invoice has zero brought-forward
+balance. Keep the PR in draft until those deployment gates are complete.
+
 Shipping and fulfillment are a separate later phase. A walk-in delivery will
 attach a one-time transaction address, without creating a customer profile.
