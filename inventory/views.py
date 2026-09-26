@@ -461,6 +461,10 @@ def purchase_rows_preview(request):
         parsed = [row for row in csv.reader(StringIO(raw_text), delimiter='\t', strict=True) if any(cell.strip() for cell in row)]
     except csv.Error:
         return JsonResponse({'error': 'Pasted rows contain invalid spreadsheet quoting.'}, status=400)
+    # Normalize manually typed, whitespace-delimited rows before collecting SKUs.
+    # Otherwise an otherwise valid space-separated SKU is absent from the single
+    # tenant-scoped catalog lookup unless a tab-separated row happens to share it.
+    parsed = [row[0].split() if len(row) == 1 and len(row[0].split()) > 1 else row for row in parsed]
     if parsed and parsed[0] and parsed[0][0].strip().lower() in {'sku', 'product sku'}:
         parsed = parsed[1:]
     if not parsed:
@@ -489,22 +493,30 @@ def purchase_rows_preview(request):
             errors.append('SKU is required.')
         elif product is None:
             errors.append('No active stock product matches this SKU.')
-        try:
-            quantity = Decimal(quantity_raw)
-            if not quantity.is_finite() or quantity <= 0:
-                raise ValueError
-            PURCHASE_PASTE_DECIMAL_VALIDATOR(quantity)
-        except (ArithmeticError, ValueError, ValidationError):
-            quantity = None
-            errors.append('Quantity must be greater than zero.')
-        try:
-            unit_cost = Decimal(cost_raw)
-            if not unit_cost.is_finite() or unit_cost < 0:
-                raise ValueError
-            PURCHASE_PASTE_DECIMAL_VALIDATOR(unit_cost)
-        except (ArithmeticError, ValueError, ValidationError):
-            unit_cost = None
-            errors.append('Unit cost must be zero or greater.')
+        quantity = None
+        if not quantity_raw:
+            errors.append('Quantity is required.')
+        else:
+            try:
+                quantity = Decimal(quantity_raw)
+                if not quantity.is_finite() or quantity <= 0:
+                    raise ValueError
+                PURCHASE_PASTE_DECIMAL_VALIDATOR(quantity)
+            except (ArithmeticError, ValueError, ValidationError):
+                quantity = None
+                errors.append('Quantity must be greater than zero.')
+        unit_cost = None
+        if not cost_raw:
+            errors.append('Unit cost is required.')
+        else:
+            try:
+                unit_cost = Decimal(cost_raw)
+                if not unit_cost.is_finite() or unit_cost < 0:
+                    raise ValueError
+                PURCHASE_PASTE_DECIMAL_VALIDATOR(unit_cost)
+            except (ArithmeticError, ValueError, ValidationError):
+                unit_cost = None
+                errors.append('Unit cost must be zero or greater.')
         expiry = None
         if expiry_raw:
             try:

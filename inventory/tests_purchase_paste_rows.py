@@ -149,6 +149,47 @@ class PurchasePasteRowsTests(TestCase):
         self.assertEqual(rows[0]['batch_reference'], 'Batch\tA')
         self.assertEqual(rows[1]['product']['id'], self.product.pk)
 
+    def test_mixed_tab_and_space_separated_three_column_rows(self):
+        self.client.login(username='paste-admin', password='pass')
+        response = self.preview('PASTE-RTR\t1\t50\npaste-rtr  2  0\nPASTE-RTR    3    25.5')
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()['rows']
+        self.assertEqual(response.json()['summary'], {'total': 3, 'valid': 3})
+        self.assertEqual([row['quantity'] for row in rows], ['1', '2', '3'])
+        self.assertEqual([row['unit_cost'] for row in rows], ['50', '0', '25.5'])
+        self.assertTrue(all(row['product']['id'] == self.product.pk for row in rows))
+
+    def test_single_space_separated_row_resolves_sku_without_any_tab_row(self):
+        self.client.login(username='paste-admin', password='pass')
+        row = self.preview('PASTE-RTR 1 50').json()['rows'][0]
+        self.assertTrue(row['valid'], row['errors'])
+        self.assertEqual(row['product']['id'], self.product.pk)
+
+    def test_space_separated_batch_and_expiry_and_incomplete_rows(self):
+        self.client.login(username='paste-admin', password='pass')
+        rows = self.preview('\n'.join((
+            'PASTE-RTR 10 250000 BATCH 2026-09-09',
+            'PASTE-RTR 1 250000',
+            'UNKNOWN-SKU 3 2500000',
+            'PASTE-RTR',
+        ))).json()['rows']
+        self.assertTrue(rows[0]['valid'], rows[0]['errors'])
+        self.assertEqual(rows[0]['batch_reference'], 'BATCH')
+        self.assertEqual(rows[0]['expiry_date'], '2026-09-09')
+        self.assertTrue(rows[1]['valid'], rows[1]['errors'])
+        self.assertFalse(rows[2]['valid'])
+        self.assertIn('No active stock product', rows[2]['errors'][0])
+        self.assertFalse(rows[3]['valid'])
+        self.assertEqual(rows[3]['product']['id'], self.product.pk)
+        self.assertIn('Quantity is required.', rows[3]['errors'])
+        self.assertIn('Unit cost is required.', rows[3]['errors'])
+
+    def test_more_than_six_space_separated_columns_are_rejected(self):
+        self.client.login(username='paste-admin', password='pass')
+        row = self.preview('PASTE-RTR 1 50 BATCH 2026-09-09 A B').json()['rows'][0]
+        self.assertFalse(row['valid'])
+        self.assertIn('Use no more than six columns.', row['errors'])
+
     def test_unknown_inactive_service_and_untracked_skus_are_rejected(self):
         self.client.login(username='paste-admin', password='pass')
         for sku, changes in (
