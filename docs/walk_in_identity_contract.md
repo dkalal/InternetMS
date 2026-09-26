@@ -66,5 +66,24 @@ quotation conversion, a receipt, reissue and tenant isolation. Check names
 on detail and print views and that a new walk-in invoice has zero brought-forward
 balance. Keep the PR in draft until those deployment gates are complete.
 
-Shipping and fulfillment are a separate later phase. A walk-in delivery will
-attach a one-time transaction address, without creating a customer profile.
+Fulfillment and delivery tracking remain a separate later phase.
+
+### One-time walk-in shipping address
+
+A draft POS cart may hold an optional shipping address (up to 500 characters)
+when no registered customer is selected. Leaving it blank means collection or
+no recorded delivery address. Cart conversion freezes the address on the
+quotation or invoice; quotation conversion/versioning, invoice reissue, credit
+notes and receipts carry the snapshot forward. The detail and printed sales
+documents show it as “Ship to,” separate from the registered customer's billing
+address. Two walk-in sales sharing the internal POS account never share an
+address. Forms, the invoice API and the billing service reject an address
+supplied with a registered customer. No customer record, shipping charge,
+fulfillment status or stock movement is created by recording this address.
+
+Migrations `inventory.0012` and `billing.0033` add blank columns; existing
+carts and documents remain blank, with no inference or data rewrite. A previous
+app version can read the additive schema; reversing these migrations removes
+addresses recorded after deployment, so preserve a database backup before
+rollback. Issued documents retain the original snapshot and require existing
+correction workflows for changes.

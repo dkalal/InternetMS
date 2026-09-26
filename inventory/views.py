@@ -1022,6 +1022,7 @@ def cart_create(request):
             status=Cart.Status.DRAFT,
             customer__isnull=True,
             walk_in_name='',
+            shipping_address='',
             discount_amount=Decimal('0.00'),
             tax_rate=Decimal('0.00'),
             notes='',
