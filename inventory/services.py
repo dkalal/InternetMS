@@ -565,17 +565,18 @@ class CartService:
             tenant=organization,
             defaults={'organization': organization, 'walk_in_customer_label': 'Walk-in Customer'},
         )
-        name = (label or settings_obj.walk_in_customer_label).strip() or 'Walk-in Customer'
-        customer = Customer.all_objects.filter(tenant=organization, name=name, customer_type='random', is_deleted=False).first()
-        if customer is None:
-            customer = Customer.all_objects.create(
+        # Billing requires a customer FK. This internal, tenant-owned account
+        # is never the identity of a shopper; every sale owns its own snapshot.
+        customer, _ = Customer.all_objects.get_or_create(
+            tenant=organization, is_pos_placeholder=True,
+            defaults=dict(
                 organization=organization,
-                tenant=organization,
-                name=name,
+                name=settings_obj.walk_in_customer_label.strip() or 'Walk-in Customer',
                 customer_type='random',
                 status=Customer.Status.ACTIVE,
                 location='Walk-in',
-            )
+            ),
+        )
         return customer
 
     @classmethod
@@ -641,6 +642,7 @@ class CartService:
             notes=cart.notes,
             items=inputs,
             sale_pricing_category=cart.sale_pricing_category,
+            walk_in_name=(cart.walk_in_name.strip() or 'Walk-in Customer') if cart.customer_id is None else None,
         )
         document_lines = list(document.items.order_by('id'))
         for cart_line, document_line in zip(lines, document_lines):

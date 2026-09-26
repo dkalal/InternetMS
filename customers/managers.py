@@ -68,7 +68,7 @@ class CustomerManager(models.Manager):
     """Custom manager for Customer model"""
     
     def get_queryset(self):
-        queryset = CustomerQuerySet(self.model, using=self._db).alive()
+        queryset = CustomerQuerySet(self.model, using=self._db).alive().filter(is_pos_placeholder=False)
         return scope_queryset(queryset, field_name="tenant")
 
     def with_deleted(self):

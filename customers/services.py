@@ -356,7 +356,7 @@ class CustomerService:
             if customer_instance.pk:
                 existing = (
                     Customer.all_objects.select_for_update()
-                    .filter(organization=organization, pk=customer_instance.pk)
+                    .filter(organization=organization, pk=customer_instance.pk, is_pos_placeholder=False)
                     .only("id", "status", "is_deleted")
                     .first()
                 )
@@ -502,7 +502,7 @@ class CustomerService:
         with transaction.atomic():
             customer = (
                 Customer.all_objects.select_for_update()
-                .filter(organization=organization, id=customer_id)
+                .filter(organization=organization, id=customer_id, is_pos_placeholder=False)
                 .first()
             )
             if customer is None:
@@ -532,7 +532,7 @@ class CustomerService:
         with transaction.atomic():
             customer = (
                 Customer.all_objects.select_for_update()
-                .filter(organization=organization, id=customer_id)
+                .filter(organization=organization, id=customer_id, is_pos_placeholder=False)
                 .first()
             )
             if customer is None:
@@ -564,7 +564,7 @@ class CustomerService:
         with transaction.atomic():
             customer = (
                 Customer.all_objects.select_for_update()
-                .filter(organization=organization, id=customer_id)
+                .filter(organization=organization, id=customer_id, is_pos_placeholder=False)
                 .first()
             )
             if customer is None:
@@ -591,7 +591,7 @@ class CustomerService:
         with transaction.atomic():
             customer = (
                 Customer.all_objects.select_for_update()
-                .filter(organization=organization, id=customer_id)
+                .filter(organization=organization, id=customer_id, is_pos_placeholder=False)
                 .first()
             )
             if customer is None:
@@ -639,7 +639,7 @@ class CustomerService:
         with transaction.atomic():
             customer = (
                 Customer.all_objects.select_for_update()
-                .filter(organization=organization, id=customer_id)
+                .filter(organization=organization, id=customer_id, is_pos_placeholder=False)
                 .first()
             )
             if customer is None:

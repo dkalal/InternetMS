@@ -52,6 +52,7 @@ class Customer(models.Model):
     uuid = models.UUIDField(default=uuid_lib.uuid4, editable=False, unique=True, db_index=True)
     name = models.CharField(max_length=200, db_index=True)
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, db_index=True)
+    is_pos_placeholder = models.BooleanField(default=False, editable=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     pricing_tier = models.CharField(max_length=20, choices=PricingTier.choices, default=PricingTier.RETAIL, db_index=True)
 
@@ -107,6 +108,10 @@ class Customer(models.Model):
             models.CheckConstraint(
                 condition=Q(pricing_tier__in=['retail', 'technician', 'wholesale']),
                 name='customer_valid_pricing_tier',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant'], condition=Q(is_pos_placeholder=True),
+                name='uniq_pos_placeholder_per_tenant',
             ),
         ]
         indexes = [

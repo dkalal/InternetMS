@@ -11,8 +11,8 @@
     <div class="panel-body">
       <div class="quote-bill-grid{% if document.document_type == 'receipt' %} extended{% endif %}">
         <div class="quote-bill-main">
-          <h3 class="quote-bill-name">{{ document.customer.name }}</h3>
-          {{ document.customer.address }}
+          <h3 class="quote-bill-name">{{ document.display_customer_name }}</h3>
+          {% if not document.is_walk_in_sale %}{{ document.customer.address }}{% endif %}
           {% comment %} <p>
             {% if document.customer.address %}
               {{ document.customer.address }}
