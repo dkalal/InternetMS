@@ -364,21 +364,13 @@ class InventoryService:
         product_lines = [line for line in billing_lines if line.product_id]
         # Recheck immediately before stock leaves: a newer receipt may have raised
         # weighted-average cost after this invoice was drafted or issued.
-        from billing.services import BillingService, BillingServiceError
-        try:
-            BillingService._validate_product_cost_floors(
-                organization=organization,
-                actor=actor,
-                line_items=product_lines,
-                document_discount=getattr(invoice, 'discount_amount', Decimal('0.00')),
-            )
-        except BillingServiceError as exc:
-            raise InventoryError(
-                'The invoice product price is below its current cost per sales unit. '
-                'Changing the receipt amount cannot fix this: payment must match the invoice balance. '
-                'Review the product unit and purchase cost, then correct the unpaid invoice using the approved invoice workflow. '
-                f'{exc}'
-            ) from exc
+        from billing.services import BillingService
+        BillingService._validate_product_cost_floors(
+            organization=organization,
+            actor=actor,
+            line_items=product_lines,
+            document_discount=getattr(invoice, 'discount_amount', Decimal('0.00')),
+        )
         subtotal = sum((line.line_total for line in product_lines), Decimal('0.00'))
         document_discount = money(getattr(invoice, 'discount_amount', Decimal('0.00')))
         processed_discount = Decimal('0.00')

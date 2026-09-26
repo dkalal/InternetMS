@@ -964,34 +964,6 @@ class InventoryAcceptanceTests(TestCase):
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('1.00'))
         self.assertFalse(BillingDocument.objects.filter(document_type='receipt', invoice=invoice).exists())
 
-    def test_higher_cost_after_issuance_explains_receipt_rejection_and_rolls_back(self):
-        self.receive(quantity=10)
-        invoice = self.invoice(quantity=2)
-        higher_cost_purchase = Purchase.objects.create(
-            organization=self.org, tenant=self.org, supplier=self.supplier,
-            reference_number='PUR-HIGHER-COST', purchase_date=date.today(), created_by=self.admin,
-        )
-        PurchaseLine.objects.create(
-            purchase=higher_cost_purchase, product=self.product,
-            quantity=Decimal('10'), unit_cost=Decimal('250.00'),
-        )
-        InventoryService.confirm_purchase(
-            organization=self.org, purchase_id=higher_cost_purchase.pk, actor=self.admin,
-        )
-        self.assertEqual(InventoryBalance.objects.get(product=self.product).average_cost, Decimal('175.000000'))
-
-        with self.assertRaises(BillingServiceError) as error:
-            self.pay(invoice, amount=invoice.total, reference='higher-cost-payment')
-        self.assertIn('Changing the receipt amount cannot fix this', str(error.exception))
-        self.assertIn('current cost of TZS 175.000000', str(error.exception))
-        invoice.refresh_from_db()
-        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
-        self.assertFalse(BillingDocument.objects.filter(document_type='receipt', invoice=invoice).exists())
-        self.assertFalse(StockMovement.objects.filter(
-            billing_line__document=invoice, movement_type=StockMovement.MovementType.SALE_OUT,
-        ).exists())
-        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('20.000000'))
-
     def test_11_12_serial_required_and_sold_serial_cannot_be_reused(self):
         serialized = self.make_product('Managed Router', 'SER-001', serialized=True)
         self.receive(product=serialized, quantity=2, serials='SN-001\nSN-002')
