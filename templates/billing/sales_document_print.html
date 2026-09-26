@@ -119,6 +119,9 @@
         {% if document.customer.tin_number %}<div class="party-line">TIN: {{ document.customer.tin_number }}</div>{% endif %}
         {% if document.customer.vrn_number %}<div class="party-line">VRN: {{ document.customer.vrn_number }}</div>{% endif %}
       {% endif %}
+      {% if document.shipping_address_snapshot %}
+        <div class="party-line"><strong>Ship to:</strong> {{ document.shipping_address_snapshot }}</div>
+      {% endif %}
     </div>
   </section>
 

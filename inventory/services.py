@@ -595,6 +595,8 @@ class CartService:
             raise InventoryError('Only draft carts can be converted.')
         if target not in {BillingDocument.DocumentType.QUOTATION, BillingDocument.DocumentType.INVOICE}:
             raise InventoryError('Cart can only become a quotation or invoice.')
+        if cart.customer_id and cart.shipping_address.strip():
+            raise InventoryError('A walk-in shipping address cannot be used with a registered customer.')
         lines = list(cart.lines.select_related('product').prefetch_related('serial_selections__stock_unit').order_by('id'))
         if not lines:
             raise InventoryError('Add at least one cart item before conversion.')
@@ -643,6 +645,7 @@ class CartService:
             items=inputs,
             sale_pricing_category=cart.sale_pricing_category,
             walk_in_name=(cart.walk_in_name.strip() or 'Walk-in Customer') if cart.customer_id is None else None,
+            shipping_address=cart.shipping_address if cart.customer_id is None else '',
         )
         document_lines = list(document.items.order_by('id'))
         for cart_line, document_line in zip(lines, document_lines):

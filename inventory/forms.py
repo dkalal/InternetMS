@@ -408,11 +408,12 @@ class StockAdjustmentForm(TenantFormMixin, forms.Form):
 class CartForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = Cart
-        fields = ['customer', 'walk_in_name', 'sale_pricing_category', 'discount_amount', 'tax_rate', 'notes']
+        fields = ['customer', 'walk_in_name', 'shipping_address', 'sale_pricing_category', 'discount_amount', 'tax_rate', 'notes']
         widgets = {'notes': forms.Textarea(attrs={'rows': 3})}
         help_texts = {
             'customer': 'Leave blank for a walk-in customer.',
             'walk_in_name': 'Optional name to print when no customer record is selected.',
+            'shipping_address': 'Optional delivery address for this walk-in sale only. Leave blank for collection.',
             'sale_pricing_category': 'Customer category is automatic unless an authorized override is selected.',
             'discount_amount': 'Cart-wide discount applied after line discounts.',
             'tax_rate': 'VAT percentage applied after discounts.',
@@ -461,6 +462,8 @@ class CartForm(TenantFormMixin, forms.ModelForm):
         customer = cleaned.get('customer')
         if customer and customer.tenant_id != self.organization.id:
             raise forms.ValidationError('Customer must belong to the active tenant.')
+        if customer and cleaned.get('shipping_address', '').strip():
+            self.add_error('shipping_address', 'This address is for a walk-in sale without a selected customer.')
         if (cleaned.get('discount_amount') or 0) < 0:
             self.add_error('discount_amount', 'Discount cannot be negative.')
         if (cleaned.get('tax_rate') or 0) < 0:

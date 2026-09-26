@@ -657,6 +657,7 @@ class BillingService:
             "customer_id": document.customer_id,
             "is_walk_in_sale": document.is_walk_in_sale,
             "walk_in_name_snapshot": document.walk_in_name_snapshot,
+            "shipping_address_snapshot": document.shipping_address_snapshot,
             "issue_date": document.issue_date.isoformat() if document.issue_date else None,
             "issued_at": document.issued_at.isoformat() if document.issued_at else None,
             "sent_at": document.sent_at.isoformat() if document.sent_at else None,
@@ -931,6 +932,7 @@ class BillingService:
         payment_reference: str = "",
         balance_brought_forward: Decimal = Decimal("0.00"),
         walk_in_name: str | None = None,
+        shipping_address: str = '',
         number: str | None = None,
         version_number: int = 1,
         parent_quotation: BillingDocument | None = None,
@@ -977,6 +979,7 @@ class BillingService:
             customer=customer,
             is_walk_in_sale=walk_in_name is not None,
             walk_in_name_snapshot=walk_in_name or '',
+            shipping_address_snapshot=shipping_address,
             site=site,
             issue_date=issue_date,
             due_date=due_date,
@@ -1075,6 +1078,7 @@ class BillingService:
         items: list[LineItemInput] | None = None,
         sale_pricing_category: str = BillingDocument.SalePricingCategory.CUSTOMER_TIER,
         walk_in_name: str | None = None,
+        shipping_address: str = '',
     ) -> BillingDocument:
         if issue_date is None:
             issue_date = timezone.localdate()
@@ -1093,6 +1097,13 @@ class BillingService:
                 raise BillingServiceError('Walk-in name cannot exceed 200 characters.')
         elif customer.is_pos_placeholder and document_type != BillingDocument.DocumentType.RECEIPT:
             raise BillingServiceError('A POS sale account requires a walk-in identity.')
+        if not isinstance(shipping_address, str):
+            raise BillingServiceError('Shipping address must be text.')
+        shipping_address = shipping_address.strip()
+        if len(shipping_address) > 500:
+            raise BillingServiceError('Shipping address cannot exceed 500 characters.')
+        if shipping_address and walk_in_name is None:
+            raise BillingServiceError('A shipping address here requires a walk-in sale.')
         site = None
         if site_id is not None:
             site = CustomerSite.objects.filter(
@@ -1161,6 +1172,7 @@ class BillingService:
                 payment_reference=payment_reference,
                 balance_brought_forward=balance_brought_forward,
                 walk_in_name=walk_in_name if invoice is None else invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
+                shipping_address=shipping_address if invoice is None else invoice.shipping_address_snapshot,
             )
 
             action_type = {
@@ -1285,6 +1297,7 @@ class BillingService:
                 is_current_version=True,
                 sale_pricing_category=sale_pricing_category,
                 walk_in_name=(previous.walk_in_name_snapshot if previous.is_walk_in_sale and previous.customer_id == customer.id else None),
+                shipping_address=(previous.shipping_address_snapshot if previous.is_walk_in_sale and previous.customer_id == customer.id else ''),
             )
             from inventory.services import CartService
 
@@ -1530,6 +1543,7 @@ class BillingService:
                 items=items,
                 sale_pricing_category=quotation.sale_pricing_category,
                 walk_in_name=quotation.walk_in_name_snapshot if quotation.is_walk_in_sale else None,
+                shipping_address=quotation.shipping_address_snapshot,
             )
             BillingDocument.objects.filter(pk=invoice.pk).update(source_quotation=quotation)
             BillingDocument.objects.filter(pk=quotation.pk).update(
@@ -1738,6 +1752,7 @@ class BillingService:
                 sale_pricing_category=invoice.sale_pricing_category,
                 original_invoice=invoice,
                 walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
+                shipping_address=invoice.shipping_address_snapshot,
             )
             from inventory.services import CartService, InventoryService
 
@@ -1839,6 +1854,7 @@ class BillingService:
                 sale_pricing_category=invoice.sale_pricing_category,
                 corrected_invoice=invoice,
                 walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
+                shipping_address=invoice.shipping_address_snapshot,
             )
             cls._sync_invoice_after_credit_change(
                 organization=organization,
@@ -2088,6 +2104,7 @@ class BillingService:
                     payment_method=payment_method,
                     payment_reference=payment_reference,
                     walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
+                    shipping_address=invoice.shipping_address_snapshot,
                 )
             except IntegrityError as exc:
                 if payment_reference:
