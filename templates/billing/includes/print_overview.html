@@ -21,6 +21,12 @@
             {% endif %}
           </p> {% endcomment %}
         </div>
+        {% if document.shipping_address_snapshot %}
+          <div class="quote-bill-meta">
+            <span class="quote-bill-label">Ship to</span>
+            <span class="quote-bill-meta-value">{{ document.shipping_address_snapshot|linebreaksbr }}</span>
+          </div>
+        {% endif %}
         <div class="quote-bill-meta">
           <span class="quote-bill-label">TIN</span>
           <span class="quote-bill-meta-value">{{ document.customer.tin_number|default:"-" }}</span>

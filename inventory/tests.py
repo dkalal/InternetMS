@@ -1475,6 +1475,24 @@ class InventoryAPITests(TestCase):
         self.assertEqual(paid.status_code, 201, paid.data)
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('3.00'))
 
+    def test_api_walk_in_address_is_transaction_scoped_and_rejects_registered_customer(self):
+        payload = {
+            'status': BillingDocument.Status.DRAFT,
+            'tax_rate': '0.00',
+            'walk_in_name': 'Asha',
+            'shipping_address': 'Moshi, Shop 12',
+            'items': [{'product_id': self.product.pk, 'quantity': '1.00'}],
+        }
+        response = self.client.post('/api/inventory/invoices/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['shipping_address_snapshot'], 'Moshi, Shop 12')
+        rejected = self.client.post('/api/inventory/invoices/', {
+            **payload, 'customer_id': self.customer.pk,
+        }, format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn('shipping_address', rejected.data)
+        self.assertFalse(BillingDocument.objects.filter(customer=self.customer).exists())
+
     def test_api_requires_explicit_technician_category_and_snapshots_its_price(self):
         response = self.client.post('/api/inventory/invoices/', {
             'customer_id': self.customer.pk,

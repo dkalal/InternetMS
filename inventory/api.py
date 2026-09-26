@@ -147,7 +147,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BillingDocument
-        fields = ['id', 'number', 'customer_name', 'sale_pricing_category', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
+        fields = ['id', 'number', 'customer_name', 'shipping_address_snapshot', 'sale_pricing_category', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
 
 
 class InvoiceItemInputSerializer(serializers.Serializer):
@@ -160,6 +160,7 @@ class InvoiceItemInputSerializer(serializers.Serializer):
 class InvoiceCreateSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(required=False, allow_null=True)
     walk_in_name = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    shipping_address = serializers.CharField(required=False, allow_blank=True, max_length=500)
     sale_pricing_category = serializers.ChoiceField(
         choices=(
             BillingDocument.SalePricingCategory.CUSTOMER_TIER,
@@ -179,6 +180,9 @@ class InvoiceCreateSerializer(serializers.Serializer):
         request = self.context['request']
         organization = resolve_integration_consumer(request).organization
         customer_id = validated_data.get('customer_id')
+        shipping_address = validated_data.get('shipping_address', '').strip()
+        if customer_id is not None and shipping_address:
+            raise serializers.ValidationError({'shipping_address': 'This address is for a walk-in sale without a selected customer.'})
         walk_in_name = None
         if customer_id is None:
             walk_in_name = validated_data.get('walk_in_name', '').strip() or 'Walk-in Customer'
@@ -233,6 +237,7 @@ class InvoiceCreateSerializer(serializers.Serializer):
                 discount_amount=validated_data['discount_amount'], notes=validated_data.get('notes', ''), items=inputs,
                 sale_pricing_category=sale_pricing_category,
                 walk_in_name=walk_in_name,
+                shipping_address=shipping_address,
             )
         except BillingServiceError as exc:
             raise serializers.ValidationError(str(exc)) from exc

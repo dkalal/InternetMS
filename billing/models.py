@@ -72,6 +72,7 @@ class BillingDocument(models.Model):
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_documents")
     is_walk_in_sale = models.BooleanField(default=False, editable=False)
     walk_in_name_snapshot = models.CharField(max_length=200, blank=True, default='', editable=False)
+    shipping_address_snapshot = models.CharField(max_length=500, blank=True, default='', editable=False)
     site = models.ForeignKey(
         "customers.CustomerSite",
         on_delete=models.PROTECT,

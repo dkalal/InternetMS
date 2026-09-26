@@ -320,6 +320,7 @@ class Cart(TenantModel):
 
     customer = models.ForeignKey('customers.Customer', on_delete=models.PROTECT, null=True, blank=True, related_name='inventory_carts')
     walk_in_name = models.CharField(max_length=200, blank=True, default='')
+    shipping_address = models.CharField(max_length=500, blank=True, default='')
     sale_pricing_category = models.CharField(
         max_length=20,
         choices=SalePricingCategory.choices,
