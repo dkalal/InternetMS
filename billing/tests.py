@@ -122,7 +122,10 @@ class BillingServiceTests(TestCase):
             organization=self.org1, tenant=self.org1, name='Metre', symbol='m'
         )
         self.product_org1.sales_unit = metre
-        self.product_org1.save()
+        with self.assertRaisesMessage(
+            ValidationError, 'Sales/stock unit cannot be changed after transaction history exists.',
+        ):
+            self.product_org1.save()
         product_line.refresh_from_db()
         self.assertEqual(product_line.unit_snapshot, 'Unit')
 

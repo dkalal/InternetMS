@@ -14,6 +14,10 @@ This contract protects the purchasing foundation while the workspace, high-volum
 - Weighted-average movement cost is the authoritative future-sale cost floor whenever positive movement-backed stock exists; otherwise the product buying price is used.
 - Net pre-tax unit revenue must be strictly greater than the applicable cost floor. Equality is not allowed.
 - Receiving higher-cost stock is allowed even when it produces a pricing warning.
+- Once inventory movement history exists, the product's selected sales/stock unit is immutable. A unit correction requires an explicitly approved inventory reconciliation; an ordinary catalog edit must never reinterpret historical quantities or costs.
+- Adopting a different unit after any stock, purchase, cart, or billing history creates a separate tenant-scoped successor product with a new SKU and zero stock. The old product becomes inactive, all historical references remain attached to it, and an idempotent audit event records the decision and reason.
+- The successor workflow never performs package conversion, stock transfer, cost conversion, or historical reassignment. Verified physical quantities enter only through the approved receiving or inventory-reconciliation boundary.
+- Deployments must run the read-only `audit_product_units --fail-on-drift` gate. Any reported mismatch requires explicit review before the affected invoices are paid or a new release starts.
 
 ## Transaction invariants
 
@@ -101,3 +105,5 @@ The POS catalog derives readiness from the effective price for the cart's active
 ### Phase 5A pasted-row contract
 
 The purchase workspace may preview up to 200 tab-separated spreadsheet rows identified by exact SKU. Preview is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, size-limited, and non-mutating. It accepts quantity and unit cost in the product's same sales/stock unit plus optional batch, ISO expiry date, and comma-separated serials. Only server-validated rows may be appended to ordinary purchase formset rows; invalid rows remain visible in preview and are never added. Draft save and final confirmation remain the only persistence and stock-posting boundaries.
+
+Manually typed rows may use single or repeated whitespace between up to six fields, including batch, ISO expiry, and comma-separated serials. Tabs remain required when a field itself contains spaces. All rows are normalized before the bounded tenant-scoped SKU lookup. A row with only an SKU remains invalid until quantity and unit cost are supplied. Unknown SKUs are never guessed or automatically created. Products referenced by purchasing, stock, or sales history remain protected from deletion; the catalog deletion screen must report that safely rather than exposing an exception.

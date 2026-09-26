@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load humanize %}
 {% block title %}{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add catalog item{% endif %}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -20,7 +21,7 @@
   {% if has_movement_history %}
     <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
       <div class="font-semibold">Inventory history protects key settings</div>
-      <p class="mt-1">Item type, stock tracking, and serialization are locked because this item already appears in inventory or sales history. Other catalog details remain editable.</p>
+      <p class="mt-1">Item type, sales/stock unit, stock tracking, and serialization are locked because this item already appears in purchasing, inventory, cart, or billing history. To sell it in another unit, create a separate product identity from its detail page.</p>
     </div>
   {% endif %}
 
@@ -103,6 +104,16 @@
               <h2 class="mt-1 font-semibold text-slate-950">Set acquisition and selling prices</h2>
               <p class="mt-1 text-sm text-slate-600">Margin is calculated for guidance and is never a separate editable value.</p>
             </div>
+            {% if form.current_cost_floor is not None %}
+              <div class="mx-5 mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="note">
+                <p class="font-semibold">Current minimum selling threshold: above TZS {{ form.current_cost_floor|floatformat:6|intcomma }} per {{ form.instance.get_measure_unit_display }}</p>
+                {% if form.movement_backed_cost %}
+                  <p class="mt-1">This is the weighted-average cost of stock on hand, not the buying price shown below. Standard, technician, and enabled wholesale prices must each be above it. Changing the buying price does not change historical stock cost.</p>
+                {% else %}
+                  <p class="mt-1">No positive movement-backed stock sets a higher cost floor, so the buying price is used. Selling prices must be strictly above it.</p>
+                {% endif %}
+              </div>
+            {% endif %}
             <div class="grid gap-4 p-5 sm:grid-cols-2">
               <div>{% include "components/form_field.html" with field=form.buying_price %}</div>
               {% include "components/form_field.html" with field=form.selling_price %}

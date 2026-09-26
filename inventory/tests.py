@@ -119,6 +119,39 @@ class SameUnitCostingTests(TestCase):
                 customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
             )
 
+    def test_payment_fails_safely_when_catalog_unit_no_longer_matches_invoice_snapshot(self):
+        purchase, _ = self.draft_receipt()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        invoice = BillingService.create_document(
+            organization=self.org, created_by=self.admin,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk, status=BillingDocument.Status.ISSUED,
+            items=[LineItemInput(
+                product_id=self.product.pk, quantity=Decimal('3'), unit_price=Decimal('2000'),
+            )],
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box',
+        )
+        # Simulate legacy data created before unit identity became immutable.
+        Product.objects.filter(pk=self.product.pk).update(sales_unit=box, measure_unit=box.label)
+
+        with self.assertRaisesMessage(
+            BillingServiceError,
+            'uses the historical unit m, but its current inventory unit is Box',
+        ):
+            BillingService.create_receipt_from_invoice(
+                organization=self.org, created_by=self.admin, invoice_id=invoice.pk,
+                amount_paid=invoice.total, payment_method='cash',
+            )
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
+        self.assertFalse(BillingDocument.objects.filter(
+            document_type=BillingDocument.DocumentType.RECEIPT, invoice=invoice,
+        ).exists())
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('305.000000'))
+
     def test_discount_and_higher_weighted_cost_are_enforced_without_blocking_receipt(self):
         first, _ = self.draft_receipt()
         InventoryService.confirm_purchase(organization=self.org, purchase_id=first.pk, actor=self.admin)

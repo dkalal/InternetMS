@@ -14,6 +14,11 @@ class BelowCostError(ValueError):
 
 def cost_floor_for(product) -> Decimal:
     """Return the authoritative same-sales-unit cost without mutating inventory."""
+    return cost_floor_details(product)[0]
+
+
+def cost_floor_details(product) -> tuple[Decimal, bool]:
+    """Return the cost floor and whether positive movement-backed stock sets it."""
     from inventory.models import InventoryBalance, StockMovement
 
     balance = InventoryBalance.objects.unscoped().filter(
@@ -22,8 +27,8 @@ def cost_floor_for(product) -> Decimal:
     if balance is not None and StockMovement.objects.unscoped().filter(
         tenant_id=product.tenant_id, product_id=product.pk,
     ).exists():
-        return Decimal(balance.average_cost).quantize(COST_PRECISION)
-    return Decimal(product.buying_price or 0).quantize(COST_PRECISION)
+        return Decimal(balance.average_cost).quantize(COST_PRECISION), True
+    return Decimal(product.buying_price or 0).quantize(COST_PRECISION), False
 
 
 def can_view_cost(*, actor, organization) -> bool:

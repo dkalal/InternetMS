@@ -80,6 +80,10 @@ Each product has one selected sales/stock unit. Its buying price, purchase quant
 
 Weighted-average inventory cost remains active for ordinary same-unit purchases at six-decimal precision and is the authoritative future-sale cost floor whenever positive movement-backed stock exists; otherwise the product buying price is used. Product-linked quotations, invoices, POS carts, APIs, discounts, and payment completion all enforce net pre-tax unit revenue strictly greater than that floor. Tax is excluded from the comparison, equality is prohibited, and receiving higher-cost stock remains allowed even when it creates a visible pricing warning. Confirmed financial and inventory records remain immutable. Package conversion may only return in a separately approved phase with an explicit historical-data migration plan.
 
+After any stock, purchase, cart, or billing history exists, a product's sales/stock unit is immutable across the catalog form, model validation, and admin. Adopting another unit creates a tenant-scoped successor product with a distinct SKU and zero opening stock, deactivates the old catalog identity, and records an idempotent audit event. No stock, cost, document, or historical line is reassigned or converted; physical stock must be counted and entered through an approved inventory reconciliation or receiving workflow. The read-only `audit_product_units` command reports historical billing snapshots whose unit differs from the current product identity and can fail a deployment gate with `--fail-on-drift`.
+
+The product pricing form shows the current cost floor to staff with stock-cost viewing permission. Its buying price may differ from the movement-backed weighted average; editing that default does not rewrite inventory cost. Selling tiers at or below the floor are rejected, and cost amounts are not disclosed to staff without the cost-view permission.
+
 Keep uploaded media and generated files out of source control. Use `.gitignore` for local artifacts and a real object store for production uploads when deploying.
 
 ## Production Notes

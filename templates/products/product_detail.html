@@ -27,6 +27,7 @@
                 Back
             </a>
             {% if product.item_type == "physical" %}<a href="{% url 'inventory:movement_list' %}?product={{ product.pk }}" class="jims-btn jims-btn-secondary">Movement history</a>{% endif %}
+            {% if INVENTORY_CAN_MANAGE_PRODUCTS and has_unit_history %}<a href="{% url 'product-unit-successor' product.id %}" class="jims-btn jims-btn-secondary">Sell in a new unit</a>{% endif %}
             {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-update' product.id %}" class="jims-btn jims-btn-primary">
                 Edit
             </a>

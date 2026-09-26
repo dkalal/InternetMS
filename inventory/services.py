@@ -362,6 +362,17 @@ class InventoryService:
 
         billing_lines = list(invoice.items.select_related('product').order_by('product_id', 'id'))
         product_lines = [line for line in billing_lines if line.product_id]
+        for line in product_lines:
+            historical_unit = (line.unit_snapshot or '').strip()
+            current_unit = (line.product.get_measure_unit_display() or '').strip()
+            if historical_unit.casefold() != current_unit.casefold():
+                raise InventoryError(
+                    f'Invoice line for {line.product.name} uses the historical unit '
+                    f'{historical_unit or "(missing)"}, but its current inventory unit is '
+                    f'{current_unit or "(missing)"}. Do not change the payment amount. '
+                    'Reconcile the product unit and cost, then correct the invoice through '
+                    'the approved financial workflow.'
+                )
         # Recheck immediately before stock leaves: a newer receipt may have raised
         # weighted-average cost after this invoice was drafted or issued.
         from billing.services import BillingService

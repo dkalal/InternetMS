@@ -335,6 +335,19 @@ class Product(models.Model):
         if self.sales_unit_id:
             return self.sales_unit.label
         return self.measure_unit if self.measure_unit else 'Unit'
+
+    def has_unit_history(self):
+        """Return whether changing this product's stock identity would reinterpret history."""
+        if not self.pk:
+            return False
+        if Decimal(self.quantity or 0) != 0 or int(self.stock or 0) != 0:
+            return True
+        return any((
+            self.stock_movements.exists(),
+            self.purchase_lines.exists(),
+            self.cart_lines.exists(),
+            self.billinglineitem_set.exists(),
+        ))
     
     def get_buying_price_display(self):
         return f"Tshs{self.buying_price:.2f}"  
@@ -472,6 +485,23 @@ class Product(models.Model):
 
     def clean(self):
         super().clean()
+        if self.pk:
+            previous = type(self).objects.unscoped().filter(pk=self.pk).values(
+                'sales_unit_id', 'measure_unit',
+            ).first()
+            unit_changed = previous and (
+                previous['sales_unit_id'] != self.sales_unit_id
+                or (previous['measure_unit'] or '').strip().casefold()
+                != (self.measure_unit or '').strip().casefold()
+            )
+            if unit_changed and self.has_unit_history():
+                raise ValidationError({
+                    'sales_unit': (
+                        'Sales/stock unit cannot be changed after transaction history exists. '
+                        'Create a separate product for the new unit and reconcile stock through '
+                        'the approved inventory workflow.'
+                    ),
+                })
         if self.catalog_category_id and self.tenant_id:
             category_tenant_id = getattr(self.catalog_category, 'tenant_id', None)
             if category_tenant_id != self.tenant_id:

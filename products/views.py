@@ -2,11 +2,15 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.urls import reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
+from django.contrib import messages
 from django.db.models import F, Q
 from custom_fields.mixins import CustomFieldPageContextMixin
 from .models import Product, ProductCategory
-from .forms import ProductForm
+from .forms import ProductForm, ProductUnitSuccessorForm
+from .services import ProductUnitTransitionError, ProductUnitTransitionService
 from custom_fields.services import CustomFieldService
 from users.permissions import PermissionCode, require_permission
 from inventory.services import audit
@@ -116,8 +120,66 @@ class ProductDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["custom_fields"] = CustomFieldService.get_custom_field_values(self.object)
+        context["has_unit_history"] = self.object.has_unit_history()
         context.update(self.get_custom_field_modal_context(target_model="product"))
         return context
+
+
+@login_required
+def product_unit_successor(request, pk):
+    organization = require_organization(request)
+    require_permission(request, PermissionCode.PRODUCT_MANAGE)
+    require_permission(request, PermissionCode.COST_REPORT_VIEW)
+    source = get_object_or_404(
+        Product.objects.unscoped().select_related('sales_unit', 'catalog_category'),
+        pk=pk,
+        tenant=organization,
+    )
+    if not source.has_unit_history():
+        messages.info(request, 'This product has no transaction history. Edit its unit directly instead.')
+        return redirect('product-update', pk=source.pk)
+
+    form = ProductUnitSuccessorForm(
+        request.POST or None,
+        organization=organization,
+        source_product=source,
+    )
+    if request.method == 'POST' and form.is_valid():
+        try:
+            successor, created = ProductUnitTransitionService.create_successor(
+                organization=organization,
+                source_product_id=source.pk,
+                actor=request.user,
+                transition_key=form.cleaned_data['transition_key'],
+                values=form.cleaned_data,
+            )
+        except ProductUnitTransitionError as exc:
+            form.add_error(None, str(exc))
+        else:
+            if created:
+                messages.success(
+                    request,
+                    f'{successor.name} was created in {successor.get_measure_unit_display()}. '
+                    f'{source.name} was made inactive; its history and stock were not moved.',
+                )
+            else:
+                messages.info(request, 'This unit transition was already completed; no duplicate product was created.')
+            return redirect('product-detail', pk=successor.pk)
+
+    open_document_count = source.billinglineitem_set.filter(
+        document__tenant=organization,
+        document__document_type='invoice',
+        document__status__in=('draft', 'sent', 'issued', 'partially_paid'),
+    ).values('document_id').distinct().count()
+    draft_cart_count = source.cart_lines.filter(
+        cart__tenant=organization, cart__status='draft',
+    ).values('cart_id').distinct().count()
+    return render(request, 'products/product_unit_successor.html', {
+        'source': source,
+        'form': form,
+        'open_document_count': open_document_count,
+        'draft_cart_count': draft_cart_count,
+    })
 
 class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateView):
     model = Product
@@ -172,6 +234,7 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['organization'] = require_organization(self.request)
+        kwargs['actor'] = self.request.user
         return kwargs
 
     def get_context_data(self, **kwargs):
@@ -240,6 +303,7 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['organization'] = require_organization(self.request)
+        kwargs['actor'] = self.request.user
         return kwargs
 
     def get_context_data(self, **kwargs):
@@ -265,3 +329,23 @@ class ProductDeleteView(LoginRequiredMixin, DeleteView):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.PRODUCT_MANAGE)
         return super().get_queryset().filter(organization=organization)
+
+    def form_valid(self, form):
+        if self.object.quantity > 0 or self.object.stock > 0:
+            messages.error(
+                self.request,
+                'This product still has stock and cannot be deleted. Reconcile its stock '
+                'through the inventory workflow before considering removal.',
+            )
+            return redirect('product-detail', pk=self.object.pk)
+        try:
+            with transaction.atomic():
+                return super().form_valid(form)
+        except ProtectedError:
+            messages.error(
+                self.request,
+                'This product cannot be deleted because purchase, stock, sale, or other records '
+                'refer to it. Its history is preserved. If it should no longer be used, '
+                'edit the product and mark it inactive.',
+            )
+            return redirect('product-detail', pk=self.object.pk)

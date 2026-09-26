@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% load humanize number_display %}
+
+{% block title %}Sell {{ source.name }} in a new unit{% endblock %}
+
+{% block content %}
+{% include "inventory/includes/module_nav.html" %}
+<div class="mx-auto max-w-5xl space-y-5">
+  <header class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb">
+        <a class="hover:underline" href="{% url 'product-list' %}">Products</a><span class="px-1">/</span>
+        <a class="hover:underline" href="{% url 'product-detail' source.pk %}">{{ source.name }}</a><span class="px-1">/</span>
+        <span class="text-slate-700">New unit</span>
+      </nav>
+      <h1 class="jims-page-title mt-1">Create a separate product for the new unit</h1>
+      <p class="jims-page-subtitle">Preserve {{ source.get_measure_unit_display }} history and start future purchasing and sales with a clean unit identity.</p>
+    </div>
+    <a href="{% url 'product-detail' source.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
+  </header>
+
+  <section class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" role="note">
+    <h2 class="font-semibold">No automatic conversion</h2>
+    <p class="mt-1">This creates a zero-stock successor and makes the old product inactive for new carts. It does not rewrite documents, convert {{ source.available_stock|quantity_display }} {{ source.get_measure_unit_display }}, or guess how many old units make one new unit.</p>
+  </section>
+
+  <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
+    <form method="post" class="jims-form-section" data-submit-lock>
+      {% csrf_token %}
+      {{ form.transition_key }}
+      <div class="jims-panel-header">
+        <h2 class="font-semibold text-slate-950">Successor catalog identity</h2>
+        <p class="mt-1 text-sm text-slate-600">Use prices and costs per the new unit only.</p>
+      </div>
+      {% if form.non_field_errors %}<div class="mx-5 mt-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="grid gap-4 p-5 sm:grid-cols-2">
+        <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
+        {% include "components/form_field.html" with field=form.sku %}
+        {% include "components/form_field.html" with field=form.sales_unit %}
+        {% include "components/form_field.html" with field=form.catalog_category %}
+        <div>{% include "components/form_field.html" with field=form.buying_price %}</div>
+        {% include "components/form_field.html" with field=form.selling_price %}
+        {% include "components/form_field.html" with field=form.technician_price %}
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.allow_wholesale %}</div>
+        {% include "components/form_field.html" with field=form.wholesale_price %}
+        {% include "components/form_field.html" with field=form.wholesale_min_quantity %}
+        <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.reason %}</div>
+        <div class="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-4">{% include "components/form_field.html" with field=form.acknowledge %}</div>
+      </div>
+      <div class="jims-form-actions flex justify-end gap-2">
+        <a href="{% url 'product-detail' source.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
+        <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Creating…">Create successor</button>
+      </div>
+    </form>
+
+    <aside class="space-y-4">
+      <section class="jims-panel p-5">
+        <h2 class="text-sm font-semibold text-slate-950">Protected source</h2>
+        <dl class="mt-4 space-y-3 text-sm">
+          <div><dt class="text-slate-500">Product</dt><dd class="font-semibold text-slate-900">{{ source.name }}</dd></div>
+          <div><dt class="text-slate-500">SKU</dt><dd class="font-medium text-slate-900">{{ source.sku }}</dd></div>
+          <div><dt class="text-slate-500">Historical unit</dt><dd class="font-medium text-slate-900">{{ source.get_measure_unit_display }}</dd></div>
+          <div><dt class="text-slate-500">Recorded stock</dt><dd class="font-medium text-slate-900">{{ source.available_stock|quantity_display }}</dd></div>
+          <div><dt class="text-slate-500">Open invoices</dt><dd class="font-medium text-slate-900">{{ open_document_count }}</dd></div>
+          <div><dt class="text-slate-500">Draft carts</dt><dd class="font-medium text-slate-900">{{ draft_cart_count }}</dd></div>
+        </dl>
+      </section>
+      <section class="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+        <h2 class="font-semibold">After creation</h2>
+        <ol class="mt-2 list-decimal space-y-1 pl-5">
+          <li>Count physical stock by old and new unit.</li>
+          <li>Resolve open old-unit invoices.</li>
+          <li>Receive or adjust verified new-unit stock.</li>
+          <li>Use only the successor in new carts.</li>
+        </ol>
+      </section>
+    </aside>
+  </div>
+</div>
+{% endblock %}
