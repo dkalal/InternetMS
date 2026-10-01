@@ -83,7 +83,7 @@ class BillingLineItemForm(forms.ModelForm):
         widgets = {
             "description": forms.Textarea(
                 attrs={
-                    "rows": 3,
+                    "rows": 2,
                     "placeholder": "Item name or description (e.g. Network troubleshooting, Cable installation)",
                 }
             ),

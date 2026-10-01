@@ -2262,6 +2262,213 @@ class BillingNumberConcurrencyTests(TransactionTestCase):
         )
 
 
+class BillingDocumentEditorViewTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name="Editor Tenant", slug="editor-tenant")
+        self.other_org = Organization.objects.create(name="Other Tenant", slug="other-tenant")
+        self.user = User.objects.create_user(username="document-editor", password="pass")
+        UserAccessProfile.objects.create(
+            user=self.user,
+            tenant=self.org,
+            role=UserAccessProfile.Role.TENANT_ADMIN,
+        )
+        self.client.login(username="document-editor", password="pass")
+        self.customer = Customer.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            name="Workspace Customer",
+            customer_type="internet",
+            status=Customer.Status.ACTIVE,
+            location="Moshi",
+        )
+        self.other_customer = Customer.objects.create(
+            organization=self.other_org,
+            tenant=self.other_org,
+            name="Hidden Tenant Customer",
+            customer_type="internet",
+            status=Customer.Status.ACTIVE,
+            location="Arusha",
+        )
+        self.tax_exempt_product = Product.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            name="Tax exempt router",
+            category="hardware",
+            quantity=Decimal("1.00"),
+            measure_unit="Unit",
+            buying_price=Decimal("100.00"),
+            selling_price=Decimal("200.00"),
+            stock=5,
+            tax_eligible=False,
+            is_active=True,
+        )
+
+    def _document_payload(self, *, description="Installation", unit_price="2000.00"):
+        return {
+            "customer": str(self.customer.pk),
+            "site": "",
+            "sale_pricing_category": BillingDocument.SalePricingCategory.CUSTOMER_TIER,
+            "issue_date": "2026-09-30",
+            "due_date": "2026-10-07",
+            "status": BillingDocument.Status.DRAFT,
+            "currency": "TZS",
+            "tax_rate": "18.00",
+            "notes": "Internal review note",
+            "items-TOTAL_FORMS": "1",
+            "items-INITIAL_FORMS": "0",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            "items-0-product": "",
+            "items-0-package": "",
+            "items-0-description": description,
+            "items-0-unit_snapshot": "Unit",
+            "items-0-quantity": "1.00",
+            "items-0-unit_price": unit_price,
+            "items-0-billing_behavior": BillingLineItem.BillingBehavior.ONE_TIME,
+            "items-0-pricing_mode": BillingLineItem.PricingMode.MANUAL,
+            "items-0-discount_amount": "0.00",
+            "items-0-discount_reason": "",
+            "items-0-promotion": "",
+        }
+
+    def _edit_items_payload(self, document, *, description, unit_price):
+        line = document.items.get()
+        return {
+            "items-TOTAL_FORMS": "1",
+            "items-INITIAL_FORMS": "1",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            "items-0-id": str(line.pk),
+            "items-0-product": "",
+            "items-0-package": "",
+            "items-0-description": description,
+            "items-0-unit_snapshot": "Unit",
+            "items-0-quantity": "2.00",
+            "items-0-unit_price": unit_price,
+            "items-0-billing_behavior": BillingLineItem.BillingBehavior.ONE_TIME,
+            "items-0-pricing_mode": BillingLineItem.PricingMode.MANUAL,
+            "items-0-discount_amount": "0.00",
+            "items-0-discount_reason": "",
+            "items-0-promotion": "",
+        }
+
+    def test_create_workspaces_render_compact_shared_editor_and_tenant_catalogs(self):
+        for doc_type in (BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.QUOTATION):
+            with self.subTest(doc_type=doc_type):
+                response = self.client.get(reverse("billing:document_create", kwargs={"doc_type": doc_type}))
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Financial summary")
+                self.assertContains(response, "Add item")
+                self.assertContains(response, 'class="js-line-details', html=False)
+                self.assertContains(response, 'aria-label="Remove this line item"', html=False)
+                self.assertContains(response, '"tax_eligible":false', html=False)
+                self.assertIn(self.customer, response.context["form"].fields["customer"].queryset)
+                self.assertNotIn(self.other_customer, response.context["form"].fields["customer"].queryset)
+
+    def test_create_invoice_and_quotation_keep_server_authoritative_totals(self):
+        for doc_type in (BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.QUOTATION):
+            with self.subTest(doc_type=doc_type):
+                response = self.client.post(
+                    reverse("billing:document_create", kwargs={"doc_type": doc_type}),
+                    self._document_payload(description=f"{doc_type} installation"),
+                )
+
+                self.assertEqual(response.status_code, 302)
+                document = BillingDocument.objects.get(organization=self.org, document_type=doc_type)
+                self.assertEqual(document.subtotal, Decimal("2000.00"))
+                self.assertEqual(document.tax_amount, Decimal("360.00"))
+                self.assertEqual(document.total, Decimal("2360.00"))
+
+    def test_required_line_validation_preserves_workspace(self):
+        response = self.client.post(
+            reverse("billing:document_create", kwargs={"doc_type": BillingDocument.DocumentType.INVOICE}),
+            self._document_payload(description=""),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Provide a product, a package, or a description.")
+        self.assertContains(response, "Review the highlighted fields before saving.")
+        self.assertFalse(BillingDocument.objects.filter(organization=self.org).exists())
+
+    def test_cross_tenant_customer_is_rejected_by_create_form(self):
+        payload = self._document_payload()
+        payload["customer"] = str(self.other_customer.pk)
+
+        response = self.client.post(
+            reverse("billing:document_create", kwargs={"doc_type": BillingDocument.DocumentType.INVOICE}),
+            payload,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Select a valid choice")
+        self.assertFalse(BillingDocument.objects.filter(organization=self.org).exists())
+
+    def test_draft_invoice_edit_updates_existing_document(self):
+        invoice = BillingService.create_document(
+            organization=self.org,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk,
+            issue_date=date(2026, 9, 30),
+            status=BillingDocument.Status.DRAFT,
+            tax_rate=Decimal("18.00"),
+            items=[LineItemInput(description="Initial work", unit_price=Decimal("100.00"))],
+        )
+        original_number = invoice.number
+        payload = {
+            "tax_rate": "10.00",
+            "status": BillingDocument.Status.DRAFT,
+            **self._edit_items_payload(invoice, description="Updated work", unit_price="150.00"),
+        }
+
+        response = self.client.post(
+            reverse("billing:document_edit", kwargs={"doc_type": "invoice", "pk": invoice.pk}),
+            payload,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.number, original_number)
+        self.assertEqual(invoice.customer, self.customer)
+        self.assertEqual(invoice.tax_rate, Decimal("10.00"))
+        self.assertEqual(invoice.subtotal, Decimal("300.00"))
+        self.assertEqual(invoice.total, Decimal("330.00"))
+        self.assertEqual(invoice.items.get().description, "Updated work")
+
+    def test_quotation_edit_creates_a_new_current_version(self):
+        quotation = BillingService.create_document(
+            organization=self.org,
+            created_by=self.user,
+            document_type=BillingDocument.DocumentType.QUOTATION,
+            customer_id=self.customer.pk,
+            issue_date=date(2026, 9, 30),
+            status=BillingDocument.Status.DRAFT,
+            tax_rate=Decimal("18.00"),
+            items=[LineItemInput(description="Initial quote", unit_price=Decimal("100.00"))],
+        )
+        payload = self._document_payload(description="Revised quote", unit_price="250.00")
+        payload.update(self._edit_items_payload(quotation, description="Revised quote", unit_price="250.00"))
+
+        response = self.client.post(
+            reverse("billing:document_edit", kwargs={"doc_type": "quotation", "pk": quotation.pk}),
+            payload,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        quotation.refresh_from_db()
+        revised = BillingDocument.objects.get(
+            organization=self.org,
+            document_type=BillingDocument.DocumentType.QUOTATION,
+            is_current_version=True,
+        )
+        self.assertNotEqual(revised.pk, quotation.pk)
+        self.assertFalse(quotation.is_current_version)
+        self.assertEqual(revised.version_number, quotation.version_number + 1)
+        self.assertEqual(revised.subtotal, Decimal("500.00"))
+        self.assertEqual(revised.items.get().description, "Revised quote")
+
+
 class BillingListViewTests(TestCase):
     def setUp(self):
         self.org1 = Organization.objects.create(name="Tenant A", slug="tenant-a")
