@@ -1,11 +1,37 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import importlib
+import io
+import logging
 import mimetypes
+from functools import lru_cache
 from pathlib import Path
 
 from django.http import HttpResponse
 from django.template.loader import render_to_string
+
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_weasyprint():
+    """Load the optional PDF backend once without repeating its import banner."""
+    diagnostics = io.StringIO()
+    try:
+        # WeasyPrint prints a long native-library help banner before raising when
+        # Pango/Harfbuzz cannot be loaded. Capture it and emit one actionable log.
+        with contextlib.redirect_stderr(diagnostics):
+            return importlib.import_module("weasyprint")
+    except (ModuleNotFoundError, ImportError, OSError) as exc:
+        logger.warning(
+            "WeasyPrint is unavailable; serving printable HTML instead of PDF. "
+            "Install its native libraries or use the Docker runtime. Cause: %s",
+            exc,
+        )
+        return None
 
 
 def build_image_data_uri(path: str | Path) -> str | None:
@@ -30,9 +56,8 @@ def render_pdf_or_html(
     html = render_to_string(template_name, context, request=request)
     base_url = request.build_absolute_uri("/") if request is not None else None
 
-    try:
-        import weasyprint  # type: ignore
-    except (ModuleNotFoundError, ImportError, OSError):
+    weasyprint = _load_weasyprint()
+    if weasyprint is None:
         response = HttpResponse(html, content_type="text/html; charset=utf-8")
         response["X-PDF-Fallback"] = "html"
         response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"

@@ -49,6 +49,26 @@ docker compose up --build
 
 The application is then available at `http://localhost:8000`; PostgreSQL is exposed locally on port `5434`.
 
+### PDF rendering on Windows
+
+The Docker runtime includes WeasyPrint's native Pango and HarfBuzz libraries. For
+native Windows development, install Pango through MSYS2's UCRT64 shell:
+
+```text
+pacman -S mingw-w64-ucrt-x86_64-pango
+```
+
+Then set `WEASYPRINT_DLL_DIRECTORIES=C:\msys64\ucrt64\bin` in `.env`, restart the
+Django process, and verify the same virtual environment used by Django with:
+
+```powershell
+.\.venv\Scripts\python.exe -m weasyprint --info
+```
+
+When the PDF backend is unavailable, billing PDF routes deliberately return a
+printable HTML fallback with `X-PDF-Fallback: html` and log one concise warning
+per server process.
+
 ## Tenancy and Access Control
 
 - `TenantMembership` is the authoritative user-to-tenant relationship.
