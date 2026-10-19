@@ -4,6 +4,7 @@ from django.core.exceptions import PermissionDenied
 from django.utils.deprecation import MiddlewareMixin
 
 from audit.models import AuditLog
+from internetservices.log_filters import redact_invitation_path
 from .models import Membership, Organization, SupportAccessSession, TenantMembership, UserAccessProfile
 from .tenant_context import clear_current_tenant, set_current_tenant
 
@@ -77,7 +78,7 @@ class ActiveOrganizationMiddleware(MiddlewareMixin):
                         object_id=str(support.pk),
                         metadata={
                             "method": request.method,
-                            "path": request.path[:500],
+                            "path": redact_invitation_path(request.path)[:500],
                             "ip": _client_ip(request),
                             "support_reason": support.reason,
                         },

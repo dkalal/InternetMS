@@ -1,10 +1,12 @@
 Hello {{ user.get_full_name|default:user.username }},
 
-You have been invited to the {{ tenant.name }} workspace in JIMS.
+You have been invited to the {{ tenant.name }} workspace in JBMS.
 
-Set your password and activate your login using this secure link:
+{% if has_password %}Sign in with your existing account and accept this workspace invitation:{% else %}Set your password and activate your login using this secure link:{% endif %}
 {{ activation_url }}
 
-After setting your password, sign in with this username: {{ user.username }}.
+This link expires {{ expires_at|date:"j F Y, H:i T" }}. Open it while connected to the office network.
+
+Sign in with this username: {{ user.username }}.
 
 If you were not expecting this invitation, you can ignore this email.

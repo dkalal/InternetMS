@@ -68,6 +68,10 @@ Treat tenant identity as server-established state. Do not filter tenant-owned da
 
 Permission codes in `users.permissions` are the stable authorization contract. Views and services should fail closed with `require_permission`; templates may hide unavailable actions, but UI visibility is never an authorization boundary.
 
+Invitation and password pages render through a standalone account-access layout, independent of any authenticated workspace shell. When a browser already has a different signed-in account, invitation acceptance requires an explicit POST sign-out in that browser before password setup; sessions on other devices remain independent. New invitees sign in with their own credentials after setup, and tenant membership permissions are enforced on every protected request.
+
+Account-access pages use an origin-only referrer policy. It keeps invitation bearer-token paths out of outbound `Referer` headers while allowing browsers to send their real `Origin` on form POSTs for Django's CSRF check. Do not use a page-wide `no-referrer` policy on these HTML forms or permit `Origin: null` in CSRF settings.
+
 Super Administrator access to tenant data requires an explicit support session with a reason. Preserve the audit trail when extending this workflow.
 
 ### Inventory boundaries

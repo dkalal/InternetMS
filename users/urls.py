@@ -10,6 +10,7 @@ urlpatterns = [
     path("settings/branding/", views.branding_settings, name="branding_settings"),
     path("team/", views.team_access, name="team_access"),
     path("team/invite/", views.invite_member, name="invite_member"),
+    path("invitation/<str:token>/", views.accept_workspace_invitation, name="accept_workspace_invitation"),
     path("team/<int:membership_id>/resend-activation/", views.resend_member_activation, name="resend_member_activation"),
     path("team/<int:membership_id>/access/", views.update_member_access, name="update_member_access"),
     path("team/<int:membership_id>/status/", views.change_member_status, name="change_member_status"),

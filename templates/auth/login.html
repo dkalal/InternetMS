@@ -1,30 +1,21 @@
-{% extends "base.html" %}
-
-{% block title %}Log In{% endblock %}
-
-{% block content %}
-<div class="flex min-h-full items-center justify-center py-10">
-  <div class="w-full max-w-md">
-    <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">Log in</h1>
-      <p class="mt-1 text-sm text-slate-600">Welcome back to JS Internet Services.</p>
-
-      <form method="post" class="mt-6 space-y-4">
-        {% csrf_token %}
-        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
-        {% include "components/form.html" with form=form %}
-        <button type="submit" class="inline-flex w-full items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-          Log In
-        </button>
-      </form>
-
-      <div class="mt-6 text-sm text-slate-600">
-        <div class="flex items-center justify-between">
-          <a class="text-brand-700 hover:underline" href="{% url 'register' %}">Create account</a>
-          <a class="text-slate-700 hover:underline" href="{% url 'password_reset' %}">Forgot password?</a>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+{% extends "auth/standalone_base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block intro_title %}Work with confidence.{% endblock %}
+{% block intro_copy %}Sign in with your own JBMS account. Your workspace and actions follow the access assigned to you.{% endblock %}
+{% block auth_content %}
+  <span class="auth-step">Secure sign in</span>
+  <h1 id="auth-title">Welcome back</h1>
+  <p class="auth-lede">Enter your account details to continue.</p>
+  <form method="post" class="auth-form">
+    {% csrf_token %}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    {% for field in form %}
+      {% if field.is_hidden %}{{ field }}{% else %}
+      <div class="auth-field"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<p class="auth-error" role="alert">{{ error }}</p>{% endfor %}</div>
+      {% endif %}
+    {% endfor %}
+    {% if form.non_field_errors %}<div class="auth-error-summary" role="alert">{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+    <button type="submit" class="auth-button">Sign in</button>
+  </form>
+  <a class="auth-link" href="{% url 'password_reset' %}">Forgot password?</a>
 {% endblock %}

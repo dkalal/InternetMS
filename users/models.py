@@ -231,6 +231,20 @@ class TenantMembership(models.Model):
         return list(self.permission_grants.values_list("action_code", flat=True))
 
 
+class WorkspaceInvitation(models.Model):
+    membership = models.ForeignKey(TenantMembership, on_delete=models.PROTECT, related_name="invitations")
+    approved_role = models.CharField(max_length=20)
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["membership", "created_at"])]
+
+
 class TenantPermissionGrant(models.Model):
     class Scope(models.TextChoices):
         OWN = "OWN", "Own records"

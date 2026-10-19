@@ -23,7 +23,7 @@ services:
   web:
     build: .
     container_name: js-internetservices-web
-    command: sh -c "python manage.py migrate && gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - internetservices.wsgi:application"
+    command: sh -c "python manage.py migrate && gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - --access-logformat '%(h)s %(s)s %(b)s %(T)s' internetservices.wsgi:application"
     env_file:
       - .env
     environment:

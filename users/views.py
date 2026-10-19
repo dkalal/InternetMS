@@ -1,7 +1,7 @@
 # import logging
 # import socket
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth import login, authenticate
+from django.contrib.auth import login, authenticate, logout
 from django.contrib import messages
 from .forms import UserRegisterForm
 from django.core.mail import send_mail, EmailMessage, EmailMultiAlternatives
@@ -28,6 +28,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
 
 from audit.models import AuditLog
 from users.permissions import (
@@ -36,6 +37,13 @@ from users.permissions import (
 )
 from users.tenancy import require_organization
 from .forms import OrganizationBrandingForm, SupportAccessForm, TenantMemberInviteForm
+from .models import WorkspaceInvitation
+from .invitations import issue_invitation, send_after_commit, token_hash, office_base_url
+from django.contrib.auth.forms import SetPasswordForm
+from django.http import Http404
+from django.shortcuts import resolve_url
+from datetime import timedelta
+from functools import wraps
 
 # Create your views here.
 
@@ -85,10 +93,21 @@ ROLE_DESCRIPTIONS = {
 
 
 def _member_status(member):
+    latest = max(member.invitations.all(), key=lambda item: item.created_at, default=None)
     if not member.is_active:
+        if latest and not latest.accepted_at and not latest.revoked_at and latest.expires_at > timezone.now():
+            return "invited", "Invited · pending acceptance"
+        if latest and latest.revoked_at:
+            return "revoked", "Revoked"
+        if latest and latest.expires_at <= timezone.now() and not latest.accepted_at:
+            return "expired", "Expired"
         return "inactive", "Inactive"
     if not member.user.has_usable_password():
-        return "invited", "Invited"
+        if latest and latest.revoked_at:
+            return "revoked", "Revoked"
+        if latest and latest.expires_at <= timezone.now():
+            return "expired", "Expired"
+        return "invited", "Invited · pending acceptance"
     return "active", "Active"
 
 
@@ -180,7 +199,7 @@ def _team_access_context(request, *, invite_form=None, invite_open=False):
     tenant = require_organization(request)
     require_permission(request, PermissionCode.USERS_VIEW)
     actor = request.membership
-    members = TenantMembership.objects.filter(tenant=tenant).select_related("user").prefetch_related("permission_grants")
+    members = TenantMembership.objects.filter(tenant=tenant).select_related("user").prefetch_related("permission_grants", "invitations")
     if actor.base_role != TenantMembership.BaseRole.SUPER_ADMIN:
         members = members.exclude(base_role=TenantMembership.BaseRole.SUPER_ADMIN)
 
@@ -206,7 +225,7 @@ def _team_access_context(request, *, invite_form=None, invite_open=False):
         filtered = [member for member in filtered if query_lower in member.display_name.lower() or query_lower in (member.user.email or "").lower()]
     if role_filter in {TenantMembership.BaseRole.ADMIN_MANAGER, TenantMembership.BaseRole.SALES, TenantMembership.BaseRole.TECHNICIAN}:
         filtered = [member for member in filtered if member.base_role == role_filter]
-    if status_filter in {"active", "invited", "inactive"}:
+    if status_filter in {"active", "invited", "inactive", "expired", "revoked"}:
         filtered = [member for member in filtered if member.status_key == status_filter]
     if sort == "recent":
         filtered.sort(key=lambda member: (member.created_at, member.pk), reverse=True)
@@ -254,26 +273,6 @@ def _team_access_context(request, *, invite_form=None, invite_open=False):
     }
 
 
-def _send_workspace_activation_email(request, *, user, tenant):
-    """Send a one-time first-password link for a newly provisioned user."""
-    token = default_token_generator.make_token(user)
-    uid = urlsafe_base64_encode(force_bytes(user.pk))
-    activation_url = request.build_absolute_uri(
-        reverse("password_reset_confirm", kwargs={"uidb64": uid, "token": token})
-    )
-    context = {"user": user, "tenant": tenant, "activation_url": activation_url}
-    message = EmailMultiAlternatives(
-        subject=f"{settings.EMAIL_SUBJECT_PREFIX}Set up your {tenant.name} workspace account",
-        body=render_to_string("registration/workspace_invitation_email.txt", context),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[user.email],
-    )
-    message.attach_alternative(
-        render_to_string("registration/workspace_invitation_email.html", context),
-        "text/html",
-    )
-    message.send(fail_silently=False)
-
 def custom_password_reset(request):
     """Custom password reset implementation for development environment"""
     if request.method == 'POST':
@@ -300,10 +299,10 @@ def custom_password_reset(request):
                 'domain': domain,
                 'uid': uid,
                 'token': token,
-                'site_name': 'JS Internet Services',
+                'site_name': 'JS Business Management System',
             }
             
-            email_subject = 'Reset Your JS Internet Services Password'
+            email_subject = 'Reset Your JS Business Management System Password'
             email_body = render_to_string('registration/password_reset_email_custom.html', context)
             
             # Send email with proper headers to avoid spam filters
@@ -403,7 +402,6 @@ def team_access(request):
 
 @login_required
 @require_POST
-@transaction.atomic
 def invite_member(request):
     tenant = require_organization(request)
     require_permission(request, PermissionCode.USERS_INVITE)
@@ -411,48 +409,42 @@ def invite_member(request):
     form = TenantMemberInviteForm(request.POST)
     if not form.is_valid():
         return render(request, "users/team_access.html", _team_access_context(request, invite_form=form, invite_open=True), status=400)
-    email = form.cleaned_data["email"].strip().lower()
-    user = User.objects.filter(email__iexact=email).first()
-    if user and (user.is_superuser or user.tenant_memberships.filter(base_role=TenantMembership.BaseRole.SUPER_ADMIN).exists()):
-        raise PermissionDenied("Super Administrator accounts are platform-managed.")
-    new_user = user is None
-    if new_user:
-        base_username = email.split("@", 1)[0][:140] or "member"
-        username = base_username
-        suffix = 1
-        while User.objects.filter(username=username).exists():
-            suffix += 1
-            username = f"{base_username[:140-len(str(suffix))]}{suffix}"
-        user = User.objects.create(
-            username=username, email=email,
-            first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["last_name"],
-        )
-        user.set_unusable_password()
-        user.save(update_fields=["password"])
-    membership, created = TenantMembership.objects.get_or_create(
-        tenant=tenant, user=user,
-        defaults={"base_role": form.cleaned_data["base_role"], "invited_by": actor, "is_active": True},
-    )
-    if not created:
-        messages.error(request, "That user already belongs to this company.")
+    try:
+        office_base_url()
+    except ValidationError as exc:
+        messages.error(request, str(exc.message))
         return redirect("team_access")
-    if new_user:
-        try:
-            _send_workspace_activation_email(request, user=user, tenant=tenant)
-        except Exception:
-            transaction.set_rollback(True)
-            messages.error(request, "The invitation could not be sent. Check the email configuration and try again.")
+    email = form.cleaned_data["email"].strip().lower()
+    with transaction.atomic():
+        user = User.objects.select_for_update().filter(email__iexact=email).first()
+        if user and (user.is_superuser or user.tenant_memberships.filter(base_role=TenantMembership.BaseRole.SUPER_ADMIN).exists()):
+            raise PermissionDenied("Super Administrator accounts are platform-managed.")
+        new_user = user is None
+        if new_user:
+            base_username = email.split("@", 1)[0][:140] or "member"
+            username = base_username
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix += 1
+                username = f"{base_username[:140-len(str(suffix))]}{suffix}"
+            user = User(username=username, email=email, first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["last_name"])
+            user.set_unusable_password()
+            user.save()
+        membership, created = TenantMembership.objects.get_or_create(
+            tenant=tenant, user=user,
+            defaults={"base_role": form.cleaned_data["base_role"], "invited_by": actor, "is_active": new_user},
+        )
+        if not created:
+            messages.error(request, "That user already belongs to this company.")
             return redirect("team_access")
-    AuditLog.objects.create(
-        organization=tenant, tenant=tenant, actor=request.user,
-        action="security.member.invited", object_type="TenantMembership", object_id=str(membership.pk),
-        new_value={"user_id": user.pk, "base_role": membership.base_role, "is_active": True, "activation_email_sent": new_user},
-        metadata=_request_metadata(request),
-    )
-    if new_user:
-        messages.success(request, "Invitation sent. The member can use the email link to set a password and log in.")
-    else:
-        messages.success(request, "Member added to this workspace. They can log in with their existing account.")
+        invitation, token = issue_invitation(membership)
+        AuditLog.objects.create(
+            organization=tenant, tenant=tenant, actor=request.user,
+            action="security.member.invited", object_type="TenantMembership", object_id=str(membership.pk),
+            new_value={"user_id": user.pk, "base_role": membership.base_role, "is_active": membership.is_active},
+            metadata=_request_metadata(request),
+        )
+    send_after_commit(invitation, token, request)
     return redirect("team_access")
 
 
@@ -461,26 +453,88 @@ def invite_member(request):
 def resend_member_activation(request, membership_id):
     tenant = require_organization(request)
     require_permission(request, PermissionCode.USERS_INVITE)
-    target = get_object_or_404(
-        TenantMembership.objects.select_related("user"), pk=membership_id, tenant=tenant
-    )
+    target = get_object_or_404(TenantMembership.objects.select_related("user"), pk=membership_id, tenant=tenant)
     if target.base_role == TenantMembership.BaseRole.SUPER_ADMIN:
         raise PermissionDenied("Super Administrator accounts are platform-managed.")
-    if not target.is_active or target.user.has_usable_password():
-        messages.error(request, "A setup email can only be resent to an active pending invitation.")
+    if not target.invitations.filter(accepted_at__isnull=True, revoked_at__isnull=True).exists():
+        messages.error(request, "Only a pending invitation can be resent.")
         return redirect("team_access")
     try:
-        _send_workspace_activation_email(request, user=target.user, tenant=tenant)
-    except Exception:
-        messages.error(request, "The setup email could not be sent. Check the email configuration and try again.")
+        office_base_url()
+    except ValidationError as exc:
+        messages.error(request, str(exc.message))
         return redirect("team_access")
+    with transaction.atomic():
+        target = TenantMembership.objects.select_for_update().get(pk=target.pk, tenant=tenant)
+        previous = target.invitations.order_by("-created_at").first()
+        if previous and (previous.accepted_at or previous.revoked_at):
+            messages.error(request, "This invitation can no longer be resent.")
+            return redirect("team_access")
+        if previous and previous.sent_at and timezone.now() - previous.sent_at < timedelta(seconds=settings.INVITATION_RESEND_COOLDOWN_SECONDS):
+            messages.error(request, "Please wait before resending this invitation.")
+            return redirect("team_access")
+        invitation, token = issue_invitation(target)
     AuditLog.objects.create(
         organization=tenant, tenant=tenant, actor=request.user,
         action="security.member.activation_resent", object_type="TenantMembership", object_id=str(target.pk),
         metadata=_request_metadata(request),
     )
-    messages.success(request, "A new account setup email was sent.")
+    send_after_commit(invitation, token, request)
     return redirect("team_access")
+
+
+def origin_only_referrer(view):
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        response = view(request, *args, **kwargs)
+        response["Referrer-Policy"] = "origin"
+        return response
+    return wrapped
+
+
+@origin_only_referrer
+@never_cache
+def accept_workspace_invitation(request, token):
+    invitation = WorkspaceInvitation.objects.select_related("membership__user", "membership__tenant").filter(token_hash=token_hash(token)).first()
+    if not invitation or invitation.revoked_at or invitation.accepted_at or invitation.expires_at <= timezone.now() or invitation.approved_role != invitation.membership.base_role:
+        return render(request, "registration/invitation_invalid.html", status=400)
+    user = invitation.membership.user
+    if request.user.is_authenticated and (not user.has_usable_password() or request.user.pk != user.pk):
+        if request.method == "POST":
+            if request.POST.get("action") != "sign_out":
+                raise PermissionDenied("Sign out of the current account before accepting this invitation.")
+            logout(request)
+            return redirect("accept_workspace_invitation", token=token)
+        return render(request, "registration/invitation_switch_account.html", {
+            "tenant": invitation.membership.tenant,
+        })
+    if user.has_usable_password():
+        if request.method == "POST":
+            if not request.user.is_authenticated or request.user.pk != user.pk:
+                raise PermissionDenied("Sign in with the invited account to accept this workspace invitation.")
+            with transaction.atomic():
+                locked = WorkspaceInvitation.objects.select_for_update().select_related("membership").get(pk=invitation.pk)
+                if locked.revoked_at or locked.accepted_at or locked.expires_at <= timezone.now() or locked.approved_role != locked.membership.base_role:
+                    return render(request, "registration/invitation_invalid.html", status=400)
+                locked.membership.is_active = True
+                locked.membership.save(update_fields=["is_active", "updated_at"])
+                locked.accepted_at = timezone.now()
+                locked.save(update_fields=["accepted_at"])
+            messages.success(request, "Workspace invitation accepted.")
+            return redirect("main_app:workspace_home")
+        return render(request, "registration/invitation_existing.html", {"tenant": invitation.membership.tenant})
+    form = SetPasswordForm(user, request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            locked = WorkspaceInvitation.objects.select_for_update().select_related("membership__user").get(pk=invitation.pk)
+            if locked.revoked_at or locked.accepted_at or locked.expires_at <= timezone.now() or not locked.membership.is_active or locked.membership.user.has_usable_password() or locked.approved_role != locked.membership.base_role:
+                return render(request, "registration/invitation_invalid.html", status=400)
+            form.user = locked.membership.user
+            form.save()
+            locked.accepted_at = timezone.now()
+            locked.save(update_fields=["accepted_at"])
+        return redirect("password_reset_complete")
+    return render(request, "registration/invitation_accept.html", {"form": form, "tenant": invitation.membership.tenant})
 
 
 @login_required

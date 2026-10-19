@@ -131,19 +131,30 @@ else:
         }
     }
 
-# Email Configuration
-if DEBUG:
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-else:
-    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-    EMAIL_HOST = 'smtp.gmail.com'
-    EMAIL_PORT = 587
-    EMAIL_USE_TLS = True
-    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+def env_bool(name, default=False):
+    value = os.environ.get(name, str(default)).strip().lower()
+    if value not in {'1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'}:
+        raise ValueError(f'{name} must be a boolean')
+    return value in {'1', 'true', 'yes', 'on'}
 
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'JS Internet Services <no-reply@example.com>')
-EMAIL_SUBJECT_PREFIX = '[JS Internet Services] '
+
+# Email transport is independent of debug mode.
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+EMAIL_USE_SSL = env_bool('EMAIL_USE_SSL', False)
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ValueError('EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '15'))
+APP_BASE_URL = os.environ.get('APP_BASE_URL', '').rstrip('/')
+INVITATION_EXPIRY_HOURS = int(os.environ.get('INVITATION_EXPIRY_HOURS', '48'))
+INVITATION_RESEND_COOLDOWN_SECONDS = int(os.environ.get('INVITATION_RESEND_COOLDOWN_SECONDS', '60'))
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'JS Business Management System <no-reply@example.com>')
+EMAIL_SUBJECT_PREFIX = '[JS Business Management System] '
 SERVER_EMAIL = os.environ.get('SERVER_EMAIL', '')
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -203,6 +214,7 @@ REST_FRAMEWORK = {
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {'redact_invitation_tokens': {'()': 'internetservices.log_filters.RedactInvitationTokens'}},
     'formatters': {
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
@@ -213,6 +225,7 @@ LOGGING = {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['redact_invitation_tokens'],
         },
     },
     'root': {

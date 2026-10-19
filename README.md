@@ -1,4 +1,4 @@
-# JS Internet Services
+# JS Business Management System
 
 Django SaaS application for tenant-scoped customer, service, inventory, billing, messaging, technician work-report, and access management.
 

@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.core import mail
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from billing.models import BillingDocument
@@ -189,6 +189,7 @@ class TenantRBACSecurityTests(TestCase):
         self.client.force_login(self.sales_a)
         self.assertEqual(self.client.get(reverse("team_access")).status_code, 403)
 
+    @override_settings(APP_BASE_URL="http://office.example.test:8000", INVITATION_RESEND_COOLDOWN_SECONDS=0)
     def test_invited_member_receives_one_time_password_setup_link_and_can_log_in(self):
         self.client.force_login(self.manager)
         response = self.client.post(
@@ -203,7 +204,7 @@ class TenantRBACSecurityTests(TestCase):
         self.assertTrue(membership.is_active)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Set up your Tenant A workspace account", mail.outbox[0].subject)
-        self.assertIn("/users/reset/", mail.outbox[0].body)
+        self.assertIn("http://office.example.test:8000/users/invitation/", mail.outbox[0].body)
         self.assertIn(invited.username, mail.outbox[0].body)
 
         resend = self.client.post(reverse("resend_member_activation", args=[membership.pk]))
@@ -215,12 +216,13 @@ class TenantRBACSecurityTests(TestCase):
             object_id=str(membership.pk),
         ).exists())
 
-        activation_path = mail.outbox[-1].body.split("http://testserver", 1)[1].splitlines()[0]
-        activation_page = self.client.get(activation_path, follow=True)
+        activation_path = mail.outbox[-1].body.split("http://office.example.test:8000", 1)[1].splitlines()[0]
+        self.client.post(activation_path, {"action": "sign_out"})
+        activation_page = self.client.get(activation_path)
         self.assertEqual(activation_page.status_code, 200)
-        self.assertContains(activation_page, "Set new password")
+        self.assertContains(activation_page, "Set your password")
         completion = self.client.post(
-            activation_page.request["PATH_INFO"],
+            activation_path,
             {"new_password1": "S@feActivationPass123", "new_password2": "S@feActivationPass123"},
             follow=True,
         )
