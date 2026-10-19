@@ -1,0 +1,36 @@
+{% load number_display %}
+                {% if sites %}
+                    <div class="mt-4 space-y-3">
+                        {% for site in sites %}
+                            <div class="rounded-lg border border-slate-200 p-4">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <div class="text-sm font-semibold text-slate-900">{{ site.name }}</div>
+                                            {% if site.is_primary %}
+                                                <span class="inline-flex items-center rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Primary</span>
+                                            {% endif %}
+                                            {% if not site.is_active %}
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="mt-1 text-sm text-slate-600">{{ site.summary }}</div>
+                                    </div>
+                                    <a href="{% url 'customer-site-update' site.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                        Manage site
+                                    </a>
+                                </div>
+                                {% if customer.is_internet_customer %}<div class="mt-4 space-y-2 border-t border-slate-200 pt-4">
+                                  {% for service in site.service_rows %}
+                                  <a href="{% url 'internet-service-detail' service.id %}" class="group flex min-h-16 flex-col gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 hover:border-brand-300 hover:bg-brand-50/40 sm:flex-row sm:items-center sm:justify-between">
+                                    <span class="min-w-0"><span class="flex flex-wrap items-center gap-2"><span class="font-mono text-xs font-semibold text-slate-500">{{ service.service_code }}</span><span class="text-sm font-semibold text-slate-950">{{ service.name }}</span>{% if service.operational_status == 'unknown' %}<span class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">Not verified</span>{% elif service.operational_status == 'active' %}<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Active</span>{% elif service.operational_status == 'blocked' %}<span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Blocked</span>{% else %}<span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">Disconnected</span>{% endif %}</span><span class="mt-1 block text-xs text-slate-500">IP {{ service.ip_address|default:"not set" }} · VLAN {{ service.vlan_id|default:"not set" }}</span>{% if service.operational_status == 'unknown' %}<span class="mt-1 block text-xs text-slate-500">Operational state has not been confirmed. Open the service to verify it.</span>{% endif %}</span>
+                                    <span class="shrink-0 text-left sm:text-right">{% if service.active_subscription %}<span class="block text-sm font-semibold text-slate-900">{{ service.active_subscription.package.name }}</span><span class="block text-xs tabular-nums text-slate-500">{{ service.active_subscription.monthly_fee_at_signup|money_display }} TZS/month · {{ service.active_subscription.package.speed }}</span>{% else %}<span class="text-sm text-slate-500">No current package</span>{% endif %}</span>
+                                  </a>
+                                  {% empty %}<div class="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">No Internet service at this site.</div>{% endfor %}
+                                </div>{% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="mt-4 text-sm text-slate-600">No sites have been added yet.</p>
+                {% endif %}

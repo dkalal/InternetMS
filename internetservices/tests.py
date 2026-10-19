@@ -10,7 +10,7 @@ from django.test import SimpleTestCase
 from users.models import Organization
 
 from .tailwind import apply_tailwind
-from .number_display import compact_decimal
+from .number_display import compact_decimal, format_money
 
 
 class SelectDesignSystemTests(SimpleTestCase):
@@ -98,6 +98,15 @@ class NumberDisplayTests(SimpleTestCase):
         self.assertEqual(compact_decimal(Decimal("-0.000000")), "0")
         self.assertEqual(compact_decimal(Decimal("655.737705"), max_places=2), "655.74")
 
+    def test_money_display_removes_only_insignificant_fractional_zeroes(self):
+        self.assertEqual(format_money(Decimal("0.00")), "0")
+        self.assertEqual(format_money(Decimal("40000.00")), "40,000")
+        self.assertEqual(format_money(Decimal("40000.50")), "40,000.5")
+        self.assertEqual(format_money(Decimal("40000.123456")), "40,000.123456")
+
+    def test_money_display_keeps_minor_units_for_non_tzs_currency(self):
+        self.assertEqual(format_money(Decimal("40000.00"), "USD"), "40,000.00")
+
     def test_quantity_template_filter_is_safe_for_numbers_text_and_none(self):
         template = Template(
             "{% load number_display %}{{ whole|quantity_display }}|"
@@ -122,8 +131,18 @@ class NumberDisplayTests(SimpleTestCase):
 
         self.assertIn('value="12.5"', form["quantity"].as_widget())
         self.assertIn('value="0.000001"', form["exact"].as_widget())
-        self.assertIn('value="100.00"', form["amount"].as_widget())
+        self.assertIn('value="100"', form["amount"].as_widget())
         self.assertIn('inputmode="decimal"', form["quantity"].as_widget())
+
+    def test_money_template_filter_preserves_meaningful_fraction(self):
+        template = Template(
+            "{% load number_display %}{{ whole|money_display }}|{{ fraction|money_display }}"
+        )
+        rendered = template.render(Context({
+            "whole": Decimal("40000.00"),
+            "fraction": Decimal("40000.50"),
+        }))
+        self.assertEqual(rendered, "40,000|40,000.5")
 
     def test_all_quantity_templates_compile_with_the_shared_filter(self):
         for template_name in (

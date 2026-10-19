@@ -59,7 +59,6 @@ def apply_tailwind(form: forms.BaseForm) -> None:
 
         if (
             isinstance(field, forms.DecimalField)
-            and (field.decimal_places or 0) > 2
             and isinstance(widget, forms.NumberInput)
             and not isinstance(widget, CompactDecimalInput)
         ):

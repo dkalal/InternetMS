@@ -54,7 +54,7 @@ class CustomerForm(CustomFieldFormMixin, forms.ModelForm):
             'vlan_id': 'Network VLAN or segment identifier, if applicable.',
             'tin_number': 'Taxpayer Identification Number, if available.',
             'vrn_number': 'VAT Registration Number for VAT-registered customers.',
-            'pricing_tier': 'Default product pricing used by automatic POS, quotation, invoice, and API sales.',
+            'pricing_tier': 'Default product pricing used by automatic POS, quotation, and invoice.',
         }
 
     def __init__(self, *args, organization=None, **kwargs):

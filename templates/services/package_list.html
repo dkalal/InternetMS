@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% load listing_tags %}
 
 {% block title %}Service Packages{% endblock %}
@@ -93,7 +93,7 @@
               </td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ package.get_package_type_display }}</td>
               <td class="px-4 py-3 text-sm text-slate-700">{{ package.speed }}</td>
-              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ package.monthly_fee|intcomma }} TZS</td>
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ package.monthly_fee|money_display }} TZS</td>
               <td class="px-4 py-3 text-right text-sm text-slate-700">{{ package.active_subscribers|default:0 }}</td>
               <td class="px-4 py-3 text-right text-sm {% if package.unpaid_periods %}font-semibold text-rose-700{% else %}text-slate-700{% endif %}">{{ package.unpaid_periods|default:0 }}</td>
               <td class="px-4 py-3 text-right text-sm">

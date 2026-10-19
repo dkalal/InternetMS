@@ -1,0 +1,17 @@
+{% if custom_fields or can_manage_custom_fields %}
+<details id="additional-information" class="jims-customer-detail__disclosure mt-4">
+    <summary>Additional information <span class="text-xs font-normal text-slate-500">{{ custom_fields|length }} field{{ custom_fields|length|pluralize }}</span></summary>
+    <div class="pt-3">
+        {% if can_manage_custom_fields %}
+            <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact mb-3" data-custom-field-open>Add custom field</button>
+        {% endif %}
+        {% if custom_fields %}
+            <dl class="jims-customer-detail__facts text-sm">
+                {% for item in custom_fields %}
+                    <div><dt>{{ item.definition.label }}{% if item.definition.help_text %}<span class="mt-1 block text-xs font-normal">{{ item.definition.help_text }}</span>{% endif %}</dt><dd>{{ item.display_value|default_if_none:"Not provided" }}</dd></div>
+                {% endfor %}
+            </dl>
+        {% else %}<p class="text-sm text-slate-500">No additional information has been added yet.</p>{% endif %}
+    </div>
+</details>
+{% endif %}

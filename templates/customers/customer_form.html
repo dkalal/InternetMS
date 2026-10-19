@@ -1,11 +1,12 @@
 {% extends 'base.html' %}
 {% block topbar_new_customer %}{% if form.instance.pk %}{{ block.super }}{% endif %}{% endblock %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{% if form.instance.pk %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-form-page mx-auto w-full max-w-[1360px] space-y-6 pb-8">
+<div class="jims-form-page w-full space-y-4 pb-8 {% if form.instance.pk %}mx-auto max-w-[1120px]{% else %}max-w-[80rem]{% endif %}">
+    {% if form.instance.pk %}
     <header class="sticky top-16 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-b-lg sm:px-5">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div class="min-w-0">
@@ -28,8 +29,18 @@
             </div>
         </div>
     </header>
+    {% else %}
+    <header class="jims-page-header">
+        <div>
+            <nav class="jims-breadcrumb" aria-label="Breadcrumb"><a href="{% url 'customer-list' %}">Customers</a><span class="px-1" aria-hidden="true">/</span><span>New customer</span></nav>
+            <h1 class="jims-page-title mt-1">Create customer</h1>
+            <span class="hidden text-xs font-medium text-slate-500" data-unsaved-indicator aria-live="polite">Unsaved changes</span>
+        </div>
+        <a href="{% url 'customer-list' %}" class="jims-btn jims-btn-secondary">Back to customers</a>
+    </header>
+    {% endif %}
 
-    <form id="customer-form" method="post" class="space-y-6" data-customer-form data-unsaved-form>
+    <form id="customer-form" method="post" class="{% if form.instance.pk %}space-y-4{% else %}jims-form-section{% endif %}" data-customer-form data-unsaved-form>
         {% csrf_token %}
 
         {% if form.errors or internet_form.errors %}
@@ -44,21 +55,21 @@
             </section>
         {% endif %}
 
-        <div class="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_300px] xl:items-start">
-            <div class="min-w-0 space-y-6">
-                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="customer-profile-title">
-                    <div class="mb-5">
-                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Customer profile</p>
-                        <h2 id="customer-profile-title" class="mt-1 text-base font-semibold text-slate-950">Basic information</h2>
-                        <p class="mt-1 text-sm text-slate-500">Identity and contact details used across customer and sales records.</p>
+        <div class="{% if form.instance.pk %}grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start{% else %}lg:grid lg:grid-cols-[minmax(0,1fr)_18rem]{% endif %}">
+            <div class="min-w-0 {% if form.instance.pk %}space-y-4{% else %}divide-y divide-slate-200{% endif %}">
+                <section class="{% if form.instance.pk %}rounded-lg border border-slate-200 bg-white p-4 sm:p-6{% else %}p-4 sm:p-5{% endif %}" aria-labelledby="customer-profile-title">
+                    <div class="{% if form.instance.pk %}mb-5{% else %}mb-3{% endif %}">
+                        {% if form.instance.pk %}<p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Customer profile</p>{% endif %}
+                        <h2 id="customer-profile-title" class="{% if form.instance.pk %}mt-1 text-base{% endif %} font-semibold text-slate-950">{% if form.instance.pk %}Basic information{% else %}General{% endif %}</h2>
+                        {% if form.instance.pk %}<p class="mt-1 text-sm text-slate-500">Identity and contact details used across customer and sales records.</p>{% endif %}
                     </div>
-                    <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
-                        <div class="md:col-span-8">{% include "components/form_field.html" with field=form.name %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.customer_type %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.phone %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.email %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.location %}</div>
-                        <details class="group md:col-span-12" {% if form.address.value or form.address.errors %}open{% endif %}>
+                    <div class="{% if form.instance.pk %}grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-12{% else %}flex flex-wrap items-start gap-x-4 gap-y-3{% endif %}">
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-5{% else %}w-full sm:w-[320px]{% endif %}">{% include "components/form_field.html" with field=form.name %}</div>
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-3{% else %}w-full sm:w-[190px]{% endif %}">{% include "components/form_field.html" with field=form.customer_type %}</div>
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[190px]{% endif %}">{% if form.instance.pk %}{% include "components/form_field.html" with field=form.phone %}{% else %}{% include "components/form_field.html" with field=form.phone hide_help=True %}{% endif %}</div>
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[250px]{% endif %}">{% include "components/form_field.html" with field=form.email %}</div>
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[250px]{% endif %}">{% include "components/form_field.html" with field=form.location %}</div>
+                        <details class="group {% if form.instance.pk %}md:col-span-12{% else %}w-full{% endif %}" {% if form.address.value or form.address.errors %}open{% endif %}>
                             <summary class="inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/30">
                                 <span>{% if form.address.value %}Full address{% else %}Add full address{% endif %}</span>
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -77,11 +88,11 @@
                     </div>
                 </section>
 
-                <section id="internet-section" class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6 {% if form.customer_type.value != 'internet' %}hidden{% endif %}" aria-labelledby="internet-service-title">
-                    <div class="mb-5">
-                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Internet service setup</p>
-                        <h2 id="internet-service-title" class="mt-1 text-base font-semibold text-slate-950">Primary internet service</h2>
-                        <p class="mt-1 text-sm text-slate-500">Connection profile, package assignment, and service period for the primary site.</p>
+                <section id="internet-section" class="{% if form.instance.pk %}rounded-lg border border-slate-200 bg-white p-4 sm:p-6{% else %}p-4 sm:p-5{% endif %} {% if form.customer_type.value != 'internet' %}hidden{% endif %}" aria-labelledby="internet-service-title">
+                    <div class="{% if form.instance.pk %}mb-5{% else %}mb-3{% endif %}">
+                        {% if form.instance.pk %}<p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Internet service setup</p>{% endif %}
+                        <h2 id="internet-service-title" class="{% if form.instance.pk %}mt-1 text-base{% endif %} font-semibold text-slate-950">Primary internet service</h2>
+                        {% if form.instance.pk %}<p class="mt-1 text-sm text-slate-500">Connection profile, package assignment, and service period for the primary site.</p>{% endif %}
                     </div>
 
                     {% if service_configuration_managed_separately %}
@@ -93,22 +104,22 @@
                     {% else %}
                     <fieldset>
                         <legend class="sr-only">Primary internet service details</legend>
-                        <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
-                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.package_type %}</div>
-                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.start_date %}</div>
-                            <div class="md:col-span-4">{% include "components/form_field.html" with field=internet_form.end_date %}</div>
+                        <div class="{% if form.instance.pk %}grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12{% else %}flex flex-wrap gap-x-4 gap-y-3{% endif %}">
+                            <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[190px]{% endif %}">{% include "components/form_field.html" with field=internet_form.package_type %}</div>
+                            <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[180px]{% endif %}">{% include "components/form_field.html" with field=internet_form.start_date %}</div>
+                            <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[180px]{% endif %}">{% include "components/form_field.html" with field=internet_form.end_date %}</div>
 
-                            <div id="package-section" class="md:col-span-12 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                            <div id="package-section" class="w-full {% if form.instance.pk %}md:col-span-12 rounded-lg border border-slate-200 bg-slate-50/60 p-4{% else %}rounded-lg border border-slate-200 bg-slate-50/60 p-3{% endif %}">
                                 <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div>
                                         <h3 class="text-sm font-semibold text-slate-950">Service package assignment</h3>
-                                        <p class="mt-1 text-xs leading-5 text-slate-500">Optional default package(s) for the primary site. Package type is shown on each option and does not filter connection type.</p>
+                                        {% if form.instance.pk %}<p class="mt-1 text-xs leading-5 text-slate-500">Optional default package(s) for the primary site. Package type is shown on each option and does not filter connection type.</p>{% endif %}
                                     </div>
                                     <button type="button" class="jims-btn jims-btn-secondary jims-btn-compact shrink-0" data-package-open {% if form.packages.field.disabled %}disabled{% endif %}>{% if form.selected_package_ids %}Change packages{% else %}Choose package{% endif %}</button>
                                 </div>
                                 <div class="mt-4 space-y-2" data-package-summary aria-live="polite">
                                     {% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}{% if package_id in form.selected_package_ids %}
-                                        <div class="flex flex-col gap-1 rounded-md border border-brand-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between"><span><span class="block text-sm font-medium text-slate-900">{{ package.name }}</span><span class="block text-xs text-slate-500">{{ package.speed|default:"Speed not specified" }} · {{ package.get_package_type_display }}</span></span><span class="text-sm font-semibold tabular-nums text-slate-800">TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month</span></div>
+                                        <div class="flex flex-col gap-1 rounded-md border border-brand-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between"><span><span class="block text-sm font-medium text-slate-900">{{ package.name }}</span><span class="block text-xs text-slate-500">{{ package.speed|default:"Speed not specified" }} · {{ package.get_package_type_display }}</span></span><span class="text-sm font-semibold tabular-nums text-slate-800">TZS {{ package.monthly_fee|money_display }} / month</span></div>
                                     {% endif %}{% endwith %}{% empty %}<div class="rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">No service packages are available for this organization.</div>{% endfor %}
                                     {% if not form.selected_package_ids and form.packages.field.queryset %}<div class="rounded-md border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">No package selected. You can save the Internet customer without assigning one.</div>{% endif %}
                                 </div>
@@ -119,51 +130,51 @@
                         </div>
                     </fieldset>
 
-                    <details class="group mt-5 rounded-lg border border-slate-200 bg-white" {% if form.ip_address.value or form.vlan_id.value or form.ip_address.errors or form.vlan_id.errors %}open{% endif %}>
+                    <details class="group {% if form.instance.pk %}mt-5 rounded-lg border border-slate-200 bg-white{% else %}mt-3 border-t border-slate-200{% endif %}" {% if form.ip_address.value or form.vlan_id.value or form.ip_address.errors or form.vlan_id.errors %}open{% endif %}>
                         <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600/30">
                             <span><span class="text-sm font-semibold text-slate-900">Network details</span><span class="text-sm text-slate-500"> · Optional</span></span>
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                         </summary>
-                        <div class="grid grid-cols-1 gap-4 border-t border-slate-200 p-4 md:grid-cols-2">
-                            <div>{% include "components/form_field.html" with field=form.ip_address %}</div>
-                            <div>{% include "components/form_field.html" with field=form.vlan_id %}</div>
-                            <p class="text-xs leading-5 text-slate-500 md:col-span-2">The primary site is created and maintained by the existing customer-site workflow. Additional offices remain managed from the customer record.</p>
+                        <div class="{% if form.instance.pk %}grid grid-cols-1 gap-4 border-t border-slate-200 p-4 md:grid-cols-2{% else %}flex flex-wrap gap-3 border-t border-slate-200 px-4 py-3{% endif %}">
+                            <div class="min-w-0 {% if not form.instance.pk %}w-full sm:w-[210px]{% endif %}">{% include "components/form_field.html" with field=form.ip_address %}</div>
+                            <div class="min-w-0 {% if not form.instance.pk %}w-full sm:w-[150px]{% endif %}">{% include "components/form_field.html" with field=form.vlan_id %}</div>
+                            {% if form.instance.pk %}<p class="text-xs leading-5 text-slate-500 md:col-span-2">The primary site is created and maintained by the existing customer-site workflow. Additional offices remain managed from the customer record.</p>{% endif %}
                         </div>
                     </details>
                     {% endif %}
                 </section>
 
-                <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="billing-business-title">
-                    <div class="mb-5">
-                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Billing and business preferences</p>
-                        <h2 id="billing-business-title" class="mt-1 text-base font-semibold text-slate-950">Sales and billing preferences</h2>
-                        <p class="mt-1 text-sm text-slate-500">Defaults used by existing sales and billing workflows.</p>
+                <section class="{% if form.instance.pk %}rounded-lg border border-slate-200 bg-white p-4 sm:p-6{% else %}p-4 sm:p-5{% endif %}" aria-labelledby="billing-business-title">
+                    <div class="{% if form.instance.pk %}mb-5{% else %}mb-3{% endif %}">
+                        {% if form.instance.pk %}<p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Billing and business preferences</p>{% endif %}
+                        <h2 id="billing-business-title" class="{% if form.instance.pk %}mt-1 text-base{% endif %} font-semibold text-slate-950">Sales and billing preferences</h2>
+                        {% if form.instance.pk %}<p class="mt-1 text-sm text-slate-500">Defaults used by existing sales and billing workflows.</p>{% endif %}
                     </div>
-                    <div class="grid grid-cols-1 gap-4 md:grid-cols-12">
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.pricing_tier %}</div>
-                        <details class="group md:col-span-8" {% if form.tin_number.value or form.vrn_number.value or form.tin_number.errors or form.vrn_number.errors %}open{% endif %}>
+                    <div class="{% if form.instance.pk %}grid grid-cols-1 gap-4 md:grid-cols-12{% else %}flex flex-wrap items-start gap-3{% endif %}">
+                        <div class="min-w-0 {% if form.instance.pk %}md:col-span-4{% else %}w-full sm:w-[210px]{% endif %}">{% include "components/form_field.html" with field=form.pricing_tier %}</div>
+                        <details class="group {% if form.instance.pk %}md:col-span-8{% else %}w-full{% endif %}" {% if form.tin_number.value or form.vrn_number.value or form.tin_number.errors or form.vrn_number.errors %}open{% endif %}>
                             <summary class="inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/30">
                                 <span>Business tax identity</span>
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                             </summary>
-                            <div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                <div>{% include "components/form_field.html" with field=form.tin_number hide_help=True %}</div>
-                                <div>{% include "components/form_field.html" with field=form.vrn_number hide_help=True %}</div>
+                            <div class="mt-2 {% if form.instance.pk %}grid grid-cols-1 gap-4 sm:grid-cols-2{% else %}flex flex-wrap gap-3{% endif %}">
+                                <div class="min-w-0 {% if not form.instance.pk %}w-full sm:w-[180px]{% endif %}">{% include "components/form_field.html" with field=form.tin_number hide_help=True %}</div>
+                                <div class="min-w-0 {% if not form.instance.pk %}w-full sm:w-[180px]{% endif %}">{% include "components/form_field.html" with field=form.vrn_number hide_help=True %}</div>
                             </div>
                         </details>
                     </div>
                 </section>
 
-                {% include "includes/custom_fields_form.html" with compact_collapsed=True %}
+                {% if form.instance.pk %}{% include "includes/custom_fields_form.html" with compact_collapsed=True %}{% else %}{% include "includes/custom_fields_form.html" with compact_collapsed=True product_compact=True %}{% endif %}
             </div>
 
-            <aside class="min-w-0 xl:sticky xl:top-40" aria-labelledby="customer-summary-title">
-                <section class="rounded-lg border border-slate-200 bg-white p-5">
+            <aside class="min-w-0 {% if form.instance.pk %}xl:sticky xl:top-40{% else %}border-t border-slate-200 p-4 sm:p-5 lg:border-l lg:border-t-0{% endif %}" aria-labelledby="customer-summary-title">
+                <section class="rounded-lg border border-slate-200 {% if form.instance.pk %}bg-white p-5{% else %}bg-slate-50 p-4{% endif %}">
                     <div class="flex items-start justify-between gap-3">
-                        <div><p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">At a glance</p><h2 id="customer-summary-title" class="mt-1 text-base font-semibold text-slate-950">{% if form.instance.pk %}Account summary{% else %}Customer preview{% endif %}</h2></div>
-                        <span class="h-2.5 w-2.5 rounded-full bg-brand-500" aria-hidden="true"></span>
+                        <div>{% if form.instance.pk %}<p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">At a glance</p>{% endif %}<h2 id="customer-summary-title" class="{% if form.instance.pk %}mt-1 text-base{% else %}text-sm{% endif %} font-semibold text-slate-950">{% if form.instance.pk %}Account summary{% else %}Customer preview{% endif %}</h2></div>
+                        {% if form.instance.pk %}<span class="h-2.5 w-2.5 rounded-full bg-brand-500" aria-hidden="true"></span>{% endif %}
                     </div>
-                    <dl class="mt-5 space-y-4">
+                    <dl class="{% if form.instance.pk %}mt-5 space-y-4{% else %}mt-4 space-y-3{% endif %}">
                         {% include "components/summary_row.html" with label="Customer" value=form.name.value value_id="summary-customer-name" live=True %}
                         {% include "components/summary_row.html" with label="Customer type" value=form.customer_type.value value_id="summary-customer-type" live=True %}
                         {% include "components/summary_row.html" with label="Status" value=form.instance.get_status_display|default:"Active" value_id="summary-customer-status" live=True %}
@@ -178,7 +189,7 @@
                         {% if current_service_subscription %}
                         <div>
                             <dt class="text-xs font-medium text-slate-500">Recurring charge</dt>
-                            <dd class="mt-1 text-sm font-medium tabular-nums text-slate-900">TZS {{ current_service_subscription.monthly_fee_at_signup|floatformat:0|intcomma }} / month</dd>
+                            <dd class="mt-1 text-sm font-medium tabular-nums text-slate-900">TZS {{ current_service_subscription.monthly_fee_at_signup|money_display }} / month</dd>
                         </div>
                         <div>
                             <dt class="text-xs font-medium text-slate-500">Current agreement</dt>
@@ -202,7 +213,7 @@
                         </div>
                         <div id="summary-recurring-charge" class="{% if form.customer_type.value != 'internet' or form.selected_package_ids|length != 1 %}hidden{% endif %}">
                             <dt class="text-xs font-medium text-slate-500">Recurring charge</dt>
-                            <dd id="summary-recurring-value" class="mt-1 text-sm font-medium tabular-nums text-slate-900" aria-live="polite">{% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}{% if package_id in form.selected_package_ids %}TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month{% endif %}{% endwith %}{% endfor %}</dd>
+                            <dd id="summary-recurring-value" class="mt-1 text-sm font-medium tabular-nums text-slate-900" aria-live="polite">{% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}{% if package_id in form.selected_package_ids %}TZS {{ package.monthly_fee|money_display }} / month{% endif %}{% endwith %}{% endfor %}</dd>
                         </div>
                         <div id="summary-service-period" class="{% if form.customer_type.value != 'internet' %}hidden{% endif %}">
                             <dt class="text-xs font-medium text-slate-500">Planned agreement</dt>
@@ -211,10 +222,16 @@
                         {% endif %}
                         {% comment %} {% include "components/summary_row.html" with label="Readiness" value="Add the core customer details" value_id="summary-readiness" live=True %} {% endcomment %}
                     </dl>
-                    <p class="mt-5 rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-500">This preview reflects form selections only. Billing and subscription rules remain server-controlled when you save.</p>
+                    {% if form.instance.pk %}<p class="mt-5 rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-500">This preview reflects form selections only. Billing and subscription rules remain server-controlled when you save.</p>{% endif %}
                 </section>
             </aside>
         </div>
+        {% if not form.instance.pk %}
+        <div class="flex flex-wrap justify-end gap-2 border-t border-slate-200 p-4 sm:p-5">
+            <a href="{% url 'customer-list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
+            <button type="submit" class="jims-btn jims-btn-primary">Save customer</button>
+        </div>
+        {% endif %}
 
         <div class="fixed inset-0 z-50 hidden items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4" data-package-dialog role="dialog" aria-modal="true" aria-labelledby="package-dialog-title">
             <div class="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-t-lg bg-white shadow-2xl sm:rounded-lg">
@@ -226,10 +243,10 @@
                 <fieldset class="min-h-0 flex-1 overflow-y-auto p-2" data-package-list aria-describedby="package-help{% if form.packages.errors %} package-errors{% endif %}">
                     <legend class="sr-only">{{ form.packages.label }}</legend><p id="package-help" class="sr-only">{{ form.packages.help_text }}</p>
                     {% for package in form.packages.field.queryset %}{% with package_id=package.pk|stringformat:"s" %}
-                        <label class="relative flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-slate-200 hover:bg-slate-50 has-[:checked]:border-brand-300 has-[:checked]:bg-brand-50" data-package-option data-package-name="{{ package.name }}" data-package-meta="{{ package.speed|default:'Speed not specified' }} · {{ package.get_package_type_display }}{% if not package.is_active %} · Inactive{% endif %}" data-package-price="TZS {{ package.monthly_fee|floatformat:0|intcomma }} / month">
+                        <label class="relative flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-transparent px-3 py-2 hover:border-slate-200 hover:bg-slate-50 has-[:checked]:border-brand-300 has-[:checked]:bg-brand-50" data-package-option data-package-name="{{ package.name }}" data-package-meta="{{ package.speed|default:'Speed not specified' }} · {{ package.get_package_type_display }}{% if not package.is_active %} · Inactive{% endif %}" data-package-price="TZS {{ package.monthly_fee|money_display }} / month">
                             <input id="id_packages_{{ forloop.counter0 }}" type="checkbox" name="{{ form.packages.html_name }}" value="{{ package.pk }}" class="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30" {% if package_id in form.selected_package_ids %}checked{% endif %} {% if form.packages.field.disabled %}disabled{% endif %}>
                             <span class="min-w-0 flex-1"><span class="flex flex-wrap items-center gap-2"><span class="block truncate text-sm font-medium text-slate-900">{{ package.name }}</span>{% if not package.is_active %}<span class="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">Inactive · existing assignment</span>{% endif %}</span><span class="block truncate text-xs text-slate-500">{{ package.speed|default:"Speed not specified" }} · {{ package.get_package_type_display }}</span></span>
-                            <span class="shrink-0 text-right"><span class="block text-sm font-semibold tabular-nums text-slate-900">TZS {{ package.monthly_fee|floatformat:0|intcomma }}</span><span class="block text-xs text-slate-500">per month</span></span>
+                            <span class="shrink-0 text-right"><span class="block text-sm font-semibold tabular-nums text-slate-900">TZS {{ package.monthly_fee|money_display }}</span><span class="block text-xs text-slate-500">per month</span></span>
                         </label>
                     {% endwith %}{% empty %}<div class="p-6 text-center text-sm text-slate-500">No active service packages are available for this organization.</div>{% endfor %}
                     <p class="hidden p-6 text-center text-sm text-slate-500" data-package-no-results>No packages match your search.</p>

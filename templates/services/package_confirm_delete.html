@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Delete {{ package.name }}{% endblock %}
 
@@ -33,11 +33,11 @@
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Monthly fee</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.monthly_fee|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.monthly_fee|money_display }} TZS</dd>
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Setup fee</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.setup_fee|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.setup_fee|money_display }} TZS</dd>
                 </div>
             </dl>
 

@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{{ package.name }}{% endblock %}
 
@@ -36,10 +36,10 @@
     </header>
 
     <dl class="jims-detail-kpis" aria-label="Package performance">
-        <div class="jims-detail-kpi"><dt>Monthly fee</dt><dd>{{ package.monthly_fee|intcomma }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>
+        <div class="jims-detail-kpi"><dt>Monthly fee</dt><dd>{{ package.monthly_fee|money_display }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>
         <div class="jims-detail-kpi"><dt>Active services</dt><dd>{{ active_subscriber_count }}</dd></div>
         {% if finance_all %}<div class="jims-detail-kpi"><dt>Unpaid periods</dt><dd class="{% if unpaid_period_count %}text-rose-700{% endif %}">{{ unpaid_period_count }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Collected</dt><dd>{{ collected_amount|intcomma }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>{% endif %}
+        <div class="jims-detail-kpi"><dt>Collected</dt><dd>{{ collected_amount|money_display }} <span class="text-xs font-medium text-slate-500">TZS</span></dd></div>{% endif %}
     </dl>
 
     <div class="grid grid-cols-1 gap-6 {% if finance_all %}lg:grid-cols-2{% endif %}">
@@ -48,15 +48,15 @@
             <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <dt class="text-xs text-slate-500">Monthly fee</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.monthly_fee|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.monthly_fee|money_display }} TZS</dd>
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Setup fee</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.setup_fee|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.setup_fee|money_display }} TZS</dd>
                 </div>
                 <div class="sm:col-span-2">
                     <dt class="text-xs text-slate-500">Total first month</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.price|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ package.price|money_display }} TZS</dd>
                 </div>
             </dl>
         </section>{% endif %}
@@ -74,7 +74,7 @@
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Collected</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ collected_amount|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ collected_amount|money_display }} TZS</dd>
                 </div>
             </dl>
             <p class="mt-5 text-sm text-slate-700">{{ package.description|default:"-" }}</p>

@@ -1,0 +1,285 @@
+{
+	"counts": {
+		"active_subscriptions": 28,
+		"billing_documents": 194,
+		"billing_line_items": 229,
+		"customer_sites": 34,
+		"customers": 34,
+		"internet_customers": 31,
+		"internet_profiles": 30,
+		"packages": 6,
+		"subscription_periods": 72,
+		"subscriptions": 32,
+		"walk_in_customers": 3
+	},
+	"findings": {
+		"customer_with_multiple_subscriptions": {
+			"count": 1,
+			"description": "Customer has multiple historical or current subscriptions; topology must be resolved through site/service ownership.",
+			"records": [
+				{
+					"active_subscription_ids": [
+						30,
+						32
+					],
+					"customer_id": 5,
+					"subscription_ids": [
+						3,
+						4,
+						29,
+						30,
+						31,
+						32
+					]
+				}
+			],
+			"severity": "review"
+		},
+		"internet_customer_without_subscription": {
+			"count": 4,
+			"description": "Internet customer has no subscription history; creating a service is possible, but no commercial agreement can be inferred.",
+			"records": [
+				{
+					"customer_id": 1
+				},
+				{
+					"customer_id": 21
+				},
+				{
+					"customer_id": 23
+				},
+				{
+					"customer_id": 30
+				}
+			],
+			"severity": "review"
+		},
+		"legacy_primary_site_location_conflict": {
+			"count": 1,
+			"description": "Customer-level and primary-site location/address values disagree and may represent account versus service-location edits.",
+			"records": [
+				{
+					"conflicts": {
+						"address": {
+							"customer": "KCC Floor No: 2 & 3",
+							"site": "KCC Floor No: 2"
+						}
+					},
+					"customer_id": 5,
+					"site_id": 26
+				}
+			],
+			"severity": "review"
+		},
+		"missing_profile_package_type": {
+			"count": 25,
+			"description": "Legacy Internet profile has no connection classification. Package type remains available canonically from Package and is not inferred back into the profile.",
+			"records": [
+				{
+					"active_package_types": [],
+					"customer_id": 1,
+					"profile_id": 1
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 2,
+					"profile_id": 2
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 3,
+					"profile_id": 3
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 4,
+					"profile_id": 4
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 5,
+					"profile_id": 5
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 6,
+					"profile_id": 6
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 7,
+					"profile_id": 7
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 8,
+					"profile_id": 8
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 9,
+					"profile_id": 9
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 10,
+					"profile_id": 10
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 11,
+					"profile_id": 11
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 12,
+					"profile_id": 12
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 13,
+					"profile_id": 13
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 14,
+					"profile_id": 14
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 15,
+					"profile_id": 15
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 16,
+					"profile_id": 16
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 18,
+					"profile_id": 18
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 19,
+					"profile_id": 19
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 20,
+					"profile_id": 20
+				},
+				{
+					"active_package_types": [],
+					"customer_id": 21,
+					"profile_id": 21
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 22,
+					"profile_id": 22
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 24,
+					"profile_id": 24
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 25,
+					"profile_id": 25
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 26,
+					"profile_id": 26
+				},
+				{
+					"active_package_types": [
+						"indoor"
+					],
+					"customer_id": 27,
+					"profile_id": 27
+				}
+			],
+			"severity": "review"
+		},
+		"walk_in_with_service_topology": {
+			"count": 2,
+			"description": "Walk-in/random customer already has site, package, network, profile, or subscription data; it must not be silently removed.",
+			"records": [
+				{
+					"customer_id": 31,
+					"has_profile": false,
+					"site_ids": [
+						32
+					],
+					"subscription_ids": []
+				},
+				{
+					"customer_id": 34,
+					"has_profile": false,
+					"site_ids": [
+						34
+					],
+					"subscription_ids": []
+				}
+			],
+			"severity": "review"
+		}
+	},
+	"scope": {
+		"sample_limit": 500,
+		"tenant_id": null
+	},
+	"summary": {
+		"blocking_ambiguities": 0,
+		"review_findings": 33,
+		"safe_to_begin_deterministic_backfill": true
+	}
+}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load number_display %}
 {% block title %}{{ report.work_title }}{% endblock %}
 {% block content %}
 <div class="mx-auto max-w-6xl space-y-5">
@@ -23,7 +24,7 @@
         </ol>
       </section>
     </div>
-    <aside class="space-y-5"><section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><h2 class="text-sm font-bold text-slate-950">Report details</h2><dl class="mt-4 space-y-3 text-sm"><div><dt class="text-slate-500">Technician</dt><dd class="font-semibold text-slate-800">{{ report.technician.user.get_full_name|default:report.technician.user.username }}</dd></div><div><dt class="text-slate-500">Location</dt><dd class="font-medium text-slate-800">{{ report.work_location|default:"Not specified" }}</dd></div>{% if report.customer %}<div><dt class="text-slate-500">Linked customer</dt><dd class="font-medium text-slate-800">{{ report.customer.name }}</dd></div>{% endif %}<div class="rounded-lg bg-brand-50 p-3"><dt class="text-xs font-semibold uppercase tracking-wide text-brand-700">Private agreed amount</dt><dd class="mt-1 text-lg font-bold text-brand-950">TZS {{ report.agreed_amount|floatformat:2 }}</dd></div>{% if report.submitted_at %}<div><dt class="text-slate-500">Submitted</dt><dd class="font-medium text-slate-800">{{ report.submitted_at|date:"d M Y, H:i" }}</dd></div>{% endif %}{% if report.approved_at %}<div><dt class="text-slate-500">Approved</dt><dd class="font-medium text-slate-800">{{ report.approved_at|date:"d M Y, H:i" }}</dd></div>{% endif %}</dl></section></aside>
+    <aside class="space-y-5"><section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><h2 class="text-sm font-bold text-slate-950">Report details</h2><dl class="mt-4 space-y-3 text-sm"><div><dt class="text-slate-500">Technician</dt><dd class="font-semibold text-slate-800">{{ report.technician.user.get_full_name|default:report.technician.user.username }}</dd></div><div><dt class="text-slate-500">Location</dt><dd class="font-medium text-slate-800">{{ report.work_location|default:"Not specified" }}</dd></div>{% if report.customer %}<div><dt class="text-slate-500">Linked customer</dt><dd class="font-medium text-slate-800">{{ report.customer.name }}</dd></div>{% endif %}<div class="rounded-lg bg-brand-50 p-3"><dt class="text-xs font-semibold uppercase tracking-wide text-brand-700">Private agreed amount</dt><dd class="mt-1 text-lg font-bold text-brand-950">TZS {{ report.agreed_amount|money_display }}</dd></div>{% if report.submitted_at %}<div><dt class="text-slate-500">Submitted</dt><dd class="font-medium text-slate-800">{{ report.submitted_at|date:"d M Y, H:i" }}</dd></div>{% endif %}{% if report.approved_at %}<div><dt class="text-slate-500">Approved</dt><dd class="font-medium text-slate-800">{{ report.approved_at|date:"d M Y, H:i" }}</dd></div>{% endif %}</dl></section></aside>
   </div>
   {% if report.status == 'APPROVED' %}
     <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="technician-payment-heading">
@@ -33,11 +34,11 @@
       </div>
       {% if payment %}
         <dl class="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt class="text-slate-500">Agreed amount</dt><dd class="mt-1 font-semibold text-slate-900">TZS {{ payment.agreed_amount_snapshot|floatformat:2 }}</dd></div>
-          <div><dt class="text-slate-500">Amount recorded as paid</dt><dd class="mt-1 font-bold text-slate-950">TZS {{ payment.amount_paid|floatformat:2 }}</dd></div>
+          <div><dt class="text-slate-500">Agreed amount</dt><dd class="mt-1 font-semibold text-slate-900">TZS {{ payment.agreed_amount_snapshot|money_display }}</dd></div>
+          <div><dt class="text-slate-500">Amount recorded as paid</dt><dd class="mt-1 font-bold text-slate-950">TZS {{ payment.amount_paid|money_display }}</dd></div>
           <div><dt class="text-slate-500">Payment date</dt><dd class="mt-1 font-semibold text-slate-900">{{ payment.payment_date|date:"d M Y" }}</dd></div>
           <div><dt class="text-slate-500">Method</dt><dd class="mt-1 font-semibold text-slate-900">{{ payment.get_payment_method_display }}</dd></div>
-          {% if payment.amount_paid != payment.agreed_amount_snapshot %}<div><dt class="text-slate-500">Difference</dt><dd class="mt-1 font-semibold text-orange-700">TZS {{ payment.difference|floatformat:2 }}</dd></div><div class="sm:col-span-2 lg:col-span-3"><dt class="text-slate-500">Adjustment reason</dt><dd class="mt-1 text-slate-800">{{ payment.adjustment_reason }}</dd></div>{% endif %}
+          {% if payment.amount_paid != payment.agreed_amount_snapshot %}<div><dt class="text-slate-500">Difference</dt><dd class="mt-1 font-semibold text-orange-700">TZS {{ payment.difference|money_display }}</dd></div><div class="sm:col-span-2 lg:col-span-3"><dt class="text-slate-500">Adjustment reason</dt><dd class="mt-1 text-slate-800">{{ payment.adjustment_reason }}</dd></div>{% endif %}
           {% if payment.reference %}<div><dt class="text-slate-500">Reference</dt><dd class="mt-1 break-words font-medium text-slate-900">{{ payment.reference }}</dd></div>{% endif %}
           {% if can_review and payment.manager_note %}<div class="sm:col-span-2"><dt class="text-slate-500">Manager note</dt><dd class="mt-1 whitespace-pre-line text-slate-800">{{ payment.manager_note }}</dd></div>{% endif %}
           {% if payment.dispute_reason %}<div class="sm:col-span-2 lg:col-span-4 rounded-lg border border-orange-200 bg-orange-50 p-3"><dt class="font-semibold text-orange-900">Technician dispute</dt><dd class="mt-1 whitespace-pre-line text-orange-900">{{ payment.dispute_reason }}</dd></div>{% endif %}
@@ -55,14 +56,14 @@
         </div>
       {% else %}
         <div class="mt-4 flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><p class="text-sm font-semibold text-slate-800">Payment not recorded</p><p class="mt-1 text-sm text-slate-500">Approved agreed amount: TZS {{ report.agreed_amount|floatformat:2 }}</p></div>
+          <div><p class="text-sm font-semibold text-slate-800">Payment not recorded</p><p class="mt-1 text-sm text-slate-500">Approved agreed amount: TZS {{ report.agreed_amount|money_display }}</p></div>
           {% if can_record_payment %}<a href="{% url 'work_reports:payment_record' report.pk %}" class="jims-btn jims-btn-primary">Record payment</a>{% endif %}
         </div>
       {% endif %}
     </section>
     {% if can_respond_payment %}
       <dialog id="confirm-payment-dialog" class="w-[calc(100%-2rem)] max-w-md rounded-xl p-0 shadow-2xl backdrop:bg-slate-950/40" aria-labelledby="confirm-payment-title">
-        <div class="p-5"><h2 id="confirm-payment-title" class="text-lg font-bold text-slate-950">Confirm payment received</h2><p class="mt-2 text-sm leading-6 text-slate-600">Confirm that you received TZS {{ payment.amount_paid|floatformat:2 }} through {{ payment.get_payment_method_display }} on {{ payment.payment_date|date:"d M Y" }}. This action will be recorded in the audit history.</p><div class="mt-5 flex justify-end gap-2"><form method="dialog"><button class="jims-btn jims-btn-secondary">Cancel</button></form><form method="post" action="{% url 'work_reports:payment_confirm' payment.pk %}">{% csrf_token %}<button class="jims-btn jims-btn-primary">Confirm received</button></form></div></div>
+        <div class="p-5"><h2 id="confirm-payment-title" class="text-lg font-bold text-slate-950">Confirm payment received</h2><p class="mt-2 text-sm leading-6 text-slate-600">Confirm that you received TZS {{ payment.amount_paid|money_display }} through {{ payment.get_payment_method_display }} on {{ payment.payment_date|date:"d M Y" }}. This action will be recorded in the audit history.</p><div class="mt-5 flex justify-end gap-2"><form method="dialog"><button class="jims-btn jims-btn-secondary">Cancel</button></form><form method="post" action="{% url 'work_reports:payment_confirm' payment.pk %}">{% csrf_token %}<button class="jims-btn jims-btn-primary">Confirm received</button></form></div></div>
       </dialog>
     {% endif %}
   {% endif %}

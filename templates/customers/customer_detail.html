@@ -1,42 +1,36 @@
 {% extends 'base.html' %}
 {% block topbar_new_invoice %}{% endblock %}
-{% load humanize tz %}
+{% load humanize tz number_display %}
 
 {% block title %}{{ customer.name }}{% endblock %}
 
 {% block content %}
-<div class="jims-detail-page space-y-6">
+<div class="jims-detail-page jims-customer-detail space-y-4">
     <header class="jims-record-header flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div class="flex min-w-0 items-center gap-4">
             <div class="jims-record-avatar" aria-hidden="true">{{ customer.name|slice:":1"|upper }}</div>
             <div class="min-w-0">
-            <div class="text-sm text-slate-500">
-                <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
-                <span class="px-1">/</span>
-                <span class="text-slate-700">{{ customer.name }}</span>
-            </div>
-            <h1 class="mt-1 truncate text-2xl font-semibold tracking-tight text-slate-950">{{ customer.name }}</h1>
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                <span>{{ customer.get_customer_type_display }}</span>
-                <span class="text-slate-300">&middot;</span>
-                <span>{{ customer.location }}</span>
-                <span class="text-slate-300">&middot;</span>
-                {% if customer.status == 'active' %}
-                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
-                {% elif customer.status == 'inactive' %}
-                    <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Inactive</span>
-                {% else %}
-                    <span class="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Suspended</span>
-                {% endif %}
-            </div>
+                <div class="text-sm text-slate-500">
+                    <a class="hover:underline" href="{% url 'customer-list' %}">Customers</a>
+                    <span class="px-1">/</span><span class="text-slate-700">{{ customer.name }}</span>
+                </div>
+                <h1 class="mt-1 truncate text-2xl font-semibold tracking-tight text-slate-950">{{ customer.name }}</h1>
+                <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                    <span>{{ customer.get_customer_type_display }}</span><span class="text-slate-300">&middot;</span>
+                    <span>{{ customer.location }}</span><span class="text-slate-300">&middot;</span>
+                    {% if customer.status == 'active' %}
+                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+                    {% elif customer.status == 'inactive' %}
+                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Inactive</span>
+                    {% else %}
+                        <span class="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">Suspended</span>
+                    {% endif %}
+                </div>
             </div>
         </div>
-
         <div class="flex flex-wrap items-center gap-2">
             {% include "messaging/includes/whatsapp_composer_modal.html" with whatsapp_customer=customer whatsapp_category="general" %}
-            <a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-primary">
-                Edit customer
-            </a>
+            <a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-primary">Edit customer</a>
             <details class="jims-action-menu">
                 <summary class="jims-btn jims-btn-secondary">More actions</summary>
                 <div class="jims-action-menu-panel">
@@ -48,427 +42,101 @@
         </div>
     </header>
 
-    <dl class="jims-detail-kpis" aria-label="Customer account overview">
-        <div class="jims-detail-kpi"><dt>Operational services</dt><dd>{{ operational_service_count }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Recent billing periods</dt><dd>{{ subscription_periods|length }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Service sites</dt><dd>{{ sites|length }}</dd></div>
-        <div class="jims-detail-kpi"><dt>Documents</dt><dd>{{ billing_documents|length }}</dd></div>
-    </dl>
-
-    {% if customer.is_internet_customer %}<section class="jims-detail-section">
-        <div class="jims-detail-section-header flex-col sm:flex-row">
-            <div>
-                <h2 class="text-sm font-semibold text-slate-900">Internet package subscriptions</h2>
-                <p class="mt-1 text-sm text-slate-600">Renew packages, track paid-through dates, and see unpaid billing periods.</p>
-            </div>
-        </div>
-
-        <div class="jims-detail-section-body">
-        {% if subscriptions %}
-            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {% for subscription in subscriptions %}
-                    <div class="rounded-lg border border-slate-200 p-4">
-                        <div class="flex items-start justify-between gap-3">
-                            <div>
-                                <div class="text-sm font-semibold text-slate-900">{{ subscription.package.name }}</div>
-                                <div class="mt-1 text-xs text-slate-500">{{ subscription.site.name|default:"Main Office" }}{% if subscription.internet_service %} · <a class="font-mono text-brand-700 hover:underline" href="{% url 'internet-service-detail' subscription.internet_service_id %}">{{ subscription.internet_service.service_code }}</a>{% endif %}</div>
-                                <div class="mt-1 text-sm text-slate-600">{{ subscription.package.speed }} &middot; {{ subscription.monthly_fee_at_signup|intcomma }} TZS / month</div>
-                                {% if subscription.latest_period and subscription.latest_billing_amount %}
-                                    <div class="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                                        <div class="flex flex-wrap items-center justify-between gap-2">
-                                            <span class="font-semibold text-slate-800">Billed service period</span>
-                                            {% if subscription.latest_period.status == 'paid' %}
-                                                <span class="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">Paid</span>
-                                            {% elif subscription.latest_period.status == 'overdue' %}
-                                                <span class="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-800">Payment overdue</span>
-                                            {% elif subscription.latest_period.status == 'invoiced' %}
-                                                <span class="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900">Awaiting full payment</span>
-                                            {% else %}
-                                                <span class="rounded-full bg-slate-200 px-2 py-0.5 font-semibold text-slate-700">{{ subscription.latest_period.get_status_display }}</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="mt-1 tabular-nums text-slate-700">{{ subscription.latest_period.period_start|date:"d M Y" }} – {{ subscription.latest_period.period_end|date:"d M Y" }} &middot; {{ subscription.latest_billing_amount|intcomma }} TZS</div>
-                                        {% if subscription.latest_period.status == 'invoiced' or subscription.latest_period.status == 'overdue' %}
-                                            <p class="mt-1 text-slate-500">This period becomes confirmed paid coverage only after the invoice is fully settled.</p>
-                                        {% endif %}
-                                    </div>
-                                {% endif %}
-                                <div class="mt-2 text-sm">
-                                    {% if subscription.latest_paid_coverage %}
-                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Confirmed paid coverage {{ subscription.latest_paid_coverage.start|date:"M d, Y" }} – {{ subscription.latest_paid_coverage.end|date:"M d, Y" }}</span>
-                                    {% else %}
-                                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">No fully paid coverage recorded</span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                            {% if customer.status == 'active' %}
-                                <div class="flex shrink-0 flex-col gap-2">
-                                    <a href="{% url 'billing:renew_subscription' subscription.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
-                                        Renew
-                                    </a>
-                                    {% if subscription.status == 'active' %}
-                                        <a href="{% url 'billing:cancel_subscription' subscription.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
-                                            Cancel
-                                        </a>
-                                    {% endif %}
-                                </div>
-                            {% else %}
-                                <span class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-slate-500">Customer not active</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <p class="text-sm text-slate-600">No monthly subscriptions yet. Assign a service package to create one.</p>
-        {% endif %}
-
-        {% if subscription_periods %}
-            <div class="jims-scroll-region mt-5 rounded-lg border border-slate-200" tabindex="0" role="region" aria-label="Recent subscription billing">
-                <table class="min-w-full divide-y divide-slate-200 text-sm">
-                    <caption class="sr-only">Recent subscription billing periods</caption>
-                    <thead class="bg-slate-50">
-                        <tr>
-                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Coverage</th>
-                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Package</th>
-                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Amount</th>
-                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
-                            <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Document and actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-200">
-                        {% for period in subscription_periods %}
-                            <tr>
-                                <td class="px-3 py-2 text-slate-900"><span class="whitespace-nowrap">{{ period.period_start|date:"d M Y" }}</span><span class="block whitespace-nowrap text-xs text-slate-500">to {{ period.period_end|date:"d M Y" }}</span></td>
-                                <td class="px-3 py-2 text-slate-700">{{ period.subscription.package.name }}</td>
-                                <td class="px-3 py-2 text-slate-700">
-                                    {{ period.final_amount|intcomma }} TZS
-                                    {% if period.discount_amount %}
-                                        <div class="text-xs text-emerald-700">Saved {{ period.discount_amount|intcomma }}</div>
-                                    {% endif %}
-                                </td>
-                                <td class="px-3 py-2">
-                                    {% if period.status == 'paid' %}
-                                        <span class="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Paid</span>
-                                    {% elif period.status == 'invoiced' %}
-                                        <span class="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">Unpaid</span>
-                                    {% else %}
-                                        <span class="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ period.get_status_display }}</span>
-                                    {% endif %}
-                                </td>
-                                <td class="px-3 py-2 text-right">
-                                    {% if period.invoice %}
-                                        <div>
-                                            <a class="font-medium text-slate-700 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=period.invoice.id %}">{{ period.invoice.number }}</a>
-                                        </div>
-                                        <div class="mt-2 flex flex-wrap justify-end gap-2">
-                                            {% if period.status == 'invoiced' or period.status == 'overdue' %}
-                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:create_receipt_from_invoice' pk=period.invoice.id %}">
-                                                    Register payment
-                                                </a>
-                                                <a class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100" href="{% url 'billing:resolve_subscription_invoice_issue' period_id=period.id %}">
-                                                    Resolve issue
-                                                </a>
-                                            {% elif period.status == 'paid' and period.receipt %}
-                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:document_detail' doc_type='receipt' pk=period.receipt.id %}">
-                                                    View receipt
-                                                </a>
-                                            {% elif period.status == 'cancelled' %}
-                                                <span class="text-xs text-slate-500">Cancelled for audit</span>
-                                            {% endif %}
-                                        </div>
-                                    {% else %}
-                                        <span class="text-slate-400">&mdash;</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% endif %}
-        </div>
-    </section>{% endif %}
-
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 class="text-sm font-semibold text-slate-900">Basic information</h2>
-            <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                    <dt class="text-xs text-slate-500">Email</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.email|default:"—" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">Phone</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.phone|default:"—" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">Pricing tier</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.get_pricing_tier_display }}</dd>
-                </div>
-                <div class="sm:col-span-2">
-                    <dt class="text-xs text-slate-500">Address</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.address|default:"—" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">TIN</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.tin_number|default:"—" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">VRN</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.vrn_number|default:"—" }}</dd>
-                </div>
-                <div class="sm:col-span-2">
-                    <dt class="text-xs text-slate-500">Created</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ customer.created_at|date:"F d, Y" }}</dd>
-                </div>
+    <div class="jims-customer-detail__upper">
+        <section class="jims-customer-detail__card" aria-labelledby="customer-details-heading">
+            <h2 id="customer-details-heading" class="text-base font-semibold text-slate-950">Customer details</h2>
+            <dl class="jims-customer-detail__facts mt-4 text-sm">
+                <div><dt>Phone</dt><dd>{{ customer.phone|default:"Not provided" }}</dd></div>
+                <div><dt>Email</dt><dd>{{ customer.email|default:"Not provided" }}</dd></div>
+                <div><dt>Pricing tier</dt><dd>{{ customer.get_pricing_tier_display }}</dd></div>
+                <div><dt>Address</dt><dd>{{ customer.address|default:"Not provided" }}</dd></div>
+                <div><dt>TIN</dt><dd>{{ customer.tin_number|default:"Not provided" }}</dd></div>
+                <div><dt>VRN</dt><dd>{{ customer.vrn_number|default:"Not provided" }}</dd></div>
+                <div><dt>Created</dt><dd>{{ customer.created_at|date:"F d, Y" }}</dd></div>
             </dl>
+            {% include "customers/includes/customer_additional_information.html" %}
         </section>
 
-        <section class="space-y-6">
-            {% if internet_profile and not service_count %}
-                <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <h2 class="text-sm font-semibold text-slate-900">Legacy Internet profile</h2>
-                    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <div>
-                            <dt class="text-xs text-slate-500">Package</dt>
-                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ internet_profile.package_label|default:"—" }}</dd>
-                        </div>
-                        <div>
-                            <dt class="text-xs text-slate-500">Days remaining</dt>
-                            <dd class="mt-1 text-sm font-medium text-slate-900">
-                                {% if internet_profile.end_date %}
-                                    {% if internet_profile.days_remaining is not None %}
-                                        {% if internet_profile.days_remaining > 0 %}
-                                            {{ internet_profile.days_remaining }} day{{ internet_profile.days_remaining|pluralize }}
-                                        {% else %}
-                                            Expired
-                                        {% endif %}
-                                    {% else %}
-                                        —
-                                    {% endif %}
-                                {% else %}
-                                    —
-                                {% endif %}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt class="text-xs text-slate-500">Start date</dt>
-                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ internet_profile.start_date|date:"F d, Y"|default:"—" }}</dd>
-                        </div>
-                        <div>
-                            <dt class="text-xs text-slate-500">End date</dt>
-                            <dd class="mt-1 text-sm font-medium text-slate-900">{{ internet_profile.end_date|date:"F d, Y"|default:"—" }}</dd>
-                        </div>
-                    </dl>
+        <section class="jims-customer-detail__card" aria-labelledby="customer-services-heading">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 id="customer-services-heading" class="text-base font-semibold text-slate-950">Services &amp; sites</h2>
+                    <p class="mt-1 text-xs text-slate-500">{{ sites|length }} site{{ sites|length|pluralize }} &middot; Operational services: {{ operational_service_count }} &middot; {{ subscription_periods|length }} recent billing period{{ subscription_periods|length|pluralize }} &middot; {{ billing_document_count }} document{{ billing_document_count|pluralize }}</p>
                 </div>
-            {% endif %}
-
-            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div class="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-sm font-semibold text-slate-900">Sites &amp; Internet services</h2>
-                        <p class="mt-1 text-sm text-slate-600">Physical locations contain installed connections; each connection owns its network identity and current package agreement.</p>
-                    </div>
-                    {% if can_manage_services %}<div class="flex flex-wrap gap-2"><a href="{% url 'customer-site-create' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Add site</a>{% if customer.is_internet_customer %}<a href="{% url 'internet-service-create' customer.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Add Internet service</a>{% endif %}</div>{% endif %}
-                </div>
-
-                {% if sites %}
-                    <div class="mt-4 space-y-3">
-                        {% for site in sites %}
-                            <div class="rounded-lg border border-slate-200 p-4">
-                                <div class="flex items-start justify-between gap-3">
-                                    <div>
-                                        <div class="flex items-center gap-2">
-                                            <div class="text-sm font-semibold text-slate-900">{{ site.name }}</div>
-                                            {% if site.is_primary %}
-                                                <span class="inline-flex items-center rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Primary</span>
-                                            {% endif %}
-                                            {% if not site.is_active %}
-                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="mt-1 text-sm text-slate-600">{{ site.summary }}</div>
-                                    </div>
-                                    <a href="{% url 'customer-site-update' site.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                                        Manage site
-                                    </a>
-                                </div>
-                                {% if customer.is_internet_customer %}<div class="mt-4 space-y-2 border-t border-slate-200 pt-4">
-                                  {% for service in site.service_rows %}
-                                  <a href="{% url 'internet-service-detail' service.id %}" class="group flex min-h-16 flex-col gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 hover:border-brand-300 hover:bg-brand-50/40 sm:flex-row sm:items-center sm:justify-between">
-                                    <span class="min-w-0"><span class="flex flex-wrap items-center gap-2"><span class="font-mono text-xs font-semibold text-slate-500">{{ service.service_code }}</span><span class="text-sm font-semibold text-slate-950">{{ service.name }}</span>{% if service.operational_status == 'unknown' %}<span class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">Not verified</span>{% elif service.operational_status == 'active' %}<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Active</span>{% elif service.operational_status == 'blocked' %}<span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Blocked</span>{% else %}<span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">Disconnected</span>{% endif %}</span><span class="mt-1 block text-xs text-slate-500">IP {{ service.ip_address|default:"not set" }} · VLAN {{ service.vlan_id|default:"not set" }}</span>{% if service.operational_status == 'unknown' %}<span class="mt-1 block text-xs text-slate-500">Operational state has not been confirmed. Open the service to verify it.</span>{% endif %}</span>
-                                    <span class="shrink-0 text-left sm:text-right">{% if service.active_subscription %}<span class="block text-sm font-semibold text-slate-900">{{ service.active_subscription.package.name }}</span><span class="block text-xs tabular-nums text-slate-500">{{ service.active_subscription.monthly_fee_at_signup|intcomma }} TZS/month · {{ service.active_subscription.package.speed }}</span>{% else %}<span class="text-sm text-slate-500">No current package</span>{% endif %}</span>
-                                  </a>
-                                  {% empty %}<div class="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">No Internet service at this site.</div>{% endfor %}
-                                </div>{% endif %}
-                            </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <p class="mt-4 text-sm text-slate-600">No sites have been added yet.</p>
-                {% endif %}
+                {% if can_manage_services %}<div class="flex flex-wrap gap-2"><a href="{% url 'customer-site-create' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Add site</a>{% if customer.is_internet_customer %}<a href="{% url 'internet-service-create' customer.id %}" class="jims-btn jims-btn-primary jims-btn-compact">Add Internet service</a>{% endif %}</div>{% endif %}
             </div>
-
-            {% if not service_count and packages %}<div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div class="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-sm font-semibold text-slate-900">Legacy account packages</h2>
-                        <p class="mt-1 text-sm text-slate-600">Compatibility assignments awaiting explicit Internet service configuration.</p>
-                    </div>
-                    <a href="{% url 'customer-update' customer.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                        Manage
-                    </a>
-                </div>
-
-                {% if packages %}
-                    <div class="mt-4 space-y-3">
-                        {% for package in packages %}
-                            <div class="rounded-lg border border-slate-200 p-4">
-                                <div class="flex items-start justify-between gap-3">
-                                    <div>
-                                        <div class="text-sm font-semibold text-slate-900">{{ package.name }}</div>
-                                        <div class="mt-1 text-sm text-slate-600">Speed: {{ package.speed }}</div>
-                                        <div class="mt-1 text-sm text-slate-600">Monthly: {{ package.monthly_fee|intcomma }} TZS</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-                                            {{ package.get_package_type_display }}
-                                        </span>
-                                        <a href="{% url 'package-detail' package.id %}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                                            View
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-                        {% endfor %}
-                    </div>
+            {% include "customers/includes/site_rows.html" %}
+            {% if customer.is_internet_customer %}
+                {% if subscriptions or subscription_periods %}
+                    <details class="jims-customer-detail__disclosure mt-4">
+                        <summary>Internet package subscriptions <span class="text-xs font-normal text-slate-500">{{ subscriptions|length }} subscription{{ subscriptions|length|pluralize }}</span></summary>
+                        <div class="pt-4">{% include "customers/includes/subscription_history.html" %}</div>
+                    </details>
                 {% else %}
-                    <p class="mt-4 text-sm text-slate-600">No service packages assigned.</p>
+                    <p class="mt-4 border-t border-slate-200 pt-4 text-sm text-slate-500">No monthly subscriptions yet.</p>
                 {% endif %}
-            </div>{% endif %}
+            {% endif %}
+            {% if internet_profile and not service_count %}<details class="jims-customer-detail__disclosure mt-3"><summary>Legacy Internet profile</summary><div class="pt-3">{% include "customers/includes/legacy_internet_profile.html" %}</div></details>{% endif %}
+            {% if not service_count and packages %}<details class="jims-customer-detail__disclosure mt-3"><summary>Legacy account packages</summary><div class="pt-3">{% include "customers/includes/legacy_account_packages.html" %}</div></details>{% endif %}
         </section>
     </div>
 
-    {% include "includes/custom_fields_detail.html" %}
-
     {% include "includes/custom_field_definition_modal.html" %}
 
-    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
-        <section class="self-start rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div class="flex items-center justify-between gap-3">
-                <div><h2 class="text-sm font-semibold text-slate-900">Billing documents</h2><p class="mt-1 text-xs text-slate-500">{{ billing_document_count }} document{{ billing_document_count|pluralize }} total · latest 10 shown</p></div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <a href="{% url 'billing:document_create' doc_type='quotation' %}?customer={{ customer.id }}" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                        New quotation
-                    </a>
-                    <a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
-                        New invoice
-                    </a>
+    <div class="jims-customer-detail__lower">
+        <section class="jims-customer-detail__card" aria-labelledby="customer-documents-heading">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div><h2 id="customer-documents-heading" class="text-base font-semibold text-slate-950">Billing documents</h2><p class="mt-1 text-xs text-slate-500">{{ billing_document_count }} document{{ billing_document_count|pluralize }} &middot; latest 10 shown</p></div>
+                <div class="flex flex-wrap gap-2">
+                    <a href="{% url 'billing:document_create' doc_type='quotation' %}?customer={{ customer.id }}" class="jims-btn jims-btn-secondary jims-btn-compact">New quotation</a>
+                    <a href="{% url 'billing:document_create' doc_type='invoice' %}?customer={{ customer.id }}" class="jims-btn jims-btn-primary jims-btn-compact">New invoice</a>
                 </div>
             </div>
-
             {% if billing_documents %}
-                <div class="jims-customer-bounded-list mt-4 space-y-2 overflow-y-auto pr-1" tabindex="0" role="region" aria-label="Billing documents; scroll for more">
-                    {% for doc in billing_documents %}
-                        <div class="rounded-lg border border-slate-200 p-3">
-                            <div class="flex items-start justify-between gap-4">
-                                <div class="min-w-0">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <div class="text-sm font-semibold text-slate-900">{{ doc.get_document_type_display }}</div>
-                                        <span class="text-slate-300">&middot;</span>
-                                        <div class="text-sm text-slate-700">{{ doc.number }}</div>
-                                        <span class="text-slate-300">&middot;</span>
-                                        <div class="text-sm text-slate-700">{{ doc.issue_date|date:"F d, Y" }}</div>
-                                        <span class="text-slate-300">&middot;</span>
-                                        <div class="text-sm text-slate-700">{{ doc.total|intcomma }} {{ doc.currency }}</div>
-                                    </div>
-                                    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
-                                        <span class="font-medium">{{ doc.get_status_display }}</span>
-                                        {% if doc.document_type == 'invoice' %}
-                                            <span class="text-slate-300" aria-hidden="true">&middot;</span>
-                                            <span class="tabular-nums">Current invoice balance {{ doc.timeline_remaining|intcomma }} {{ doc.currency }}</span>
-                                            {% if doc.timeline_paid %}<span class="text-emerald-700">Paid {{ doc.timeline_paid|intcomma }}</span>{% endif %}
-                                            {% if doc.timeline_credited %}<span class="text-sky-700">Credited {{ doc.timeline_credited|intcomma }}</span>{% endif %}
-                                        {% elif doc.timeline_reference %}
-                                            <span class="text-slate-300" aria-hidden="true">&middot;</span><span>{{ doc.timeline_reference }}</span>
-                                        {% endif %}
-                                    </div>
-                                    {% if doc.document_type == 'invoice' and doc.balance_brought_forward %}
-                                        <div class="mt-1 text-xs text-slate-500">Issue-date snapshot included {{ doc.balance_brought_forward|intcomma }} {{ doc.currency }} from earlier invoices; it is not part of this invoice total.</div>
-                                    {% endif %}
-                                </div>
-
-                                <div class="flex shrink-0 items-center gap-2">
-                                    <a href="{% url 'billing:document_detail' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                                        View
-                                    </a>
-                                    <a href="{% url 'billing:document_pdf' doc_type=doc.document_type pk=doc.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                                        PDF
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    {% endfor %}
+                <div class="jims-customer-detail__table-scroll mt-4" tabindex="0" role="region" aria-label="Billing documents; scroll for more">
+                    <table class="jims-customer-detail__table">
+                        <thead><tr><th scope="col">Document</th><th scope="col">Date</th><th scope="col" class="text-right">Total</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                        <tbody>
+                        {% for doc in billing_documents %}
+                            <tr>
+                                <td><span class="font-semibold text-slate-900">{{ doc.get_document_type_display }}</span><span class="ml-2 text-xs text-slate-500">{{ doc.number }}</span>{% if doc.timeline_reference %}<span class="mt-1 block text-xs text-slate-500">{{ doc.timeline_reference }}</span>{% endif %}{% if doc.document_type == 'invoice' and doc.balance_brought_forward %}<span class="mt-1 block text-xs text-slate-500">Issue-date snapshot included {{ doc.balance_brought_forward|money_display:doc.currency }} {{ doc.currency }} from earlier invoices; it is not part of this invoice total.</span>{% endif %}</td>
+                                <td class="whitespace-nowrap">{{ doc.issue_date|date:"M d, Y" }}</td>
+                                <td class="whitespace-nowrap text-right tabular-nums">{{ doc.total|money_display:doc.currency }} {{ doc.currency }}</td>
+                                <td><span class="font-medium text-slate-800">{{ doc.get_status_display }}</span>{% if doc.document_type == 'invoice' %}<span class="mt-1 block text-xs tabular-nums text-slate-600">Current invoice balance {{ doc.timeline_remaining|money_display:doc.currency }} {{ doc.currency }}</span>{% if doc.timeline_paid %}<span class="mt-1 block text-xs text-emerald-700">Paid {{ doc.timeline_paid|money_display:doc.currency }}</span>{% endif %}{% if doc.timeline_credited %}<span class="mt-1 block text-xs text-sky-700">Credited {{ doc.timeline_credited|money_display:doc.currency }}</span>{% endif %}{% endif %}</td>
+                                <td><div class="flex gap-2"><a href="{% url 'billing:document_detail' doc_type=doc.document_type pk=doc.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">View</a><a href="{% url 'billing:document_pdf' doc_type=doc.document_type pk=doc.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">PDF</a></div></td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
-            {% else %}
-                <p class="mt-4 text-sm text-slate-600">No billing documents yet.</p>
-            {% endif %}
+                <p class="mt-2 text-xs text-slate-500">Showing {{ billing_documents|length }} of {{ billing_document_count }}</p>
+            {% else %}<p class="mt-4 text-sm text-slate-600">No billing documents yet.</p>{% endif %}
         </section>
 
-        <section class="self-start rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div class="flex items-start justify-between gap-4">
-                <div>
-                    <h2 class="text-sm font-semibold text-slate-900">Associated assets</h2>
-                    <p class="mt-1 text-xs leading-5 text-slate-500">Equipment linked to this customer in AssetMS.</p>
-                </div>
-                <span class="inline-flex min-w-8 items-center justify-center rounded-full bg-brand-50 px-2.5 py-1 text-xs font-bold tabular-nums text-brand-700 ring-1 ring-inset ring-brand-200" aria-label="{{ associated_assets|length }} linked assets">{{ associated_assets|length }}</span>
-            </div>
+        <section class="jims-customer-detail__card" aria-labelledby="customer-assets-heading">
+            <div class="flex items-start justify-between gap-3"><div><h2 id="customer-assets-heading" class="text-base font-semibold text-slate-950">Associated assets</h2><p class="mt-1 text-xs text-slate-500">Equipment linked to this customer in AssetMS.</p></div><span class="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-bold tabular-nums text-brand-700" aria-label="{{ associated_assets|length }} linked assets">{{ associated_assets|length }}</span></div>
             {% if associated_assets %}
-                <div class="jims-customer-bounded-list mt-4 space-y-3 overflow-y-auto pr-1" tabindex="0" role="region" aria-label="Associated assets; scroll for more">
-                    {% for asset in associated_assets %}
-                        <article class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                            <div class="p-4">
-                                <div class="flex items-start gap-3">
-                                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-100" aria-hidden="true">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 21h8M12 17v4M7 9h.01M10 9h.01"></path></svg>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex flex-wrap items-start justify-between gap-2">
-                                            <div class="min-w-0">
-                                                <h3 class="truncate text-sm font-semibold text-slate-950">{{ asset.display_name|default:asset.asset_tag|default:asset.serial_number|default:asset.category_name }}</h3>
-                                                <p class="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{{ asset.category_name }}</p>
-                                            </div>
-                                            {% include "components/status_badge.html" with value=asset.status label=asset.status_label %}
-                                        </div>
-                                        <div class="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-                                            <div>
-                                                <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Asset ID</div>
-                                                <div class="mt-1 break-all font-mono text-xs font-semibold text-slate-800">{% if asset.asset_tag %}{{ asset.asset_tag }}{% else %}{{ asset.external_uuid|stringformat:"s"|slice:":8"|upper }}{% endif %}</div>
-                                            </div>
-                                            {% if asset.serial_number %}<div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Serial number</div><div class="mt-1 break-all font-mono text-xs font-semibold text-slate-800">{{ asset.serial_number }}</div></div>{% endif %}
-                                            {% if asset.branch_name %}<div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Managed from</div><div class="mt-1 text-xs font-semibold text-slate-800">{{ asset.branch_name }}</div></div>{% endif %}
-                                            <div><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Asset updated</div><div class="mt-1 text-xs font-semibold text-slate-800">{{ asset.source_updated_at|date:"d M Y, H:i" }}</div></div>
-                                        </div>
-                                        {% if asset.custom_attributes %}
-                                            <dl class="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-slate-100 pt-3 sm:grid-cols-2">
-                                                {% for attribute in asset.custom_attributes %}<div><dt class="text-[11px] font-medium uppercase tracking-wide text-slate-500">{{ attribute.label }}</dt><dd class="mt-0.5 text-xs font-medium text-slate-800">{{ attribute.value }}</dd></div>{% endfor %}
-                                            </dl>
-                                        {% endif %}
-                                        {% if asset.description %}<div class="mt-3 border-t border-slate-100 pt-3"><div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Operational notes</div><p class="mt-1 text-xs leading-5 text-slate-600">{{ asset.description|linebreaksbr }}</p></div>{% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-4 py-3">
-                                <span class="text-[11px] text-slate-500">Synced {{ asset.last_synced_at|timesince }} ago</span>
-                                {% if asset.source_url %}<a href="{{ asset.source_url }}" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:border-brand-300 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">Open in AssetMS <span aria-hidden="true">&nearr;</span><span class="sr-only"> (opens in a new tab)</span></a>{% endif %}
-                            </div>
-                        </article>
-                    {% endfor %}
+                <div class="jims-customer-detail__table-scroll mt-4" tabindex="0" role="region" aria-label="Associated assets; scroll for more">
+                    <table class="jims-customer-detail__table">
+                        <thead><tr><th scope="col">Asset</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+                        <tbody>
+                        {% for asset in associated_assets %}
+                            <tr>
+                                <td>
+                                    <div class="font-semibold text-slate-900">{{ asset.display_name|default:asset.asset_tag|default:asset.serial_number|default:asset.category_name }}</div>
+                                    <div class="mt-1 text-xs text-slate-500">{% if asset.asset_tag %}{{ asset.asset_tag }}{% else %}{{ asset.external_uuid|stringformat:"s"|slice:":8"|upper }}{% endif %}</div>
+                                    {% if asset.serial_number or asset.branch_name or asset.custom_attributes or asset.description %}<details class="mt-2 text-xs"><summary class="cursor-pointer font-medium text-brand-700">More asset details</summary><div class="mt-2 space-y-1 text-slate-600">{% if asset.serial_number %}<p>Serial number: {{ asset.serial_number }}</p>{% endif %}{% if asset.branch_name %}<p>Managed from: {{ asset.branch_name }}</p>{% endif %}<p>Asset updated: {{ asset.source_updated_at|date:"d M Y, H:i" }}</p>{% for attribute in asset.custom_attributes %}<p>{{ attribute.label }}: {{ attribute.value }}</p>{% endfor %}{% if asset.description %}<p>Operational notes: {{ asset.description|linebreaksbr }}</p>{% endif %}</div></details>{% else %}<span class="mt-1 block text-xs text-slate-500">Asset updated {{ asset.source_updated_at|date:"d M Y, H:i" }}</span>{% endif %}
+                                </td>
+                                <td>{{ asset.category_name }}</td>
+                                <td>{% include "components/status_badge.html" with value=asset.status label=asset.status_label %}<span class="mt-1 block text-xs text-slate-500">Synced {{ asset.last_synced_at|timesince }} ago</span></td>
+                                <td>{% if asset.source_url %}<a href="{{ asset.source_url }}" target="_blank" rel="noopener noreferrer" class="jims-btn jims-btn-secondary jims-btn-compact">Open in AssetMS<span class="sr-only"> (opens in a new tab)</span></a>{% else %}<span class="text-xs text-slate-500">—</span>{% endif %}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
-            {% else %}
-                <div class="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center"><div class="text-sm font-semibold text-slate-800">No linked assets</div><p class="mt-1 text-xs leading-5 text-slate-500">Link equipment from the asset edit page in AssetMS and it will appear here.</p></div>
-            {% endif %}
+                <p class="mt-2 text-xs text-slate-500">Showing {{ associated_assets|length }} asset{{ associated_assets|length|pluralize }}</p>
+            {% else %}<div class="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center"><div class="text-sm font-semibold text-slate-800">No linked assets</div><p class="mt-1 text-xs text-slate-500">Link equipment from the asset edit page in AssetMS and it will appear here.</p></div>{% endif %}
         </section>
     </div>
 </div>

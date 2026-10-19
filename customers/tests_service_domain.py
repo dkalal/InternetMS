@@ -361,7 +361,7 @@ class InternetServiceCommandTests(TestCase):
         package_response = self.client.get(reverse("package-detail", args=[self.old_package.id]))
 
         self.assertEqual(customer_response.status_code, 200)
-        self.assertContains(customer_response, "Sites &amp; Internet services")
+        self.assertContains(customer_response, "Services &amp; sites")
         self.assertContains(customer_response, self.service.service_code)
         self.assertContains(customer_response, "Operational services")
         self.assertEqual(package_response.status_code, 200)

@@ -76,3 +76,7 @@ class CustomFieldFormMixin:
         """Keep populated tenant fields visible on edit and failed submissions."""
         empty_values = (None, '', [], (), {})
         return any(self[field_name].value() not in empty_values for field_name in self.custom_field_names)
+
+    @property
+    def has_required_custom_fields(self):
+        return any(self.fields[field_name].required for field_name in self.custom_field_names)

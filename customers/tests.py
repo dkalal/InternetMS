@@ -12,6 +12,7 @@ from audit.models import AuditLog
 from billing.models import BillingDocument, BillingLineItem, SubscriptionPeriod
 from billing.models import CustomerSubscription
 from billing.services import BillingService, BillingServiceError, LineItemInput, SubscriptionBillingService
+from billing.subscription_reporting import allocate, subscription_snapshot
 from customers.models import Customer, CustomerSite, InternetCustomer, InternetService
 from customers.forms import CustomerForm
 from customers.services import CustomerService, CustomerServiceError, InternetServiceDomainService
@@ -787,8 +788,8 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(response, "KCC Floor 3")
         self.assertContains(response, "Branch Fiber")
         self.assertContains(response, "Billing health")
-        self.assertContains(response, "Payment due")
-        self.assertContains(response, "Balance: 90,000 TZS")
+        self.assertContains(response, "Not paid")
+        self.assertNotContains(response, "Balance: 90,000 TZS")
 
         self.client.logout()
         self.client.login(username="staff", password="pass")
@@ -876,16 +877,90 @@ class CustomerRBACIsolationTests(TestCase):
         paid = self.client.get(reverse("customer-list"), {"worklist": "paid", "month": "2026-05"})
         unpaid = self.client.get(reverse("customer-list"), {"worklist": "unpaid", "month": "2026-05"})
 
-        self.assertEqual(overview.context["selected_paid_customers"], 1)
-        self.assertEqual(overview.context["selected_unpaid_customers"], 1)
-        self.assertEqual(overview.context["selected_month_open_receivables"], Decimal("50000.00"))
-        self.assertEqual(overview.context["total_open_receivables"], Decimal("80000.00"))
+        self.assertEqual(overview.context["selected_paid_customers"], 0)
+        self.assertEqual(overview.context["selected_unpaid_customers"], 0)
+        # Unlinked period fixtures are not issued receivables.
+        self.assertEqual(overview.context["total_open_receivables"], Decimal("0.00"))
         self.assertContains(overview, "May 2026")
-        self.assertContains(overview, "Open for selected month")
-        self.assertContains(overview, "Total open · all months")
-        self.assertEqual([customer.id for customer in paid.context["customers"]], [self.customer_a.id])
-        self.assertEqual([customer.id for customer in unpaid.context["customers"]], [unpaid_customer.id])
+        self.assertContains(overview, "Subscription cash received")
+        self.assertContains(overview, "Unpaid · All months")
+        self.assertEqual([customer.id for customer in paid.context["customers"]], [])
+        self.assertEqual([customer.id for customer in unpaid.context["customers"]], [])
         self.assertNotContains(paid, self.customer_b.name)
+
+    def test_multimonth_partial_receipt_keeps_invoice_balance_and_monthly_forecast(self):
+        package = Package.objects.create(
+            organization=self.org1, tenant=self.org1, name="Quarterly Coverage",
+            package_type="indoor", speed="20 Mbps", monthly_fee=Decimal("50000.00"),
+            setup_fee=Decimal("0.00"), description="Quarterly coverage test",
+        )
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1, customer=self.customer_a, package=package,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.create_period(
+            organization=self.org1, subscription=subscription,
+            period_start=date(2026, 10, 1), months=3,
+        )
+        invoice = SubscriptionBillingService.create_invoice_for_period(
+            organization=self.org1, created_by=self.admin, period=period,
+        )
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1, created_by=self.admin, invoice_id=invoice.id,
+            amount_paid=Decimal("50000.00"), payment_date=date(2026, 10, 8),
+        )
+        october = subscription_snapshot(self.org1, date(2026, 10, 1))
+        november = subscription_snapshot(self.org1, date(2026, 11, 1))
+        self.assertEqual(october["cash"], Decimal("50000.00"))
+        self.assertEqual(november["cash"], Decimal("0.00"))
+        self.assertEqual(october["outstanding"], Decimal("100000.00"))
+        self.assertEqual(october["monthly_expected"], Decimal("50000.00"))
+        self.assertEqual(november["monthly_expected"], Decimal("50000.00"))
+        self.assertEqual(october["yearly_expected"], Decimal("150000.00"))
+        period.refresh_from_db()
+        self.assertNotEqual(period.status, SubscriptionPeriod.Status.PAID)
+        self.client.login(username="admin", password="pass")
+        november_worklist = self.client.get(reverse("customer-list"), {"month": "2026-11", "worklist": "unpaid"})
+        self.assertEqual([row.id for row in november_worklist.context["customers"]], [self.customer_a.id])
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1, created_by=self.admin, invoice_id=invoice.id,
+            amount_paid=Decimal("100000.00"), payment_date=date(2026, 10, 9),
+        )
+        settled = subscription_snapshot(self.org1, date(2026, 10, 1))
+        self.assertEqual(settled["cash"], Decimal("150000.00"))
+        self.assertEqual(settled["outstanding"], Decimal("0.00"))
+        for month in ("2026-10", "2026-11", "2026-12"):
+            paid_worklist = self.client.get(reverse("customer-list"), {"month": month, "worklist": "paid"})
+            self.assertEqual([row.id for row in paid_worklist.context["customers"]], [self.customer_a.id])
+
+    def test_reporting_allocation_reconciles_cents(self):
+        self.assertEqual(allocate(Decimal("100.00"), [Decimal(1)] * 3), [
+            Decimal("33.33"), Decimal("33.33"), Decimal("33.34"),
+        ])
+
+    def test_august_only_open_period_is_not_september_unpaid(self):
+        package = Package.objects.create(
+            organization=self.org1, tenant=self.org1, name="August Only",
+            package_type="indoor", speed="10 Mbps", monthly_fee=Decimal("50000.00"),
+            setup_fee=Decimal("0.00"), description="Month filter test",
+        )
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1, customer=self.customer_a, package=package,
+            start_date=date(2026, 8, 1),
+        )
+        period = SubscriptionBillingService.create_period(
+            organization=self.org1, subscription=subscription,
+            period_start=date(2026, 8, 1),
+        )
+        SubscriptionBillingService.create_invoice_for_period(
+            organization=self.org1, created_by=self.admin, period=period,
+        )
+        self.client.login(username="admin", password="pass")
+        unpaid = self.client.get(reverse("customer-list"), {"month": "2026-09", "worklist": "unpaid"})
+        all_customers = self.client.get(reverse("customer-list"), {"month": "2026-09"})
+        self.assertEqual(list(unpaid.context["customers"]), [])
+        self.assertContains(all_customers, "No September billing")
+        self.assertContains(all_customers, "Previous balance: TZS 50,000 · August")
 
     def test_sales_user_does_not_receive_finance_monthly_payment_counts(self):
         self.client.login(username="staff", password="pass")
@@ -973,7 +1048,7 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(response, "Billed service period")
         self.assertContains(response, "01 Aug 2026")
         self.assertContains(response, "31 Aug 2026")
-        self.assertContains(response, "50,000.00 TZS")
+        self.assertContains(response, "50,000 TZS")
         self.assertContains(response, "Confirmed paid coverage")
 
         with patch("customers.views.timezone.localdate", return_value=date(2026, 8, 15)):
@@ -1035,7 +1110,7 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(response, "Billed service period")
         self.assertContains(response, "01 Aug 2026")
         self.assertContains(response, "31 Oct 2026")
-        self.assertContains(response, "360,000.00 TZS")
+        self.assertContains(response, "360,000 TZS")
         self.assertContains(response, "Awaiting full payment")
         self.assertContains(
             response,
@@ -1116,7 +1191,7 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(detail_response, "Billed service period")
         self.assertContains(detail_response, "01 Jul 2026")
         self.assertContains(detail_response, "31 Aug 2026")
-        self.assertContains(detail_response, "100,000.00 TZS")
+        self.assertContains(detail_response, "100,000 TZS")
         self.assertContains(detail_response, "Confirmed paid coverage Jul 01, 2026 – Aug 31, 2026")
 
         self.assertEqual(list_response.status_code, 200)
@@ -1183,7 +1258,12 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertContains(response, "Sales and billing preferences")
         self.assertContains(response, "Primary internet service")
         self.assertContains(response, "Choose service packages")
-        self.assertContains(response, 'max-w-[1360px]')
+        self.assertContains(response, 'max-w-[80rem]')
+        self.assertContains(response, 'class="jims-form-section" data-customer-form')
+        self.assertContains(response, 'lg:grid-cols-[minmax(0,1fr)_18rem]')
+        self.assertContains(response, 'sm:w-[320px]')
+        self.assertContains(response, 'id="customer-summary-title"')
+        self.assertContains(response, 'Back to customers')
         self.assertContains(response, 'data-unsaved-form')
         self.assertEqual(response.content.decode().count("Save customer"), 1)
         self.assertNotContains(response, "On this page")
@@ -1206,7 +1286,11 @@ class CustomerRBACIsolationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Not verified")
         self.assertContains(response, "Operational state has not been confirmed")
-        self.assertContains(response, "items-start gap-6 lg:grid-cols-2")
+        self.assertContains(response, 'class="jims-customer-detail__upper"')
+        self.assertContains(response, 'class="jims-customer-detail__lower"')
+        self.assertContains(response, 'Customer details')
+        self.assertContains(response, 'No billing documents yet.')
+        self.assertNotContains(response, 'jims-detail-kpis')
         self.assertEqual(response.context["operational_service_count"], 0)
 
     def test_unverified_service_can_be_activated_with_audited_transition(self):

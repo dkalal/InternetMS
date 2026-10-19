@@ -1,0 +1,10 @@
+{% load number_display %}
+<div class="space-y-2">
+    <a href="{% url 'customer-update' customer.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">Manage</a>
+    {% for package in packages %}
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3 text-sm">
+            <div><div class="font-semibold text-slate-900">{{ package.name }}</div><div class="mt-1 text-xs text-slate-600">{{ package.speed }} &middot; {{ package.monthly_fee|money_display }} TZS / month</div></div>
+            <div class="flex items-center gap-2"><span class="text-xs text-slate-600">{{ package.get_package_type_display }}</span><a href="{% url 'package-detail' package.id %}" class="jims-btn jims-btn-secondary jims-btn-compact">View</a></div>
+        </div>
+    {% endfor %}
+</div>

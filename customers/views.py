@@ -16,6 +16,7 @@ from django.utils import timezone
 from audit.models import AuditLog
 from custom_fields.mixins import CustomFieldPageContextMixin
 from billing.models import BillingDocument, BillingLineItem, CustomerSubscription, SubscriptionPeriod
+from billing.subscription_reporting import next_month, subscription_snapshot
 from custom_fields.services import CustomFieldService
 from billing.services import (
     add_months,
@@ -229,6 +230,13 @@ class CustomerListView(LoginRequiredMixin, ListView):
         "-paid_through": ("-latest_paid_through", "name"),
     }
 
+    def _subscription_snapshot(self, organization):
+        if not hasattr(self, "_subscription_snapshot_cache"):
+            self._subscription_snapshot_cache = subscription_snapshot(
+                organization, self._selected_billing_month(),
+            )
+        return self._subscription_snapshot_cache
+
     def get_paginate_by(self, queryset):
         return clean_page_size(self.request.GET.get("page_size"), default=self.paginate_by)
 
@@ -290,8 +298,8 @@ class CustomerListView(LoginRequiredMixin, ListView):
         selected_month = self._selected_billing_month()
         return SubscriptionPeriod.objects.filter(
             organization=organization,
-            period_start__year=selected_month.year,
-            period_start__month=selected_month.month,
+            period_start__lt=next_month(selected_month),
+            period_end__gte=selected_month,
         )
 
     def _due_soon_customer_ids(self, organization):
@@ -434,16 +442,15 @@ class CustomerListView(LoginRequiredMixin, ListView):
 
         worklist = self.request.GET.get('worklist')
         if worklist == 'unpaid':
-            if self.request.GET.get("month"):
-                unpaid_ids = self._billing_periods_for_selected_month(organization).filter(
-                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-                ).values("subscription__customer_id")
-            else:
-                unpaid_ids = self._unpaid_customer_ids(organization)
+            unpaid_ids = self._billing_periods_for_selected_month(organization).filter(
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                invoice__isnull=False,
+            ).values("subscription__customer_id")
             queryset = queryset.filter(id__in=unpaid_ids)
         elif worklist == 'paid':
             paid_ids = self._billing_periods_for_selected_month(organization).filter(
                 status=SubscriptionPeriod.Status.PAID,
+                invoice__isnull=False,
             ).values("subscription__customer_id")
             queryset = queryset.filter(id__in=paid_ids)
         elif worklist == 'due':
@@ -492,7 +499,7 @@ class CustomerListView(LoginRequiredMixin, ListView):
         return f"https://wa.me/{digits}" if digits else ""
 
     @staticmethod
-    def _attach_site_summary(customer, subscriptions, *, finance_all=False, open_site_ids=None):
+    def _attach_site_summary(customer, subscriptions, *, finance_all=False, open_site_ids=None, invoice_balances=None):
         """Build list-page site disclosure data from prefetched tenant-scoped relations."""
         sites = sorted(
             list(customer.sites.all()),
@@ -504,6 +511,12 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 active_by_site.setdefault(subscription.site_id, []).append(subscription)
 
         open_site_ids = open_site_ids or set()
+        invoice_balances = invoice_balances or {}
+        invoice_period_totals = {}
+        for subscription in subscriptions:
+            for period in subscription.periods.all():
+                if period.invoice_id:
+                    invoice_period_totals[period.invoice_id] = invoice_period_totals.get(period.invoice_id, Decimal("0.00")) + period.final_amount
         today = timezone.localdate()
 
         for site in sites:
@@ -531,7 +544,10 @@ class CustomerListView(LoginRequiredMixin, ListView):
                         period for period in subscription.periods.all()
                         if period.status in {SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE}
                     )
-            has_open_billing = bool(open_periods) if finance_all else site.id in open_site_ids
+            has_open_billing = (
+                any(invoice_balances.get(period.invoice_id, Decimal("0.00")) > 0 for period in open_periods)
+                if finance_all else site.id in open_site_ids
+            )
             paid_through_dates = [
                 _subscription_paid_through_date(subscription) if finance_all else subscription.paid_through_date
                 for subscription in active_subscriptions
@@ -542,7 +558,12 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 site.billing_state = 'unpaid'
                 site.billing_label = 'Payment due'
                 if finance_all:
-                    site.billing_amount = sum((period.final_amount for period in open_periods), Decimal('0.00'))
+                    site.billing_amount = sum((
+                        invoice_balances.get(period.invoice_id, Decimal("0.00"))
+                        * period.final_amount / invoice_period_totals[period.invoice_id]
+                        for period in open_periods
+                        if period.invoice_id in invoice_balances and invoice_period_totals[period.invoice_id] > 0
+                    ), Decimal('0.00'))
                     site.billing_note = f"Balance: {site.billing_amount:,.0f} TZS"
                 else:
                     site.billing_amount = None
@@ -582,16 +603,17 @@ class CustomerListView(LoginRequiredMixin, ListView):
         if not customer_ids:
             return
 
-        unpaid_rows = (
-            SubscriptionPeriod.objects.filter(
-                organization=organization,
-                subscription__customer_id__in=customer_ids,
-                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-            )
-            .values("subscription__customer_id")
-            .annotate(amount=Sum("final_amount"))
-        )
-        unpaid_amounts = {row["subscription__customer_id"]: row["amount"] for row in unpaid_rows}
+        snapshot = self._subscription_snapshot(organization)
+        invoice_balances = snapshot["balances"]
+        balance_by_customer = {}
+        for period in SubscriptionPeriod.objects.filter(
+            organization=organization, subscription__customer_id__in=customer_ids,
+            invoice_id__in=invoice_balances,
+        ).order_by("subscription__customer_id", "-period_start", "-id").values(
+            "subscription__customer_id", "invoice_id",
+        ).distinct():
+            customer_id = period["subscription__customer_id"]
+            balance_by_customer.setdefault(customer_id, {})[period["invoice_id"]] = invoice_balances[period["invoice_id"]]
 
         invoice_ids = (
             SubscriptionPeriod.objects.filter(
@@ -620,7 +642,7 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 for subscription in subscriptions
                 if subscription.status == CustomerSubscription.Status.ACTIVE
             ]
-            self._attach_site_summary(customer, subscriptions, finance_all=True)
+            self._attach_site_summary(customer, subscriptions, finance_all=True, invoice_balances=invoice_balances)
             primary_subscriptions = [
                 subscription
                 for subscription in active_subscriptions
@@ -628,14 +650,23 @@ class CustomerListView(LoginRequiredMixin, ListView):
             ] or active_subscriptions
             customer.primary_subscription = primary_subscriptions[0] if primary_subscriptions else None
             customer.primary_service = customer.primary_subscription.internet_service if customer.primary_subscription else customer.primary_internet_service
-            customer.unpaid_amount = getattr(customer, "unpaid_amount", None) or unpaid_amounts.get(customer.id)
-            customer.latest_unpaid_invoice_id = getattr(customer, "latest_unpaid_invoice_id", None) or latest_invoice_by_customer.get(customer.id)
+            customer.unpaid_amount = sum(balance_by_customer.get(customer.id, {}).values(), Decimal("0.00"))
+            customer.latest_unpaid_invoice_id = next(
+                (invoice_id for invoice_id in balance_by_customer.get(customer.id, {})
+                 if invoice_balances[invoice_id] > 0), None,
+            )
             customer.whatsapp_url = self._whatsapp_link(customer.phone)
             customer.latest_paid_through = _customer_paid_through_date(subscriptions)
 
             if customer.unpaid_amount:
                 customer.billing_state = "unpaid"
-                customer.billing_label = "Unpaid"
+                customer.billing_label = (
+                    "Partially paid" if any(
+                        period.invoice and period.invoice.status == BillingDocument.Status.PARTIALLY_PAID
+                        for subscription in subscriptions for period in subscription.periods.all()
+                        if period.invoice_id in balance_by_customer.get(customer.id, {})
+                    ) else "Unpaid"
+                )
                 customer.billing_note = f"Balance: {customer.unpaid_amount:,.0f} TZS"
                 customer.primary_action = "Register receipt" if customer.latest_unpaid_invoice_id else "Renew"
             elif customer.latest_paid_through:
@@ -670,6 +701,29 @@ class CustomerListView(LoginRequiredMixin, ListView):
                 customer.billing_label = "No subscription"
                 customer.billing_note = "No active package billing"
                 customer.primary_action = "View"
+
+            month = self._selected_billing_month()
+            overlapping_periods = [
+                period for subscription in subscriptions for period in subscription.periods.all()
+                if period.period_start < next_month(month) and period.period_end >= month
+                and period.status != SubscriptionPeriod.Status.CANCELLED
+            ]
+            if customer.primary_subscription and not overlapping_periods:
+                customer.billing_state = "due"
+                customer.billing_label = f"No {month:%B} billing"
+                previous_period = max((
+                    period.period_start for subscription in subscriptions
+                    for period in subscription.periods.all()
+                    if period.invoice_id in balance_by_customer.get(customer.id, {})
+                    and period.period_start < month
+                ), default=None)
+                customer.billing_note = (
+                    f"Previous balance: TZS {customer.unpaid_amount:,.0f}"
+                    + (f" · {previous_period:%B}" if previous_period else "")
+                    if customer.unpaid_amount else "No invoice for this service month"
+                )
+                if customer.unpaid_amount:
+                    customer.primary_action = "Register receipt" if customer.latest_unpaid_invoice_id else "Renew"
 
             latest_period = None
             latest_amount = None
@@ -796,35 +850,30 @@ class CustomerListView(LoginRequiredMixin, ListView):
         context['inactive_customers'] = base.inactive().count()
         context['suspended_customers'] = base.suspended().count()
         if finance_all:
-            context['overdue_customers'] = base.filter(id__in=unpaid_customer_ids).distinct().count()
+            context['overdue_customers'] = self._billing_periods_for_selected_month(organization).filter(
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                invoice__isnull=False,
+            ).values("subscription__customer_id").distinct().count()
             context['due_soon_customers'] = base.filter(id__in=due_soon_customer_ids).distinct().count()
         context['no_contact_customers'] = no_contact.count()
         context['today_customers'] = len(self._worked_today_customer_ids(organization, self.request.user))
         if finance_all:
             selected_month = self._selected_billing_month()
             selected_periods = self._billing_periods_for_selected_month(organization)
+            snapshot = self._subscription_snapshot(organization)
+            context['subscription_snapshot'] = snapshot
             context['selected_billing_month'] = selected_month
             context['selected_billing_month_value'] = selected_month.strftime('%Y-%m')
             context['selected_billing_month_label'] = selected_month.strftime('%B %Y')
             context['selected_paid_customers'] = selected_periods.filter(
                 status=SubscriptionPeriod.Status.PAID,
+                invoice__isnull=False,
             ).values('subscription__customer_id').distinct().count()
             context['selected_unpaid_customers'] = selected_periods.filter(
                 status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
+                invoice__isnull=False,
             ).values('subscription__customer_id').distinct().count()
-            context['total_open_receivables'] = (
-                SubscriptionPeriod.objects.filter(
-                    organization=organization,
-                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-                ).aggregate(total=Sum("final_amount"))["total"]
-                or 0
-            )
-            context['selected_month_open_receivables'] = (
-                selected_periods.filter(
-                    status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE],
-                ).aggregate(total=Sum("final_amount"))["total"]
-                or 0
-            )
+            context['total_open_receivables'] = snapshot['outstanding']
         query_params = self.request.GET.copy()
         query_params.pop("page", None)
         context["querystring"] = query_params.urlencode()

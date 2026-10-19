@@ -67,7 +67,7 @@ class PackageListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Save package")
         self.assertContains(response, "Package preview")
-        self.assertContains(response, 'max-w-[1180px]')
+        self.assertContains(response, 'max-w-[1100px]')
         self.assertContains(response, 'data-unsaved-form')
         self.assertContains(response, "Active and assignable")
         self.assertEqual(response.content.decode().count("Save package"), 1)

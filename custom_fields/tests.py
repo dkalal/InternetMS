@@ -287,9 +287,35 @@ class CustomFieldIntegrationTests(TestCase):
         value = CustomFieldValue.objects.get(field_definition=self.customer_field, object_id=str(customer.id))
         self.assertEqual(value.value_text, "Near the tower")
 
+        zero_field = CustomFieldDefinition.objects.create(
+            organization=self.organization,
+            target_model=CustomFieldDefinition.TargetModel.CUSTOMER,
+            key="extra_ports",
+            label="Extra ports",
+            field_type=CustomFieldDefinition.FieldType.NUMBER,
+            show_on_detail=True,
+        )
+        false_field = CustomFieldDefinition.objects.create(
+            organization=self.organization,
+            target_model=CustomFieldDefinition.TargetModel.CUSTOMER,
+            key="backup_enabled",
+            label="Backup enabled",
+            field_type=CustomFieldDefinition.FieldType.BOOLEAN,
+            show_on_detail=True,
+        )
+        CustomFieldValue.objects.create(organization=self.organization, field_definition=zero_field, target_model="customer", object_id=str(customer.id), value_number=Decimal("0"))
+        CustomFieldValue.objects.create(organization=self.organization, field_definition=false_field, target_model="customer", object_id=str(customer.id), value_boolean=False)
+
         detail_response = self.client.get(reverse("customer-detail", args=[customer.id]))
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Near the tower")
+        self.assertContains(detail_response, "Extra ports")
+        self.assertContains(detail_response, "<dd>0</dd>", html=True)
+        self.assertContains(detail_response, "Backup enabled")
+        self.assertContains(detail_response, "<dd>No</dd>", html=True)
+        self.assertContains(detail_response, 'id="additional-information"')
+        self.assertContains(detail_response, 'data-custom-field-open')
+        self.assertNotContains(detail_response, "Tenant-specific metadata stored separately")
 
         update_response = self.client.post(
             reverse("customer-update", args=[customer.id]),
@@ -320,6 +346,18 @@ class CustomFieldIntegrationTests(TestCase):
         self.assertEqual(update_response.status_code, 302)
         value.refresh_from_db()
         self.assertEqual(value.value_text, "White")
+
+    def test_required_product_field_opens_additional_information_on_invalid_post(self):
+        self.product_field.required = True
+        self.product_field.save(update_fields=["required"])
+        self.client.login(username="admin", password="pass")
+
+        response = self.client.post(reverse("product-create"), self._product_payload(cf_color=""))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-additional-information open')
+        self.assertContains(response, 'Required fields')
+        self.assertContains(response, 'name="name" value="Router X"')
 
     def test_package_create_update_and_detail_store_custom_fields(self):
         self.client.login(username="admin", password="pass")

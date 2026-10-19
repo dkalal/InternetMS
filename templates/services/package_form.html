@@ -3,7 +3,7 @@
 {% block title %}{% if form.instance.pk %}Edit Package{% else %}New Package{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-form-page mx-auto w-full max-w-[1180px] space-y-6 pb-8">
+<div class="jims-form-page mx-auto w-full max-w-[1100px] space-y-4 pb-8">
     <header class="sticky top-16 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-b-lg sm:px-5">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div class="min-w-0">
@@ -27,7 +27,7 @@
         </div>
     </header>
 
-    <form id="package-form" method="post" class="space-y-6" data-package-form data-unsaved-form>
+    <form id="package-form" method="post" class="space-y-4" data-package-form data-unsaved-form>
         {% csrf_token %}
         {% if form.errors %}
             <section class="jims-error-summary" aria-labelledby="package-errors-title" role="alert" tabindex="-1">
@@ -36,8 +36,8 @@
             </section>
         {% endif %}
 
-        <div class="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,780px)_300px] xl:justify-center xl:items-start">
-            <div class="min-w-0 space-y-6">
+        <div class="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start">
+            <div class="min-w-0 space-y-4">
                 <section class="rounded-lg border border-slate-200 bg-white p-4 sm:p-6" aria-labelledby="package-definition-title">
                     <div class="mb-5">
                         <p class="text-xs font-semibold uppercase tracking-[0.12em] text-brand-700">Package definition</p>
@@ -45,8 +45,8 @@
                         <p class="mt-1 text-sm text-slate-500">The package identity and technical speed shown during customer assignment.</p>
                     </div>
                     <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
-                        <div class="md:col-span-8">{% include "components/form_field.html" with field=form.name %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.package_type %}</div>
+                        <div class="min-w-0 md:col-span-6 md:max-w-[23rem]">{% include "components/form_field.html" with field=form.name %}</div>
+                        <div class="min-w-0 md:col-span-4">{% include "components/form_field.html" with field=form.package_type %}</div>
                         <div class="md:col-span-4">{% include "components/form_field.html" with field=form.speed %}</div>
                         <div class="md:col-span-8 md:flex md:items-end">
                             <div class="w-full rounded-lg border border-slate-200 bg-slate-50/60 p-3">
