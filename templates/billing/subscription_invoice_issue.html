@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Resolve Invoice Issue{% endblock %}
 
@@ -20,7 +20,7 @@
   </div>
 
   <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-    <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2>
+    {% comment %} <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2> {% endcomment %}
     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div>
         <dt class="text-xs text-slate-500">Customer</dt>
@@ -36,7 +36,7 @@
       </div>
       <div>
         <dt class="text-xs text-slate-500">Amount</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ period.final_amount|intcomma }} TZS</dd>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ period.final_amount|money_display }} TZS</dd>
       </div>
       <div>
         <dt class="text-xs text-slate-500">Package</dt>

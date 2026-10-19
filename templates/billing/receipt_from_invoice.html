@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Register Payment{% endblock %}
 
@@ -9,7 +9,7 @@
     <h1 class="text-xl font-semibold tracking-tight text-slate-900">Register payment</h1>
     <p class="mt-1 text-sm text-slate-600">
       Invoice {{ invoice.number }} &middot; {{ invoice.customer.name }} &middot;
-      Total: <span class="font-semibold text-slate-900">{{ invoice.total|intcomma }} {{ invoice.currency }}</span>
+      Total: <span class="font-semibold text-slate-900">{{ invoice.total|money_display:invoice.currency }} {{ invoice.currency }}</span>
     </p>
   </div>
 
@@ -20,17 +20,17 @@
       Record the actual amount you received. If you only received part of the invoice, enter that payment amount here and the invoice will remain partially paid until the balance is covered.
     {% endif %}
     {% if outstanding_balance is not None %}
-      <div class="mt-2 font-medium">This invoice balance: {{ outstanding_balance|intcomma }} {{ invoice.currency }}</div>
+      <div class="mt-2 font-medium">This invoice balance: {{ outstanding_balance|money_display:invoice.currency }} {{ invoice.currency }}</div>
     {% endif %}
     {% if credited_total %}
-      <div class="mt-1 text-xs text-sky-900">Already credited: {{ credited_total|intcomma }} {{ invoice.currency }}</div>
+      <div class="mt-1 text-xs text-sky-900">Already credited: {{ credited_total|money_display:invoice.currency }} {{ invoice.currency }}</div>
     {% endif %}
   </div>
 
   {% if customer_account_balance > outstanding_balance %}
   <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
     <div class="font-semibold">Payment allocation matters</div>
-    <p class="mt-1">The customer's total open account balance is {{ customer_account_balance|intcomma }} {{ invoice.currency }}, but this form applies money only to invoice {{ invoice.number }}, whose balance is {{ outstanding_balance|intcomma }} {{ invoice.currency }}.</p>
+    <p class="mt-1">The customer's total open account balance is {{ customer_account_balance|money_display:invoice.currency }} {{ invoice.currency }}, but this form applies money only to invoice {{ invoice.number }}, whose balance is {{ outstanding_balance|money_display:invoice.currency }} {{ invoice.currency }}.</p>
     <p class="mt-2 text-xs leading-5">To record the full account payment, allocate no more than this invoice balance here, then register the remainder against the customer's other open invoice. This prevents one invoice from being overpaid.</p>
     <a href="{% url 'customer-detail' invoice.customer_id %}" class="mt-2 inline-flex font-semibold text-amber-950 underline">View all customer billing documents</a>
   </div>

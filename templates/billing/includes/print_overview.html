@@ -12,14 +12,8 @@
       <div class="quote-bill-grid{% if document.document_type == 'receipt' %} extended{% endif %}">
         <div class="quote-bill-main">
           <h3 class="quote-bill-name">{{ document.display_customer_name }}</h3>
-          {% if not document.is_walk_in_sale %}{{ document.customer.address }}{% endif %}
-          {% comment %} <p>
-            {% if document.customer.address %}
-              {{ document.customer.address }}
-            {% else %}
-              Address not provided.
-            {% endif %}
-          </p> {% endcomment %}
+          <span class="quote-bill-label">Address</span>
+          <span class="quote-bill-meta-value">{% if not document.is_walk_in_sale and document.customer.address %}{{ document.customer.address }}{% else %}-{% endif %}</span>
         </div>
         {% if document.shipping_address_snapshot %}
           <div class="quote-bill-meta">
@@ -29,11 +23,11 @@
         {% endif %}
         <div class="quote-bill-meta">
           <span class="quote-bill-label">TIN</span>
-          <span class="quote-bill-meta-value">{{ document.customer.tin_number|default:"-" }}</span>
+          <span class="quote-bill-meta-value">{% if not document.is_walk_in_sale and document.customer.tin_number %}{{ document.customer.tin_number }}{% else %}-{% endif %}</span>
         </div>
         <div class="quote-bill-meta">
           <span class="quote-bill-label">VRN</span>
-          <span class="quote-bill-meta-value">{{ document.customer.vrn_number|default:"-" }}</span>
+          <span class="quote-bill-meta-value">{% if not document.is_walk_in_sale and document.customer.vrn_number %}{{ document.customer.vrn_number }}{% else %}-{% endif %}</span>
         </div>
         {% if document.document_type == "receipt" %}
           <div class="quote-bill-meta">

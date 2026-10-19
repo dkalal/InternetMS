@@ -1354,14 +1354,14 @@ class BillingServiceTests(TestCase):
 
         self.assertEqual(invoice_response.status_code, 200)
         self.assertContains(invoice_response, "Payment summary")
-        self.assertContains(invoice_response, "Paid 50000.00")
-        self.assertContains(invoice_response, "Due 50000.00")
+        self.assertContains(invoice_response, "Paid 50,000")
+        self.assertContains(invoice_response, "Due 50,000")
         self.assertContains(invoice_response, "Create receipt")
 
         self.assertEqual(receipt_response.status_code, 200)
         self.assertContains(receipt_response, "Applied payment")
         self.assertContains(receipt_response, "Invoice")
-        self.assertContains(receipt_response, "50000.00")
+        self.assertContains(receipt_response, "50,000")
 
     def test_superseded_invoice_detail_shows_reason_and_replacement_link(self):
         Membership.objects.create(
@@ -1659,6 +1659,34 @@ class BillingServiceTests(TestCase):
             "Invoice was raised in error for the wrong service.",
         )
 
+    def test_generic_void_rejects_subscription_invoice_without_orphaning_period(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 10, 1),
+            months=1,
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, "must be voided through 'Resolve issue'"):
+            BillingService.void_invoice(
+                organization=self.org1,
+                performed_by=self.user,
+                invoice_id=period.invoice_id,
+                reason="The subscription charge needs correction.",
+            )
+
+        period.refresh_from_db()
+        period.invoice.refresh_from_db()
+        self.assertEqual(period.status, SubscriptionPeriod.Status.INVOICED)
+        self.assertEqual(period.invoice.status, BillingDocument.Status.ISSUED)
+
     def test_partially_paid_invoice_cannot_be_voided(self):
         invoice = BillingService.create_document(
             organization=self.org1,
@@ -1786,6 +1814,85 @@ class BillingServiceTests(TestCase):
         )
         self.assertEqual(log.metadata["replaced_void_invoice_id"], void_invoice_id)
         self.assertEqual(log.metadata["replacement_invoice_id"], retried.invoice_id)
+
+    def test_renewing_period_orphaned_by_legacy_generic_void_creates_replacement_invoice(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 10, 1),
+            months=1,
+        )
+        void_invoice_id = period.invoice_id
+        BillingDocument.objects.filter(pk=void_invoice_id).update(status=BillingDocument.Status.VOID)
+
+        recovered = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 10, 1),
+            months=1,
+        )
+
+        self.assertEqual(recovered.id, period.id)
+        self.assertEqual(recovered.status, SubscriptionPeriod.Status.INVOICED)
+        self.assertNotEqual(recovered.invoice_id, void_invoice_id)
+        self.assertEqual(recovered.invoice.original_invoice_id, void_invoice_id)
+        self.assertEqual(
+            SubscriptionPeriod.objects.filter(
+                subscription=subscription,
+                period_start=date(2026, 10, 1),
+            ).count(),
+            1,
+        )
+        log = AuditLog.objects.get(action_type="subscription.period_reopened", object_id=str(period.id))
+        self.assertEqual(log.old_value["status"], SubscriptionPeriod.Status.INVOICED)
+        self.assertEqual(log.metadata["replaced_void_invoice_id"], void_invoice_id)
+
+    def test_orphaned_void_subscription_period_with_receipt_history_cannot_be_replaced(self):
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org1,
+            customer=self.customer_org1,
+            package=self.package_org1,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org1,
+            created_by=self.user,
+            subscription_id=subscription.id,
+            period_start=date(2026, 10, 1),
+            months=1,
+        )
+        BillingService.create_receipt_from_invoice(
+            organization=self.org1,
+            created_by=self.user,
+            invoice_id=period.invoice_id,
+            amount_paid=Decimal("10000.00"),
+            payment_method="cash",
+            payment_reference="legacy-void-payment-history",
+        )
+        original_invoice_id = period.invoice_id
+        BillingDocument.objects.filter(pk=original_invoice_id).update(status=BillingDocument.Status.VOID)
+        SubscriptionPeriod.objects.filter(pk=period.pk).update(status=SubscriptionPeriod.Status.INVOICED)
+
+        with self.assertRaisesMessage(BillingServiceError, "has payment or credit history"):
+            SubscriptionBillingService.renew(
+                organization=self.org1,
+                created_by=self.user,
+                subscription_id=subscription.id,
+                period_start=date(2026, 10, 1),
+                months=1,
+            )
+
+        period.refresh_from_db()
+        self.assertEqual(period.invoice_id, original_invoice_id)
+        self.assertEqual(period.status, SubscriptionPeriod.Status.INVOICED)
 
     def test_paying_an_older_subscription_period_cannot_reduce_paid_through_date(self):
         subscription = SubscriptionBillingService.get_or_create_subscription(
@@ -2359,7 +2466,9 @@ class BillingDocumentEditorViewTests(TestCase):
 
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, "Financial summary")
-                self.assertContains(response, "Add item")
+                self.assertContains(response, 'aria-label="Add row below"', html=False)
+                self.assertContains(response, 'data-document-tab="details"', html=False)
+                self.assertNotContains(response, "Before saving")
                 self.assertContains(response, 'class="js-line-details', html=False)
                 self.assertContains(response, 'aria-label="Remove this line item"', html=False)
                 self.assertContains(response, '"tax_eligible":false', html=False)
@@ -2379,6 +2488,56 @@ class BillingDocumentEditorViewTests(TestCase):
                 self.assertEqual(document.subtotal, Decimal("2000.00"))
                 self.assertEqual(document.tax_amount, Decimal("360.00"))
                 self.assertEqual(document.total, Decimal("2360.00"))
+
+    def test_new_editor_row_keeps_visible_order_after_save(self):
+        payload = self._document_payload(description="First", unit_price="100.00")
+        payload["items-TOTAL_FORMS"] = "3"
+        payload["items-0-ui_order"] = "0"
+        for index, name, order in ((1, "Last", "2"), (2, "Middle", "1")):
+            for key, value in list(payload.items()):
+                if key.startswith("items-0-") and key != "items-0-ui_order":
+                    payload[key.replace("items-0-", f"items-{index}-")] = value
+            payload[f"items-{index}-description"] = name
+            payload[f"items-{index}-ui_order"] = order
+
+        response = self.client.post(
+            reverse("billing:document_create", kwargs={"doc_type": "quotation"}), payload,
+        )
+        self.assertEqual(response.status_code, 302)
+        document = BillingDocument.objects.get(organization=self.org, document_type="quotation")
+        self.assertEqual(list(document.items.order_by("id").values_list("description", flat=True)), ["First", "Middle", "Last"])
+
+    def test_insert_between_saved_quotation_rows_keeps_ids_and_order(self):
+        payload = self._document_payload(description="First")
+        payload["items-TOTAL_FORMS"] = "2"
+        for key, value in list(payload.items()):
+            if key.startswith("items-0-"):
+                payload[key.replace("items-0-", "items-1-")] = value
+        payload["items-1-description"] = "Last"
+        created = self.client.post(reverse("billing:document_create", kwargs={"doc_type": "quotation"}), payload)
+        self.assertEqual(created.status_code, 302)
+        original = BillingDocument.objects.get(organization=self.org, document_type="quotation")
+        saved_lines = list(original.items.order_by("id"))
+
+        payload["items-TOTAL_FORMS"] = "3"
+        payload["items-INITIAL_FORMS"] = "2"
+        for index, line in enumerate(saved_lines):
+            payload[f"items-{index}-id"] = str(line.pk)
+        for key, value in list(payload.items()):
+            if key.startswith("items-0-") and key not in ("items-0-id", "items-0-ui_order"):
+                payload[key.replace("items-0-", "items-2-")] = value
+        payload["items-2-description"] = "Middle"
+        payload["items-0-ui_order"] = "0"
+        payload["items-1-ui_order"] = "2"
+        payload["items-2-ui_order"] = "1"
+
+        response = self.client.post(
+            reverse("billing:document_edit", kwargs={"doc_type": "quotation", "pk": original.pk}), payload,
+        )
+        self.assertEqual(response.status_code, 302)
+        revised = BillingDocument.objects.filter(organization=self.org, document_type="quotation").exclude(pk=original.pk).get()
+        self.assertEqual(list(revised.items.order_by("id").values_list("description", flat=True)), ["First", "Middle", "Last"])
+        self.assertEqual(list(original.items.order_by("id").values_list("id", flat=True)), [line.pk for line in saved_lines])
 
     def test_required_line_validation_preserves_workspace(self):
         response = self.client.post(
@@ -2707,13 +2866,17 @@ class BillingListViewTests(TestCase):
             'show_tax_column': False,
             'LOGO_DATA_URI': 'data:image/png;base64,AA==',
         })
-        self.assertIn('Proforma Invoice', html)
+        self.assertIn('Invoice', html)
         self.assertIn('table-header-group', html)
         self.assertIn('counter(pages)', html)
         self.assertIn('<img class="logo"', html)
-        self.assertNotIn('TIN:', html)
-        self.assertNotIn('VRN:', html)
+        self.assertIn('<span class="party-label">Address</span>', html)
+        self.assertIn('<span class="party-label">TIN</span><span class="party-value">&mdash;</span>', html)
+        self.assertIn('<span class="party-label">VRN</span><span class="party-value">&mdash;</span>', html)
         self.assertNotIn('Previous Outstanding Balance', html)
+        self.assertIn('Tax (0%)</td><td>TZS 0', html)
+        self.assertIn('Balance carried forward</td><td>TZS 0', html)
+        self.assertIn('Total Amount</td><td>TZS 350', html)
         self.assertEqual(html.count('Installation item '), 35)
 
     def test_invoice_and_quotation_pdfs_keep_internal_notes_and_unused_terms_private(self):
@@ -2721,8 +2884,22 @@ class BillingListViewTests(TestCase):
             organization=self.org1,
             legal_name="Tenant A Legal Company",
             address_line1="Business address",
+            tin_number="TIN-COMPANY-01",
+            vrn_number="VRN-COMPANY-01",
             bank_details="Bank: Customer Payments Account",
             footer_note="LEGACY TERMS MUST NOT BE CUSTOMER VISIBLE",
+        )
+        product = Product.objects.create(
+            organization=self.org1,
+            name="Office Router",
+            sku="ROUTER-PRINT-01",
+            category="hardware",
+            quantity=Decimal("1.00"),
+            measure_unit="Unit",
+            buying_price=Decimal("80.00"),
+            selling_price=Decimal("100.00"),
+            stock=1,
+            is_active=True,
         )
         self.customer.phone = "+255712345678"
         self.customer.email = "billing@example.test"
@@ -2743,7 +2920,11 @@ class BillingListViewTests(TestCase):
                 status=BillingDocument.Status.DRAFT,
                 tax_rate=Decimal("0.00"),
                 notes="INTERNAL CREDIT-RISK NOTE — NEVER DISCLOSE",
-                items=[LineItemInput(description="Customer-facing service", unit_price=Decimal("100.00"))],
+                items=[LineItemInput(
+                    product_id=product.pk,
+                    description="Office Router duplicate description",
+                    unit_price=Decimal("100.00"),
+                )],
             )
             context = {
                 "document": document,
@@ -2766,12 +2947,29 @@ class BillingListViewTests(TestCase):
             self.assertNotIn('class="support-title">Terms', html)
             self.assertNotIn('class="support-title">Notes', html)
             self.assertIn("Bank: Customer Payments Account", html)
+            self.assertLess(html.index('<img class="logo"'), html.index("TIN: TIN-COMPANY-01"))
+            self.assertLess(html.index("TIN: TIN-COMPANY-01"), html.index("Business address"))
             self.assertIn("Alpha Customer", html)
-            self.assertIn("Customer postal address", html)
+            self.assertIn('<table class="party-details">', html)
+            self.assertIn('<span class="party-label">Address</span>', html)
+            self.assertIn('<span class="party-value">Customer postal address</span>', html)
             self.assertIn("+255712345678", html)
-            self.assertIn("billing@example.test", html)
-            self.assertIn("TIN: TIN-CUSTOMER-01", html)
-            self.assertIn("VRN: VRN-CUSTOMER-01", html)
+            self.assertNotIn("billing@example.test", html)
+            self.assertIn('<span class="party-label">TIN</span><span class="party-value">TIN-CUSTOMER-01</span>', html)
+            self.assertIn('<span class="party-label">VRN</span><span class="party-value">VRN-CUSTOMER-01</span>', html)
+            self.assertIn("Office Router", html)
+            self.assertNotIn("ROUTER-PRINT-01", html)
+            self.assertNotIn("Office Router duplicate description", html)
+            self.assertIn('<td class="price right money">100</td>', html)
+            self.assertIn('<td class="amount right money"><strong>100</strong></td>', html)
+            self.assertIn(
+                '<div class="support-copy">Bank: Customer Payments Account</div>',
+                html,
+            )
+            self.assertIn(
+                '<div class="payment-note"><strong>NOTE: Upon payment, please email us the transfer slip.</strong></div>',
+                html,
+            )
             self.assertNotIn("Customer details", html)
             self.assertNotIn('<div class="company-name">Tenant A Legal Company</div>', html)
 
@@ -2826,10 +3024,12 @@ class BillingListViewTests(TestCase):
             'invoice_account_summary': summary,
             'show_discount_column': False, 'show_tax_column': False,
         })
-        self.assertIn('Prior Balance at Issue', html)
-        self.assertIn('Amount Due at Issue', html)
-        self.assertIn('Payment Received', html)
-        self.assertIn('Current Account Outstanding', html)
+        self.assertIn('Balance carried forward', html)
+        self.assertIn('Total Amount</td><td>TZS 130', html)
+        self.assertIn('Balance carried forward</td><td>TZS 80', html)
+        self.assertNotIn('Customer account summary', html)
+        self.assertNotIn('Amount Due at Issue', html)
+        self.assertNotIn('Current Account Outstanding', html)
         self.assertEqual(summary['current_invoice_total'], Decimal('50.00'))
         self.assertEqual(summary['previous_outstanding_balance'], Decimal('80.00'))
 

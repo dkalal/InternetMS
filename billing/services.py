@@ -208,9 +208,18 @@ class BillingService:
         return True
 
     @classmethod
-    def _resolve_invoice(cls, *, organization: Organization, invoice_id: int) -> BillingDocument:
+    def _resolve_invoice(
+        cls,
+        *,
+        organization: Organization,
+        invoice_id: int,
+        lock: bool = False,
+    ) -> BillingDocument:
+        invoices = BillingDocument.objects.unscoped()
+        if lock:
+            invoices = invoices.select_for_update()
         invoice = (
-            BillingDocument.objects.unscoped()
+            invoices
             .select_related("customer")
             .prefetch_related("items")
             .filter(pk=invoice_id, document_type=BillingDocument.DocumentType.INVOICE)
@@ -1572,6 +1581,7 @@ class BillingService:
             return invoice
 
     @classmethod
+    @transaction.atomic
     def void_invoice(
         cls,
         *,
@@ -1579,12 +1589,21 @@ class BillingService:
         performed_by,
         invoice_id: int,
         reason: str,
+        allow_linked_subscription_period: bool = False,
     ) -> BillingDocument:
         reason = (reason or "").strip()
         if len(reason) < 5:
             raise BillingServiceError("A short reason is required to void this invoice.")
 
-        invoice = cls._resolve_invoice(organization=organization, invoice_id=invoice_id)
+        invoice = cls._resolve_invoice(organization=organization, invoice_id=invoice_id, lock=True)
+        if not allow_linked_subscription_period and SubscriptionPeriod.objects.unscoped().filter(
+            organization=organization,
+            invoice=invoice,
+        ).exists():
+            raise BillingServiceError(
+                "Subscription invoices must be voided through 'Resolve issue' so the billing period "
+                "and invoice remain consistent."
+            )
         state = cls.get_invoice_action_state(organization=organization, invoice=invoice)
         if not state["can_void"]:
             raise BillingServiceError("Only unpaid issued invoices without receipts or credit notes can be voided.")
@@ -1617,6 +1636,7 @@ class BillingService:
         )
 
     @classmethod
+    @transaction.atomic
     def void_subscription_invoice(
         cls,
         *,
@@ -1631,6 +1651,7 @@ class BillingService:
 
         period = (
             SubscriptionPeriod.objects.unscoped()
+            .select_for_update(of=("self",))
             .select_related("subscription", "subscription__customer", "invoice", "receipt")
             .filter(pk=period_id, organization=organization)
             .first()
@@ -1664,6 +1685,7 @@ class BillingService:
                 performed_by=performed_by,
                 invoice_id=invoice.id,
                 reason=reason,
+                allow_linked_subscription_period=True,
             )
             SubscriptionPeriod.objects.filter(pk=period.pk).update(status=SubscriptionPeriod.Status.CANCELLED)
             period.refresh_from_db()
@@ -2496,34 +2518,66 @@ class SubscriptionBillingService:
                 pk=subscription.pk,
                 organization=organization,
             )
-            existing = SubscriptionPeriod.objects.unscoped().filter(
+            existing = SubscriptionPeriod.objects.unscoped().select_for_update(of=("self",)).filter(
                 organization=organization,
                 subscription=subscription,
                 period_start=period_start,
             ).first()
             if existing is not None:
-                if existing.status == SubscriptionPeriod.Status.CANCELLED:
-                    replaced_invoice_id = existing.invoice_id
-                    if replaced_invoice_id is not None:
-                        replaced_status = (
-                            BillingDocument.objects.unscoped()
-                            .filter(
-                                pk=replaced_invoice_id,
-                                organization=organization,
-                                document_type=BillingDocument.DocumentType.INVOICE,
-                            )
-                            .values_list("status", flat=True)
-                            .first()
+                replaced_invoice_id = existing.invoice_id
+                replaced_status = None
+                if replaced_invoice_id is not None:
+                    replaced_status = (
+                        BillingDocument.objects.unscoped()
+                        .filter(
+                            pk=replaced_invoice_id,
+                            organization=organization,
+                            document_type=BillingDocument.DocumentType.INVOICE,
                         )
-                        if replaced_status != BillingDocument.Status.VOID:
-                            raise BillingServiceError(
-                                "This cancelled billing period is linked to an invoice that is not void. "
-                                "Resolve the invoice state before retrying the renewal."
-                            )
+                        .values_list("status", flat=True)
+                        .first()
+                    )
+                recoverable_void_mismatch = (
+                    existing.status in {
+                        SubscriptionPeriod.Status.INVOICED,
+                        SubscriptionPeriod.Status.OVERDUE,
+                    }
+                    and replaced_status == BillingDocument.Status.VOID
+                )
+                if existing.status == SubscriptionPeriod.Status.CANCELLED or recoverable_void_mismatch:
+                    if replaced_invoice_id is not None and replaced_status != BillingDocument.Status.VOID:
+                        raise BillingServiceError(
+                            "This cancelled billing period is linked to an invoice that is not void. "
+                            "Resolve the invoice state before retrying the renewal."
+                        )
+                    has_receipt_history = existing.receipt_id is not None or (
+                        replaced_invoice_id is not None
+                        and BillingDocument.objects.unscoped().filter(
+                            organization=organization,
+                            document_type=BillingDocument.DocumentType.RECEIPT,
+                            invoice_id=replaced_invoice_id,
+                        ).exists()
+                    )
+                    has_credit_history = (
+                        replaced_invoice_id is not None
+                        and BillingDocument.objects.unscoped().filter(
+                            organization=organization,
+                            document_type=BillingDocument.DocumentType.CREDIT_NOTE,
+                            corrected_invoice_id=replaced_invoice_id,
+                            status=BillingDocument.Status.ISSUED,
+                        ).exists()
+                    )
+                    if has_receipt_history or has_credit_history:
+                        raise BillingServiceError(
+                            "This void subscription invoice has payment or credit history and cannot be replaced automatically."
+                        )
 
                     # A void invoice is immutable, but the intended coverage period can be
-                    # retried. Re-open the same period so its unique business key remains
-                    # stable and the replacement invoice can take over the active link.
+                    # retried. This also repairs legacy/generic voids that changed the
+                    # invoice without cancelling its linked period. Re-open the same period
+                    # so its unique business key remains stable and the replacement invoice
+                    # can take over the active link.
+                    replaced_period_status = existing.status
                     SubscriptionPeriod.objects.unscoped().filter(pk=existing.pk).update(
                         period_end=period_end,
                         months=months,
@@ -2539,6 +2593,7 @@ class SubscriptionBillingService:
                     )
                     existing.refresh_from_db()
                     existing._replaced_void_invoice_id = replaced_invoice_id
+                    existing._replaced_period_status = replaced_period_status
                 return existing
             overlap = (
                 SubscriptionPeriod.objects.unscoped()
@@ -2753,6 +2808,11 @@ class SubscriptionBillingService:
             )
             replaced_invoice_id = getattr(period, "_replaced_void_invoice_id", None)
             if replaced_invoice_id:
+                replaced_period_status = getattr(
+                    period,
+                    "_replaced_period_status",
+                    SubscriptionPeriod.Status.CANCELLED,
+                )
                 BillingDocument.objects.unscoped().filter(
                     pk=replacement_invoice.pk,
                     organization=organization,
@@ -2768,7 +2828,7 @@ class SubscriptionBillingService:
                     object_id=str(period.id),
                     document_id=str(replacement_invoice.id),
                     old_value={
-                        "status": SubscriptionPeriod.Status.CANCELLED,
+                        "status": replaced_period_status,
                         "invoice_id": replaced_invoice_id,
                     },
                     new_value={

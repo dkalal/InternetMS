@@ -29,13 +29,13 @@
   <div class="sep"></div>
   <div style="font-weight:800;margin-bottom:3px;">Customer</div>
   <div style="font-weight:700;overflow-wrap:anywhere;">{{ customer_name|default:"Walk-in Customer" }}</div>
-  {% if document.customer.phone and not is_walk_in %}<div class="small">Phone: {{ document.customer.phone }}</div>{% endif %}
+  {% if document.customer.tin_number and not is_walk_in %}<div class="small">TIN: {{ document.customer.tin_number }}</div>{% else %}{{ document.customer.phone }}{% endif %}
 
   <div class="sep-solid"></div>
   <div style="font-weight:800;margin-bottom:3px;">{% if source_invoice %}Invoice items{% else %}Payment items{% endif %}</div>
   {% if source_invoice %}
     <div class="small" style="margin-bottom:3px;">Invoice: {{ source_invoice.number }}</div>
-    <div class="small" style="margin-bottom:3px;">Item values reference the invoice; this receipt records the amount received below.</div>
+    {% comment %} <div class="small" style="margin-bottom:3px;">Item values reference the invoice; this receipt records the amount received below.</div> {% endcomment %}
   {% endif %}
   <table class="items">
     <thead><tr><th class="desc">Description</th><th class="qty">Qty / Unit</th><th class="amt">Amount</th></tr></thead>
@@ -44,7 +44,7 @@
         <tr>
           <td class="desc">{% if item.description %}{{ item.description }}{% elif item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}Item {{ forloop.counter }}{% endif %}</td>
           <td class="qty">{{ item.quantity|quantity_display }}{% if item.unit_snapshot %} {{ item.unit_snapshot }}{% endif %}</td>
-          <td class="amt">{{ item.line_total|floatformat:2|intcomma }}</td>
+          <td class="amt">{{ item.line_total|money_display:document.currency }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="3">Payment for {% if source_invoice %}invoice {{ source_invoice.number }}{% else %}this receipt{% endif %}</td></tr>
@@ -56,7 +56,7 @@
   <table class="totals">
     <tr>
       <td class="label total-strong" style="font-size:12px;">AMOUNT RECEIVED</td>
-      <td class="value total-strong" style="font-size:12px;white-space:nowrap;">{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td>
+      <td class="value total-strong" style="font-size:12px;white-space:nowrap;">{{ document.currency|upper }} {{ document.total|money_display:document.currency }}</td>
     </tr>
   </table>
 

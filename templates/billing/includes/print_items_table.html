@@ -30,29 +30,18 @@
                       Item {{ forloop.counter }}
                     {% endif %}
                   </span>
-                  {% if item.description %}
-                    {% if item.package or item.product %}
-                      <span class="item-subtitle item-subtitle--description">{{ item.description }}</span>
-                    {% endif %}
-                  {% endif %}
                   {% if item.discount_amount %}
-                    <span class="item-subtitle">Discount: {{ document.currency|upper }} {{ item.discount_amount|floatformat:2|intcomma }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</span>
+                    <span class="item-subtitle">Discount: {{ document.currency|upper }} {{ item.discount_amount|money_display:document.currency }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</span>
                   {% endif %}
                 </div>
               </div>
             </td>
             <td>
-              {% if item.package %}
-                {{ item.package.name }}
-              {% elif item.product %}
-                Product
-              {% else %}
-                Service
-              {% endif %}
+              {{ item.unit_snapshot|default:"Unit" }}
             </td>
             <td class="text-right">{{ item.quantity|quantity_display }}</td>
-            <td class="text-right">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
-            <td class="text-right total-amount">{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</td>
+            <td class="text-right">{{ item.unit_price|money_display:document.currency }}</td>
+            <td class="text-right total-amount">{{ item.line_total|money_display:document.currency }}</td>
           </tr>
         {% empty %}
           <tr>

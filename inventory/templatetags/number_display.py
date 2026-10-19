@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django import template
 
-from internetservices.number_display import compact_decimal
+from internetservices.number_display import compact_decimal, format_money
 
 
 register = template.Library()
@@ -26,3 +26,9 @@ def number_display(value, max_places=6):
     if isinstance(value, bool) or not isinstance(value, (Decimal, int, float)):
         return value
     return quantity_display(value, max_places)
+
+
+@register.filter(name="money_display")
+def money_display(value, currency="TZS"):
+    """Display a monetary amount compactly without changing its stored value."""
+    return format_money(value, currency=currency)

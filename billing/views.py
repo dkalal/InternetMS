@@ -251,6 +251,7 @@ def _build_document_form_context(*, form, formset, doc_type: str, doc_type_displ
     context = {
         "form": form,
         "formset": formset,
+        "display_item_forms": _ordered_document_forms(formset),
         "doc_type": doc_type,
         "doc_type_display": doc_type_display,
         "primary_fields": primary_fields,
@@ -267,9 +268,21 @@ def _build_document_form_context(*, form, formset, doc_type: str, doc_type_displ
     return context
 
 
+def _ordered_document_forms(formset):
+    # The editor can insert a new row between persisted rows. Django's initial
+    # form indices must stay attached to their original IDs, so a separate
+    # presentation order travels alongside each indexed form.
+    def display_order(index_and_form):
+        index, form = index_and_form
+        value = form.data.get(f"{form.prefix}-ui_order") if form.is_bound else None
+        return (int(value) if value and value.isdecimal() and len(value) <= 6 else index, index)
+
+    return [form for _, form in sorted(enumerate(formset), key=display_order)]
+
+
 def _extract_items(formset) -> list[LineItemInput]:
     items: list[LineItemInput] = []
-    for form in formset:
+    for form in _ordered_document_forms(formset):
         if not form.cleaned_data or form.cleaned_data.get("DELETE"):
             continue
         product = form.cleaned_data.get("product")
@@ -643,7 +656,7 @@ def document_detail(request, doc_type: str, pk: int):
             "invoice_action_state": invoice_action_state,
             "invoice_locked": invoice_action_state["is_locked"] if invoice_action_state else document.document_type == BillingDocument.DocumentType.INVOICE and document.status != BillingDocument.Status.DRAFT,
             "linked_subscription_period": linked_subscription_period,
-            "can_void_invoice": can_void_invoice,
+            "can_void_invoice": can_void_invoice and linked_subscription_period is None,
             "can_reissue_invoice": can_reissue_invoice,
             "can_create_credit_note": can_create_credit_note,
             "can_void_credit_note": can_void_credit_note,

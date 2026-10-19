@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Void credit note{% endblock %}
 
@@ -16,7 +16,7 @@
 
   <section class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
     <div class="font-semibold">Confirm the financial effect</div>
-    <p class="mt-1">{{ credit_note.number }} currently reduces invoice {{ credit_note.corrected_invoice.number }} by {{ credit_amount|floatformat:2|intcomma }} {{ credit_note.currency }}. Voiding it increases that invoice's outstanding balance by the credited amount.</p>
+    <p class="mt-1">{{ credit_note.number }} currently reduces invoice {{ credit_note.corrected_invoice.number }} by {{ credit_amount|money_display:credit_note.currency }} {{ credit_note.currency }}. Voiding it increases that invoice's outstanding balance by the credited amount.</p>
   </section>
 
   <form method="post" class="jims-form-card">

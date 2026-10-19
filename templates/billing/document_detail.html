@@ -7,7 +7,7 @@
 <div class="space-y-6">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}{{ document.get_document_type_display }}{% endif %} {{ document.number }}</h1>
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">{% if document.document_type == 'invoice' %}Invoice{% else %}{{ document.get_document_type_display }}{% endif %} {{ document.number }}</h1>
       <p class="mt-1 text-sm text-slate-600">
         {{ document.display_customer_name }}{% if document.site %} &middot; {{ document.site.name }}{% endif %} &middot; {{ document.issue_date|date:"d M Y" }}
         {% if document.document_type == "quotation" %}&middot; v{{ document.version_number }}{% endif %}
@@ -140,29 +140,29 @@
           </p>
         </div>
         <div class="flex flex-wrap gap-2 text-xs font-medium">
-          <span class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Paid {{ payment_summary.amount_paid }}</span>
-          {% if payment_summary.credited_total %}<span class="rounded-full bg-sky-50 px-3 py-1 text-sky-700">Credited {{ payment_summary.credited_total }}</span>{% endif %}
-          <span class="rounded-full bg-amber-50 px-3 py-1 text-amber-800">Due {{ payment_summary.outstanding_balance }}</span>
+          <span class="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Paid {{ payment_summary.amount_paid|money_display:document.currency }}</span>
+          {% if payment_summary.credited_total %}<span class="rounded-full bg-sky-50 px-3 py-1 text-sky-700">Credited {{ payment_summary.credited_total|money_display:document.currency }}</span>{% endif %}
+          <span class="rounded-full bg-amber-50 px-3 py-1 text-amber-800">Due {{ payment_summary.outstanding_balance|money_display:document.currency }}</span>
           <span class="rounded-full bg-slate-100 px-3 py-1 text-slate-700">Receipts {{ payment_summary.receipt_count }}</span>
         </div>
       </div>
       <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
         <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">Invoice total</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.invoice_total }}</dd>
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Current Inv Amount</dt>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.invoice_total|money_display:document.currency }}</dd>
         </div>
         <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
           <dt class="text-xs uppercase tracking-wide text-slate-500">Amount paid</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.amount_paid }}</dd>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.amount_paid|money_display:document.currency }}</dd>
         </div>
         <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
           <dt class="text-xs uppercase tracking-wide text-slate-500">Outstanding</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.outstanding_balance }}</dd>
+          <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.outstanding_balance|money_display:document.currency }}</dd>
         </div>
         {% if payment_summary.credited_total %}
           <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
             <dt class="text-xs uppercase tracking-wide text-slate-500">Credited</dt>
-            <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.credited_total }}</dd>
+            <dd class="mt-1 font-semibold text-slate-900">{{ payment_summary.credited_total|money_display:document.currency }}</dd>
           </div>
         {% endif %}
       </dl>
@@ -176,42 +176,12 @@
                   <div class="font-medium text-slate-900">{{ receipt.number }}</div>
                   <div class="text-xs text-slate-500">{{ receipt.created_at|date:"d M Y H:i" }}{% if receipt.created_by %} &middot; {{ receipt.created_by.get_full_name|default:receipt.created_by.username }}{% endif %}</div>
                 </div>
-                <div class="text-sm font-semibold text-slate-900">{{ receipt.total }}</div>
+                <div class="text-sm font-semibold text-slate-900">{{ receipt.total|money_display:receipt.currency }}</div>
               </div>
             {% endfor %}
           </div>
         </div>
       {% endif %}
-    </section>
-  {% endif %}
-
-  {% if document.document_type == "invoice" and invoice_account_summary.has_previous_outstanding %}
-    <section class="rounded-lg border border-brand-200 bg-white p-4">
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div class="text-sm font-semibold text-slate-950">Customer account summary</div>
-          <p class="mt-1 max-w-2xl text-sm text-slate-600">
-            This is a snapshot from the issue date. Earlier invoice balances are not line items on this invoice and payments must be allocated to their original invoices.
-          </p>
-        </div>
-        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800 ring-1 ring-brand-200">Amount requested when issued {{ document.currency }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</span>
-      </div>
-      <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
-        <div class="border-l-2 border-slate-200 pl-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">Prior balance at issue</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ document.currency }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</dd>
-        </div>
-        <div class="border-l-2 border-slate-200 pl-3">
-          <dt class="text-xs uppercase tracking-wide text-slate-500">Current Invoice Total</dt>
-          <dd class="mt-1 font-semibold text-slate-900">{{ document.currency }} {{ invoice_account_summary.current_invoice_total|floatformat:2|intcomma }}</dd>
-        </div>
-        <div class="border-l-2 border-brand-400 pl-3">
-          <dt class="text-xs uppercase tracking-wide text-brand-700">Amount due at issue</dt>
-          <dd class="mt-1 font-bold text-brand-800">{{ document.currency }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</dd>
-        </div>
-        {% if invoice_account_summary.has_payment %}<div class="border-l-2 border-emerald-300 pl-3"><dt class="text-xs uppercase tracking-wide text-slate-500">Payment Received</dt><dd class="mt-1 font-semibold text-emerald-700">{{ document.currency }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</dd></div>{% endif %}
-        <div class="border-l-2 border-slate-900 pl-3"><dt class="text-xs uppercase tracking-wide text-slate-500">Current account outstanding</dt><dd class="mt-1 font-bold text-slate-950">{{ document.currency }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</dd></div>
-      </dl>
     </section>
   {% endif %}
 
@@ -256,7 +226,7 @@
                       <div class="mt-1 text-xs text-slate-500 whitespace-pre-wrap break-words">{{ item.description }}</div>
                     {% endif %}
                   {% endif %}
-                  {% if item.discount_amount %}<div class="text-xs text-emerald-700">Discount: {{ item.discount_amount }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</div>{% endif %}
+                  {% if item.discount_amount %}<div class="text-xs text-emerald-700">Discount: {{ item.discount_amount|money_display:document.currency }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</div>{% endif %}
                   {% if item.serial_selections.all %}
                     <div class="mt-2 text-xs text-slate-600">
                       <span class="font-semibold">Serials:</span>
@@ -266,9 +236,9 @@
                 </td>
                 {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-sm font-medium text-slate-700">{{ item.unit_snapshot }}</td>{% endif %}
                 <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity|quantity_display }}</td>
-                <td class="px-4 py-3 text-right text-sm text-slate-700{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.unit_price|floatformat:2|intcomma }}{% else %}{{ item.unit_price }}{% endif %}</td>
-                {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-right text-sm text-slate-700 whitespace-nowrap">{% if item.discount_amount %}{{ document.currency }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
-                <td class="px-4 py-3 text-right text-sm font-medium text-slate-900{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.line_total|floatformat:2|intcomma }}{% else %}{{ item.line_total }}{% endif %}</td>
+                <td class="px-4 py-3 text-right text-sm text-slate-700{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.unit_price|money_display:document.currency }}{% else %}{{ item.unit_price|money_display:document.currency }}{% endif %}</td>
+                {% if document.document_type == 'quotation' or document.document_type == 'invoice' %}<td class="px-3 py-3 text-right text-sm text-slate-700 whitespace-nowrap">{% if item.discount_amount %}{{ document.currency }} {{ item.discount_amount|money_display:document.currency }}{% else %}&mdash;{% endif %}</td>{% endif %}
+                <td class="px-4 py-3 text-right text-sm font-medium text-slate-900{% if document.document_type == 'quotation' or document.document_type == 'invoice' %} whitespace-nowrap{% endif %}">{% if document.document_type == 'quotation' or document.document_type == 'invoice' %}{{ document.currency }} {{ item.line_total|money_display:document.currency }}{% else %}{{ item.line_total|money_display:document.currency }}{% endif %}</td>
               </tr>
             {% empty %}
               <tr>
@@ -286,16 +256,20 @@
         <dl class="mt-3 space-y-2 text-sm">
           <div class="flex items-center justify-between">
             <dt class="text-slate-600">Subtotal</dt>
-            <dd class="font-medium text-slate-900">{{ document.subtotal }}</dd>
-            {% if document.discount_amount %}<dt class="text-slate-600">Document discount</dt><dd class="font-medium text-slate-900">-{{ document.discount_amount }}</dd>{% endif %}
+            <dd class="font-medium text-slate-900">{{ document.subtotal|money_display:document.currency }}</dd>
+            {% if document.discount_amount %}<dt class="text-slate-600">Document discount</dt><dd class="font-medium text-slate-900">-{{ document.discount_amount|money_display:document.currency }}</dd>{% endif %}
           </div>
           <div class="flex items-center justify-between">
-            <dt class="text-slate-600">VAT ({{ document.tax_rate }}%)</dt>
-            <dd class="font-medium text-slate-900">{{ document.tax_amount }}</dd>
+            <dt class="text-slate-600">VAT ({{ document.tax_rate|number_display:2 }}%)</dt>
+            <dd class="font-medium text-slate-900">{{ document.tax_amount|money_display:document.currency }}</dd>
           </div>
+          {% if document.document_type == 'invoice' %}<div class="flex items-center justify-between">
+            <dt class="text-slate-600">Balance carried forward</dt>
+            <dd class="font-medium text-slate-900">{{ invoice_account_summary.previous_outstanding_balance|default:0|money_display:document.currency }}</dd>
+          </div>{% endif %}
           <div class="flex items-center justify-between border-t border-slate-200 pt-2">
-            <dt class="text-slate-900 font-semibold">{% if document.document_type == 'invoice' %}Current Invoice Total{% elif document.document_type == 'quotation' %}Quotation Total{% else %}Total{% endif %}</dt>
-            <dd class="text-slate-900 font-semibold">{{ document.total }}</dd>
+            <dt class="text-slate-900 font-semibold">{% if document.document_type == 'invoice' %}Total Amount{% elif document.document_type == 'quotation' %}Quotation Total{% else %}Total{% endif %}</dt>
+            <dd class="text-slate-900 font-semibold">{% if document.document_type == 'invoice' %}{{ invoice_account_summary.total_amount_due|money_display:document.currency }}{% else %}{{ document.total|money_display:document.currency }}{% endif %}</dd>
           </div>
         </dl>
       </div>

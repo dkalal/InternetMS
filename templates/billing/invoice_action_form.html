@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}{{ action_title }}{% endblock %}
 
@@ -23,7 +23,7 @@
   {% endif %}
 
   <section class="jims-form-card p-5">
-    <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2>
+    {% comment %} <h2 class="text-sm font-semibold text-slate-900">Invoice summary</h2> {% endcomment %}
     <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div>
         <dt class="text-xs text-slate-500">Customer</dt>
@@ -34,20 +34,20 @@
         <dd class="mt-1 text-sm font-medium text-slate-900">{{ invoice.get_status_display }}</dd>
       </div>
       <div>
-        <dt class="text-xs text-slate-500">Invoice total</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ invoice.total|intcomma }} {{ invoice.currency }}</dd>
+        <dt class="text-xs text-slate-500">Current Inv Amount</dt>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ invoice.total|money_display:invoice.currency }} {{ invoice.currency }}</dd>
       </div>
       <div>
         <dt class="text-xs text-slate-500">Outstanding</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.remaining_balance|intcomma }} {{ invoice.currency }}</dd>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.remaining_balance|money_display:invoice.currency }} {{ invoice.currency }}</dd>
       </div>
       <div>
         <dt class="text-xs text-slate-500">Paid</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.paid_total|intcomma }} {{ invoice.currency }}</dd>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.paid_total|money_display:invoice.currency }} {{ invoice.currency }}</dd>
       </div>
       <div>
         <dt class="text-xs text-slate-500">Available to credit</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.credit_capacity|intcomma }} {{ invoice.currency }}</dd>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ state.credit_capacity|money_display:invoice.currency }} {{ invoice.currency }}</dd>
       </div>
     </dl>
   </section>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 {% load listing_tags %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
@@ -7,7 +7,7 @@
 {% block topbar_new_invoice %}{% if doc_type != "invoice" %}{{ block.super }}{% endif %}{% endblock %}
 
 {% block content %}
-<div class="jims-list-page space-y-6">
+<div class="jims-list-page jims-document-list space-y-4">
   <header class="jims-page-header">
     <div>
       <p class="jims-page-eyebrow">Billing operations</p>
@@ -32,16 +32,16 @@
   {% endif %}
 
   <section class="jims-toolbar">
-    <form method="get" class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+    <form method="get" class="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-end">
       {% if request.GET.worklist %}<input type="hidden" name="worklist" value="{{ request.GET.worklist }}">{% endif %}
       <input type="hidden" name="sort" value="{{ active_sort }}">
       <input type="hidden" name="page_size" value="{{ page_size }}">
 
-      <div class="lg:col-span-3">
+      <div class="min-w-0 lg:col-span-4">
         <label for="search" class="block text-sm font-medium text-slate-700">Search</label>
-        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Number, customer, invoice, reference..." class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+        <input id="search" name="search" value="{{ request.GET.search }}" placeholder="Search {{ doc_type }} number, customer or reference" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
       </div>
-      <div class="lg:col-span-2">
+      <div class="min-w-0 lg:col-span-4">
         <label for="customer" class="block text-sm font-medium text-slate-700">Customer</label>
         <select id="customer" name="customer" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" data-searchable-select="true" data-search-label="Customer" data-search-placeholder="Search customers...">
           <option value="">All customers</option>
@@ -50,7 +50,15 @@
           {% endfor %}
         </select>
       </div>
-      <div class="lg:col-span-2">
+      <div class="flex gap-2 lg:col-span-2">
+        <button class="jims-btn jims-btn-primary w-full" type="submit">Apply</button>
+      </div>
+      <div class="lg:col-span-2"><a href="{% url 'billing:document_list' doc_type=doc_type %}" class="jims-btn jims-btn-secondary w-full">Reset</a></div>
+
+      <details class="lg:col-span-12" {% if request.GET.status or request.GET.date_from or request.GET.date_to or request.GET.due_from or request.GET.due_to or request.GET.min_total or request.GET.max_total or request.GET.payment_method or request.GET.include_history %}open{% endif %}>
+        <summary class="min-h-10 cursor-pointer text-sm font-semibold text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-600">More filters{% if request.GET.status %} · Status: {{ request.GET.status }}{% endif %}{% if request.GET.date_from or request.GET.date_to %} · Issue date{% endif %}{% if request.GET.due_from or request.GET.due_to %} · Due date{% endif %}{% if request.GET.min_total or request.GET.max_total %} · Amount{% endif %}{% if request.GET.include_history %} · History{% endif %}</summary>
+        <div class="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div>
         <label for="status" class="block text-sm font-medium text-slate-700">Status</label>
         <select id="status" name="status" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
           <option value="">Any status</option>
@@ -59,18 +67,14 @@
           {% endfor %}
         </select>
       </div>
-      <div class="lg:col-span-2">
+      <div>
         <label for="date_from" class="block text-sm font-medium text-slate-700">{% if doc_type == "receipt" %}Payment from{% else %}Issue from{% endif %}</label>
         <input type="date" id="date_from" name="date_from" value="{{ request.GET.date_from }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
       </div>
-      <div class="lg:col-span-2">
+      <div>
         <label for="date_to" class="block text-sm font-medium text-slate-700">{% if doc_type == "receipt" %}Payment to{% else %}Issue to{% endif %}</label>
         <input type="date" id="date_to" name="date_to" value="{{ request.GET.date_to }}" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm">
       </div>
-      <div class="flex gap-2 lg:col-span-1">
-        <button class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Apply</button>
-      </div>
-
       {% if doc_type != "quotation" %}
         <div class="lg:col-span-2">
           <label for="due_from" class="block text-sm font-medium text-slate-700">Due from</label>
@@ -101,10 +105,24 @@
           Include history
         </label>
       {% endif %}
-      <div class="lg:col-span-2">
-        <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex w-full items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Reset</a>
-      </div>
+        </div>
+      </details>
     </form>
+    {% if request.GET.search or request.GET.customer or request.GET.status or request.GET.date_from or request.GET.date_to or request.GET.due_from or request.GET.due_to or request.GET.min_total or request.GET.max_total or request.GET.include_history or request.GET.payment_method %}
+      <div class="mt-3 flex flex-wrap gap-2 text-xs" aria-label="Active filters">
+        {% if request.GET.search %}{% query_update search="" as clear_search %}<a href="?{{ clear_search }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Search: {{ request.GET.search }} ×</a>{% endif %}
+        {% if request.GET.customer %}{% query_update customer="" as clear_customer %}<a href="?{{ clear_customer }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Customer: {% for customer in customer_catalog %}{% if request.GET.customer == customer.id|stringformat:"s" %}{{ customer.name }}{% endif %}{% endfor %} ×</a>{% endif %}
+        {% if request.GET.status %}{% query_update status="" as clear_status %}<a href="?{{ clear_status }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Status: {% for value,label in status_choices %}{% if request.GET.status == value %}{{ label }}{% endif %}{% endfor %} ×</a>{% endif %}
+        {% if request.GET.date_from %}{% query_update date_from="" as clear_date_from %}<a href="?{{ clear_date_from }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">From {{ request.GET.date_from }} ×</a>{% endif %}
+        {% if request.GET.date_to %}{% query_update date_to="" as clear_date_to %}<a href="?{{ clear_date_to }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">To {{ request.GET.date_to }} ×</a>{% endif %}
+        {% if request.GET.due_from %}{% query_update due_from="" as clear_due_from %}<a href="?{{ clear_due_from }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Due from {{ request.GET.due_from }} ×</a>{% endif %}
+        {% if request.GET.due_to %}{% query_update due_to="" as clear_due_to %}<a href="?{{ clear_due_to }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Due to {{ request.GET.due_to }} ×</a>{% endif %}
+        {% if request.GET.min_total %}{% query_update min_total="" as clear_min %}<a href="?{{ clear_min }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Min {{ request.GET.min_total }} ×</a>{% endif %}
+        {% if request.GET.max_total %}{% query_update max_total="" as clear_max %}<a href="?{{ clear_max }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Max {{ request.GET.max_total }} ×</a>{% endif %}
+        {% if request.GET.include_history %}{% query_update include_history="" as clear_history %}<a href="?{{ clear_history }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">History ×</a>{% endif %}
+        {% if request.GET.payment_method %}{% query_update payment_method="" as clear_method %}<a href="?{{ clear_method }}" class="rounded-full bg-brand-50 px-3 py-1.5 font-semibold text-brand-800">Payment method ×</a>{% endif %}
+      </div>
+    {% endif %}
   </section>
 
   <div class="jims-list-results overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -118,7 +136,7 @@
           <tr>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Number" sort_key="number" desc_sort_key="-number" %}</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Customer" sort_key="customer" desc_sort_key="-customer" %}</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Date" sort_key="date" desc_sort_key="-date" %}</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% if active_sort == 'date' %}{% sort_url '-date' as date_url %}<a href="{{ date_url }}">Date ↓</a>{% elif active_sort == '-date' %}{% sort_url 'date' as date_url %}<a href="{{ date_url }}">Date ↑</a>{% else %}{% sort_url 'date' as date_url %}<a href="{{ date_url }}">Date</a>{% endif %}</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Status" sort_key="status" desc_sort_key="-status" %}</th>
             {% if doc_type == "invoice" %}
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Due" sort_key="due" desc_sort_key="-due" %}</th>
@@ -127,7 +145,7 @@
             {% elif doc_type == "quotation" %}
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Version</th>
             {% endif %}
-            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% include "components/table_sort_link.html" with label="Total" sort_key="-total" desc_sort_key="total" %}</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">{% if active_sort == '-total' %}{% sort_url 'total' as total_url %}<a href="{{ total_url }}">Total ↓</a>{% elif active_sort == 'total' %}{% sort_url '-total' as total_url %}<a href="{{ total_url }}">Total ↑</a>{% else %}{% sort_url '-total' as total_url %}<a href="{{ total_url }}">Total</a>{% endif %}</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Actions</th>
           </tr>
         </thead>
@@ -153,7 +171,7 @@
                   {% if document.is_current_version %}<span class="ml-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Current</span>{% endif %}
                 </td>
               {% endif %}
-              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ document.total|intcomma }}</td>
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ document.currency|upper }} {{ document.total|money_display:document.currency }}</td>
               <td class="px-4 py-3 text-right text-sm">
                 <div class="inline-flex flex-wrap items-center justify-end gap-2">
                   <a href="{% url 'billing:document_detail' doc_type=doc_type pk=document.id %}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">View</a>
@@ -165,7 +183,7 @@
                     {% if document.list_can_convert %}
                       <form method="post" action="{% url 'billing:create_invoice_from_quotation' document.id %}">
                         {% csrf_token %}
-                        <button class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Invoice</button>
+                      <button class="rounded-md bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700">Create invoice</button>
                       </form>
                     {% endif %}
                   {% elif doc_type == "invoice" %}

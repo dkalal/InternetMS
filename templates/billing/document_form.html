@@ -4,23 +4,23 @@
 {% block title %}{{ doc_type_display }}{% endblock %}
 
 {% block content %}
-<div class="jims-document-builder mx-auto max-w-[1400px] space-y-4">
+<div class="jims-document-builder mx-auto max-w-[1400px] space-y-3">
   <header class="jims-page-header">
     <div>
-      <p class="jims-page-eyebrow">Billing workspace</p>
+      <p class="jims-page-eyebrow"><a href="{% url 'billing:document_list' doc_type=doc_type %}">{{ doc_type|capfirst }}s</a> / {% if document %}Edit{% else %}New{% endif %}</p>
       <div class="flex flex-wrap items-center gap-3">
-        <h1 class="jims-page-title">{% if document %}{{ doc_type_display }}{% else %}Create {{ doc_type_display }}{% endif %}</h1>
-        {% if document %}<span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{{ document.number }}</span>{% endif %}
+        <h1 class="jims-page-title">{% if document %}{{ doc_type_display }}{% else %}New {{ doc_type_display|lower }}{% endif %}</h1>
+        <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{{ form.status.value|default:'Draft'|capfirst }}</span>
       </div>
-      <p class="jims-page-subtitle">Complete the essentials, add line items efficiently, and review the financial total before saving.</p>
+      {% if document %}<p class="jims-page-subtitle">{{ document.number }}</p>{% endif %}
     </div>
   </header>
 
   {% if doc_type == 'invoice' %}
   <div class="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
     <svg viewBox="0 0 20 20" fill="currentColor" class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true"><path fill-rule="evenodd" d="M8.485 3.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.88c.673 1.166-.17 2.625-1.515 2.625H3.72c-1.345 0-2.188-1.459-1.515-2.625l6.28-10.88ZM10 6.25a.75.75 0 0 1 .75.75v3.25a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75Zm0 7.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>
-    <div><div class="font-semibold">Recurring Internet packages must use Renew</div>
-    <p class="mt-0.5 leading-5">If the customer already has an active package subscription, open the customer account and use <strong>Renew</strong>. That workflow records exact coverage dates and prevents duplicate monthly charges. Use New invoice for products, installation, and genuine one-time or non-subscription charges.</p></div>
+    <div><div class="font-semibold">Recurring Internet packages must use Renew.</div>
+    <details class="mt-1"><summary class="cursor-pointer text-xs font-semibold">Details</summary><p class="mt-1 leading-5">If the customer already has an active package subscription, open the customer account and use <strong>Renew</strong>. That workflow records exact coverage dates and prevents duplicate monthly charges. Use New invoice for products, installation, and genuine one-time or non-subscription charges.</p></details></div>
   </div>
   {% endif %}
 
@@ -34,12 +34,23 @@
       </div>
     {% endif %}
 
-    <div class="grid gap-4 min-[1800px]:grid-cols-[minmax(0,1fr)_21rem]">
-      <div class="min-w-0 space-y-4">
-        <section class="jims-form-section p-4 sm:p-5">
+    <div class="flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm" aria-live="polite">
+      <div class="min-w-[12rem] flex-1"><span class="block text-xs text-slate-500">Customer</span><strong id="document-customer-summary">{% if document %}{{ document.display_customer_name }}{% else %}Select a customer{% endif %}</strong><span class="block text-xs text-slate-500" id="document-site-summary">{% if document.site %}{{ document.site.name }}{% else %}No site selected{% endif %}</span></div>
+      <div><span class="block text-xs text-slate-500">Issued</span><strong id="document-issue-summary">{% if document %}{{ document.issue_date|date:'d M Y' }}{% else %}Not set{% endif %}</strong></div>
+      <div><span class="block text-xs text-slate-500">Due date</span><strong id="document-due-summary">{% if document.due_date %}{{ document.due_date|date:'d M Y' }}{% else %}Not set{% endif %}</strong></div>
+      <a href="#document-details-panel" id="document-edit-details" class="jims-btn jims-btn-secondary jims-btn-compact">Edit details</a>
+    </div>
+
+    <nav class="hidden flex-wrap gap-5 border-b border-slate-200 text-sm font-semibold" id="document-editor-tabs" aria-label="Document editor">
+      <button type="button" data-document-tab="items" class="border-b-2 border-brand-600 px-2 py-2 text-brand-700" aria-controls="document-items-panel">Items</button>
+      <button type="button" data-document-tab="details" class="border-b-2 border-transparent px-2 py-2 text-slate-600" aria-controls="document-details-panel">Document details</button>
+      {% if notes_field %}<button type="button" data-document-tab="notes" class="border-b-2 border-transparent px-2 py-2 text-slate-600" aria-controls="document-notes-panel">Internal notes</button>{% endif %}
+    </nav>
+
+    <div class="min-w-0 space-y-4">
+        <section id="document-details-panel" data-document-panel="details" class="jims-form-section p-4 sm:p-5">
           <div class="mb-4 border-b border-slate-100 pb-3">
-            <h2 class="text-base font-semibold text-slate-900">Customer and document details</h2>
-            <p class="mt-1 text-sm text-slate-600">Choose the customer and only the information needed to prepare this document.</p>
+            <h2 class="text-base font-semibold text-slate-900">Document details</h2>
           </div>
 
           {% if form.non_field_errors %}
@@ -60,26 +71,22 @@
           {% endif %}
 
           <div class="flex flex-wrap items-start gap-4">
-            {% include "billing/includes/document_meta_fields.html" with primary_fields=primary_fields notes_field=notes_field secondary_fields=secondary_fields %}
+            {% include "billing/includes/document_meta_fields.html" with primary_fields=primary_fields secondary_fields=secondary_fields %}
           </div>
         </section>
 
-        <section class="jims-form-section overflow-visible">
+        {% if notes_field %}<section id="document-notes-panel" data-document-panel="notes" class="jims-form-section p-4 sm:p-5"><h2 class="mb-3 text-base font-semibold text-slate-900">Internal notes <span class="text-sm font-normal text-slate-500">Staff only</span></h2>{% include "components/form_field.html" with field=notes_field %}</section>{% endif %}
+
+        <section id="document-items-panel" data-document-panel="items" class="jims-form-section overflow-visible">
           <div class="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="text-base font-semibold text-slate-900">Line items</h2>
-              <p class="mt-1 text-sm text-slate-600">Add products, packages, or custom charges. Open row options only when needed.</p>
+              <p class="mt-1 text-sm text-slate-600">Add products, packages, or custom charges.</p>
             </div>
-            <div class="relative flex flex-wrap items-center justify-end gap-2">
-              <button type="button" class="js-toggle-item-menu jims-btn jims-btn-secondary jims-btn-compact" aria-expanded="false" aria-haspopup="menu">
-                <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true"><path d="M10 3.75a.75.75 0 0 1 .75.75v4.75h4.75a.75.75 0 0 1 0 1.5h-4.75v4.75a.75.75 0 0 1-1.5 0v-4.75H4.5a.75.75 0 0 1 0-1.5h4.75V4.5a.75.75 0 0 1 .75-.75Z"/></svg>
-                Add item
-              </button>
-              <div class="js-add-item-menu absolute right-0 top-full z-30 mt-2 hidden w-52 rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl" role="menu">
-                <button type="button" class="js-add-item block w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-brand-50 hover:text-brand-700" data-kind="product" role="menuitem">Catalog product</button>
-                <button type="button" class="js-add-item block w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-brand-50 hover:text-brand-700" data-kind="package" role="menuitem">Internet package</button>
-                <button type="button" class="js-add-item block w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-brand-50 hover:text-brand-700" data-kind="custom" role="menuitem">Custom charge</button>
-              </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Pricing: <span id="items-pricing-label">{% if document %}{{ document.get_sale_pricing_category_display }}{% else %}Automatic{% endif %}</span></span>
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Currency: <span id="items-currency-label">{% if document %}{{ document.currency }}{% else %}{{ form.currency.value|default:'TZS' }}{% endif %}</span></span>
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Tax: <span id="items-tax-label">{{ form.tax_rate.value|default:'0' }}%</span></span>
             </div>
           </div>
 
@@ -93,24 +100,23 @@
 
           <div>
             {{ formset.management_form }}
-            <div class="hidden grid-cols-[minmax(14rem,1fr)_5rem_5.5rem_7.5rem_8.5rem_7rem_5.5rem] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500 xl:grid" aria-hidden="true">
-              <div>Item / description</div><div>Qty</div><div>Unit</div><div>Unit price</div><div>Billing</div><div class="text-right">Total</div><div class="text-right">Actions</div>
+            <div class="jims-line-item-grid jims-line-item-header border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">
+              <div class="sr-only">Add below</div><div>Item / description</div><div>Qty</div><div>Unit</div><div>Unit price</div><div>Billing</div><div class="text-right">Total</div><div class="text-right">Actions</div>
             </div>
             <div id="line-items-container">
-              {% for item_form in formset %}
+              {% for item_form in display_item_forms %}
                 {% include "billing/includes/document_line_item_form.html" with item_form=item_form %}
               {% endfor %}
             </div>
 
             <div id="line-items-empty" class="hidden border-t border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              No active line items yet. Add a product, package, or custom item to continue.
+              No active line items. <button type="button" class="js-add-item font-semibold text-brand-700 underline" data-kind="custom">Add a row</button>
             </div>
           </div>
         </section>
-      </div>
 
-      <aside class="space-y-4 min-[1800px]:sticky min-[1800px]:top-20 min-[1800px]:self-start">
-        <section class="jims-document-summary p-4 sm:p-5" aria-labelledby="document-summary-title">
+      <div class="jims-document-summary px-4 py-3" aria-labelledby="document-summary-title">
+        <section>
           <div class="flex items-center justify-between gap-3">
             <div>
               <p class="text-xs font-bold uppercase tracking-[0.12em] text-brand-700">{{ doc_type_display }}</p>
@@ -119,36 +125,27 @@
             <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-brand-700" id="summary-currency">{% if document %}{{ document.currency|upper }}{% else %}{{ form.currency.value|default:"TZS"|upper }}{% endif %}</span>
           </div>
 
-          <dl class="mt-4 space-y-3 text-sm">
-            <div class="flex items-center justify-between">
+          <dl class="mt-3 flex flex-wrap items-center justify-end gap-x-8 gap-y-3 text-sm">
+            <div class="flex items-center gap-2">
               <dt class="text-slate-600">Active items</dt>
               <dd class="font-semibold text-slate-950" id="summary-count">0</dd>
             </div>
-            <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
               <dt class="text-slate-600">Subtotal</dt>
-              <dd class="font-semibold text-slate-950" id="summary-subtotal">0.00</dd>
+              <dd class="font-semibold text-slate-950" id="summary-subtotal">0</dd>
             </div>
-            <div class="flex items-center justify-between">
-              <dt class="text-slate-600">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0.00" }}%)</span></dt>
-              <dd class="font-semibold text-slate-950" id="summary-tax">0.00</dd>
+            <div class="flex items-center gap-2">
+              <dt class="text-slate-600">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0" }}%)</span></dt>
+              <dd class="font-semibold text-slate-950" id="summary-tax">0</dd>
             </div>
-            <div class="flex items-end justify-between gap-4 border-t border-slate-200 pt-4">
+            <div class="flex items-end gap-3 border-l border-slate-200 pl-4">
               <dt class="font-semibold text-slate-950">Grand total</dt>
-              <dd class="text-2xl font-extrabold leading-none tabular-nums text-brand-700" id="summary-total">0.00</dd>
+              <dd class="text-2xl font-extrabold leading-none tabular-nums text-brand-700" id="summary-total">0</dd>
             </div>
           </dl>
-          <p class="mt-4 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-500">On-screen totals are a working preview. The server recalculates and validates the saved document.</p>
+          <p class="mt-2 text-right text-xs text-slate-500">Preview only. Saved totals are calculated on the server.</p>
         </section>
-
-        <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 class="text-sm font-semibold text-slate-900">Before saving</h2>
-          <ul class="mt-3 space-y-2 text-xs leading-5 text-slate-600">
-            <li class="flex gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500"></span><span>Confirm the customer, date, and tax treatment.</span></li>
-            <li class="flex gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500"></span><span>Review quantity, unit, price, and billing behavior for every line.</span></li>
-            <li class="flex gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500"></span><span>Use Draft while the document still needs review.</span></li>
-          </ul>
-        </section>
-      </aside>
+      </div>
     </div>
 
     <div class="jims-form-actions">
@@ -217,17 +214,64 @@
     const summaryTaxRateLabel = document.getElementById('summary-tax-rate-label');
     const submitButton = form?.querySelector('[type="submit"]');
     const savedDocumentCurrency = '{% if document %}{{ document.currency|escapejs }}{% else %}TZS{% endif %}';
+    const tabs = document.getElementById('document-editor-tabs');
+    const editorPanels = [...document.querySelectorAll('[data-document-panel]')];
+
+    const showPanel = (name) => {
+      editorPanels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.documentPanel !== name));
+      tabs?.querySelectorAll('[data-document-tab]').forEach((tab) => {
+        const active = tab.dataset.documentTab === name;
+        tab.setAttribute('aria-selected', String(active));
+        tab.classList.toggle('border-brand-600', active);
+        tab.classList.toggle('text-brand-700', active);
+        tab.classList.toggle('border-transparent', !active);
+        tab.classList.toggle('text-slate-600', !active);
+      });
+    };
+
+    const selectedLabel = (field, fallback) => field?.selectedOptions?.[0]?.textContent?.trim() || fallback;
+    const syncMetaSummary = () => {
+      const setText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
+      if (customerField) setText('document-customer-summary', customerField.value ? selectedLabel(customerField, 'Select a customer') : 'Select a customer');
+      const site = document.getElementById('id_site');
+      if (site) setText('document-site-summary', site.value ? selectedLabel(site, 'No site selected') : 'No site selected');
+      const issue = document.getElementById('id_issue_date');
+      const due = document.getElementById('id_due_date');
+      if (issue) setText('document-issue-summary', issue.value || 'Not set');
+      if (due) setText('document-due-summary', due.value || 'Not set');
+      if (pricingCategoryField) setText('items-pricing-label', selectedLabel(pricingCategoryField, 'Automatic'));
+      if (currencyField) setText('items-currency-label', currencyField.value || 'Not set');
+      if (taxRateField) setText('items-tax-label', `${taxRateField.value || '0'}%`);
+    };
 
     if (!form || !container || !emptyState || !totalForms || !template) {
       return;
     }
+    tabs?.classList.remove('hidden');
+    tabs?.classList.add('flex');
+    tabs?.querySelectorAll('[data-document-tab]').forEach((tab) => tab.addEventListener('click', () => showPanel(tab.dataset.documentTab)));
+    document.getElementById('document-edit-details')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      showPanel('details');
+      document.getElementById('document-details-panel')?.querySelector('input:not([type="hidden"]), select, textarea')?.focus();
+    });
+    form.addEventListener('invalid', (event) => {
+      const panel = event.target.closest('[data-document-panel]');
+      if (panel) showPanel(panel.dataset.documentPanel);
+    }, true);
+    const erroredPanel = editorPanels.find((panel) => panel.querySelector('[role="alert"], .text-rose-600'));
+    showPanel(erroredPanel?.dataset.documentPanel || (customerField && !customerField.value ? 'details' : 'items'));
+    form.addEventListener('input', syncMetaSummary);
+    form.addEventListener('change', syncMetaSummary);
+    syncMetaSummary();
 
     const parseMoney = (value) => {
       const parsed = Number.parseFloat(value || '0');
       return Number.isFinite(parsed) ? parsed : 0;
     };
 
-    const formatMoney = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatMoney = (value) => value.toLocaleString('en-TZ', { maximumFractionDigits: 2 });
+    const formatMoneyInput = (value) => Number.isFinite(Number(value)) ? String(Number(value)) : '';
 
     const getSelectedCustomer = () => customerCatalog.get(customerField?.value || '');
 
@@ -302,6 +346,8 @@
       deleteBox: row.querySelector('[name$="-DELETE"]'),
       productWrap: row.querySelector('.js-product-wrap'),
       packageWrap: row.querySelector('.js-package-wrap'),
+      descriptionWrap: row.querySelector('.js-description-wrap'),
+      descriptionToggle: row.querySelector('.js-toggle-description'),
       summary: row.querySelector('.js-selection-summary'),
       advancedSummary: row.querySelector('.js-advanced-summary'),
       details: row.querySelector('.js-line-details'),
@@ -340,6 +386,10 @@
     };
 
     const refreshLabels = () => {
+      [...container.querySelectorAll('.js-line-item')].forEach((row, index) => {
+        const orderField = row.querySelector('.js-ui-order');
+        if (orderField) orderField.value = String(index);
+      });
       const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
       activeRows.forEach((row, index) => {
         const label = row.querySelector('.js-item-label');
@@ -371,7 +421,7 @@
       const currency = (currencyField?.value || savedDocumentCurrency || 'TZS').toUpperCase();
 
       if (summaryCurrency) summaryCurrency.textContent = currency;
-      if (summaryTaxRateLabel) summaryTaxRateLabel.textContent = `(${taxRate.toFixed(2)}%)`;
+      if (summaryTaxRateLabel) summaryTaxRateLabel.textContent = `(${formatMoney(taxRate)}%)`;
       if (summarySubtotal) summarySubtotal.textContent = formatMoney(subtotal);
       if (summaryTax) summaryTax.textContent = formatMoney(taxAmount);
       if (summaryTotal) summaryTotal.textContent = formatMoney(total);
@@ -403,14 +453,16 @@
       const packageItem = packageCatalog.get(packageId);
       const quantity = parseMoney(controls.quantity?.value);
 
-      const catalogCol = row.querySelector('.js-catalog-col');
       const isCustom = activeType === 'custom';
-      if (catalogCol) {
-        catalogCol.classList.toggle('hidden', isCustom);
-      }
-
       controls.productWrap?.classList.toggle('hidden', activeType !== 'product');
       controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
+      const descriptionHasErrors = controls.descriptionWrap?.dataset.hasErrors === 'true';
+      const showDescription = isCustom || row.dataset.descriptionOpen === 'true' || descriptionHasErrors;
+      controls.descriptionWrap?.classList.toggle('hidden', !showDescription);
+      controls.descriptionToggle?.classList.toggle('hidden', isCustom);
+      if (controls.descriptionToggle) {
+        controls.descriptionToggle.textContent = showDescription ? 'Hide custom description' : 'Customize description';
+      }
 
       if (activeType === 'product' && product) {
         const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
@@ -420,20 +472,20 @@
             const tier = getSelectedCustomer()?.pricing_tier || 'retail';
             category = tier === 'technician' ? 'technician' : (tier === 'wholesale' ? 'wholesale' : 'standard');
           }
-          controls.unitPrice.value = Number(productPriceForCategory(product, quantity)).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(productPriceForCategory(product, quantity));
           if (controls.pricingMode) controls.pricingMode.value = category === 'wholesale' && qualifiesWholesale ? 'wholesale' : (category === 'wholesale' ? 'standard' : category);
         }
-        controls.summary.textContent = qualifiesWholesale ? `${product.name} selected - wholesale available` : `${product.name} selected`;
+        controls.summary.textContent = 'Product';
         if (controls.unit && (!controls.unit.value || !product.allowed_units.includes(controls.unit.value))) controls.unit.value = product.unit;
       } else if (activeType === 'package' && packageItem) {
         if (controls.pricingMode?.value !== 'manual') {
           const packagePrice = controls.billingBehavior?.value === 'recurring_monthly' ? packageItem.monthly_fee : packageItem.price;
-          controls.unitPrice.value = Number(parseMoney(packagePrice)).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(parseMoney(packagePrice));
         }
-        controls.summary.textContent = `${packageItem.name} selected`;
+        controls.summary.textContent = 'Service package';
         if (controls.unit) controls.unit.value = controls.billingBehavior?.value === 'recurring_monthly' ? 'Month' : 'Installation';
       } else {
-        controls.summary.textContent = activeType === 'product' ? 'Select a product.' : activeType === 'package' ? 'Select a package.' : 'Custom line';
+        controls.summary.textContent = activeType === 'product' ? 'Product' : activeType === 'package' ? 'Service package' : 'Custom item';
       }
 
       const gross = quantity * parseMoney(controls.unitPrice?.value);
@@ -445,9 +497,9 @@
         if (selectedPromotion && promotionApplies(selectedPromotion, productId, packageId, quantity, gross)) {
           const promotionResult = calculatePromotion(selectedPromotion, product, quantity, parseMoney(controls.unitPrice?.value), gross);
           if (promotionResult.unitPrice !== parseMoney(controls.unitPrice?.value)) {
-            controls.unitPrice.value = Number(promotionResult.unitPrice).toFixed(2);
+            controls.unitPrice.value = formatMoneyInput(promotionResult.unitPrice);
           }
-          if (controls.discount) controls.discount.value = Number(promotionResult.discount).toFixed(2);
+          if (controls.discount) controls.discount.value = formatMoneyInput(promotionResult.discount);
           if (controls.discountReason && (!controls.discountReason.value || controls.discountReason.dataset.autofilled === '1')) {
             controls.discountReason.value = selectedPromotion.name;
             controls.discountReason.dataset.autofilled = '1';
@@ -464,6 +516,7 @@
     const activateType = (row, type, options = {}) => {
       const controls = getRowControls(row);
       row.dataset.itemType = type;
+      if (type !== 'custom') row.dataset.descriptionOpen = 'false';
       const clearOther = options.clearOther !== false;
       if (type === 'product' && clearOther && controls.package) {
         controls.package.value = '';
@@ -487,7 +540,7 @@
         }
         const product = productCatalog.get(String(itemId));
         if (product) {
-          controls.unitPrice.value = Number(productPriceForCategory(product, parseMoney(controls.quantity?.value))).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(productPriceForCategory(product, parseMoney(controls.quantity?.value)));
           if (controls.pricingMode) controls.pricingMode.value = pricingCategoryField?.value || 'standard';
           setDescriptionIfSuggested(controls.description, product.description || product.name);
         }
@@ -500,7 +553,7 @@
         const packageItem = packageCatalog.get(String(itemId));
         if (packageItem) {
           if (controls.billingBehavior) controls.billingBehavior.value = 'recurring_monthly';
-          controls.unitPrice.value = Number(parseMoney(packageItem.monthly_fee)).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(parseMoney(packageItem.monthly_fee));
           setDescriptionIfSuggested(controls.description, packageItem.description || packageItem.name);
         }
       }
@@ -517,6 +570,12 @@
         || ['manual', 'promotion'].includes(controls.pricingMode?.value || '');
       const hasServerError = controls.detailsToggle?.getAttribute('aria-expanded') === 'true';
       setLineDetailsState(row, hasAdvancedValue || hasServerError);
+
+      controls.descriptionToggle?.addEventListener('click', () => {
+        row.dataset.descriptionOpen = row.dataset.descriptionOpen === 'true' ? 'false' : 'true';
+        syncRow(row);
+        if (row.dataset.descriptionOpen === 'true') controls.description?.focus();
+      });
 
       row.querySelectorAll('.js-clear-selection').forEach((button) => {
         button.addEventListener('click', () => {
@@ -605,18 +664,19 @@
     };
 
     document.addEventListener('click', (event) => {
-      const toggleItemMenuButton = event.target.closest('.js-toggle-item-menu');
-      if (toggleItemMenuButton) {
-        const menu = toggleItemMenuButton.parentElement?.querySelector('.js-add-item-menu');
-        if (menu) {
-          const isOpening = menu.classList.contains('hidden');
-          document.querySelectorAll('.js-add-item-menu').forEach((otherMenu) => {
-            if (otherMenu !== menu) {
-              otherMenu.classList.add('hidden');
-            }
-          });
-          menu.classList.toggle('hidden', !isOpening);
-          toggleItemMenuButton.setAttribute('aria-expanded', String(isOpening));
+      const belowButton = event.target.closest('.js-add-below');
+      if (belowButton) {
+        createRow('custom', belowButton.closest('.js-line-item'));
+        return;
+      }
+
+      const kindButton = event.target.closest('.js-row-kind');
+      if (kindButton) {
+        const row = kindButton.closest('.js-line-item');
+        if (row) {
+          activateType(row, kindButton.dataset.kind || 'custom');
+          kindButton.closest('details')?.removeAttribute('open');
+          row.querySelector(kindButton.dataset.kind === 'product' ? '[name$="-product"]' : kindButton.dataset.kind === 'package' ? '[name$="-package"]' : '[name$="-description"]')?.focus();
         }
         return;
       }
@@ -625,8 +685,6 @@
       if (addButton) {
         const afterRow = addButton.closest('.js-line-item');
         createRow(addButton.dataset.kind || 'custom', afterRow);
-        const menu = addButton.closest('.js-add-item-menu');
-        menu?.classList.add('hidden');
         return;
       }
     });

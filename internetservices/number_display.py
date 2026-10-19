@@ -41,3 +41,30 @@ def compact_decimal(value, *, max_places: int | None = None, grouping: bool = Tr
 def format_quantity(value) -> str:
     """Human-facing quantity: grouped, with up to six meaningful decimals."""
     return compact_decimal(value, max_places=6, grouping=True)
+
+
+def format_money(value, currency: str = "TZS") -> str:
+    """Render money using the display convention for its currency.
+
+    TZS is normally handled in whole shillings, but a tax or proportional
+    discount or weighted unit cost can still produce a fractional
+    authoritative amount. Keeping up to six meaningful places avoids hiding
+    that value while removing the repetitive zeroes from ordinary amounts.
+    Other currencies retain two decimal places because those minor units
+    remain meaningful to readers.
+    """
+    if str(currency or "TZS").upper() == "TZS":
+        return compact_decimal(value, max_places=6, grouping=True)
+
+    if value is None or value == "":
+        return ""
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return str(value)
+    if not number.is_finite():
+        return str(value)
+    number = number.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if number == 0:
+        number = abs(number)
+    return f"{number:,.2f}"

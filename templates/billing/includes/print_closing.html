@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize number_display %}
 <section class="section">
   <div class="bottom-grid quotation-bottom-grid">
     <div class="bottom-col payment-col">
@@ -20,7 +20,7 @@
             </div>
           {% endif %}
 
-          <div class="small-tag-row">NOTE: Upon payment, please email us the transfer slip.</div>
+          <div class="small-tag-row"><strong>NOTE: Upon payment, please email us the transfer slip.</strong></div>
         </div>
       </div>
     </div>
@@ -30,27 +30,27 @@
         <table class="totals-table">
         <tr>
             <td class="totals-label">Subtotal</td>
-            <td class="totals-value">{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.subtotal|money_display:document.currency }}</td>
         </tr>
-        {% if document.discount_amount %}<tr><td class="totals-label">Discount</td><td class="totals-value">-{{ document.currency|upper }} {{ document.discount_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
+        {% if document.discount_amount %}<tr><td class="totals-label">Discount</td><td class="totals-value">-{{ document.currency|upper }} {{ document.discount_amount|money_display:document.currency }}</td></tr>{% endif %}
           <tr>
             <td class="totals-label">VAT ({{ document.tax_rate }}%)</td>
-            <td class="totals-value">{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.tax_amount|money_display:document.currency }}</td>
           </tr>
           <tr class="grand-total">
             <td>Total</td>
-            <td class="totals-value">{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td>
+            <td class="totals-value">{{ document.currency|upper }} {{ document.total|money_display:document.currency }}</td>
           </tr>
           {% if document.document_type == "invoice" and invoice_carry_forward %}
             {% if invoice_carry_forward.brought_forward %}
               <tr>
                 <td class="totals-label">Balance Carried forward</td>
-                <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.brought_forward|floatformat:2|intcomma }}</td>
+                <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.brought_forward|money_display:document.currency }}</td>
               </tr>
             {% endif %}
             <tr class="grand-total">
               <td>Account balance due</td>
-              <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.account_balance|floatformat:2|intcomma }}</td>
+              <td class="totals-value">{{ document.currency|upper }} {{ invoice_carry_forward.account_balance|money_display:document.currency }}</td>
             </tr>
           {% endif %}
         </table>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Cancel Subscription{% endblock %}
 
@@ -35,7 +35,7 @@
       </div>
       <div>
         <dt class="text-xs text-slate-500">Monthly fee</dt>
-        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</dd>
+        <dd class="mt-1 text-sm font-medium text-slate-900">{{ subscription.monthly_fee_at_signup|money_display }} TZS</dd>
       </div>
       <div>
         <dt class="text-xs text-slate-500">Started</dt>

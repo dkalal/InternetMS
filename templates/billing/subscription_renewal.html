@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Renew Subscription{% endblock %}
 
@@ -22,7 +22,7 @@
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <div>
         <div class="text-xs text-slate-500">Monthly fee</div>
-        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.monthly_fee_at_signup|intcomma }} TZS</div>
+        <div class="mt-1 text-sm font-semibold text-slate-900">{{ subscription.monthly_fee_at_signup|money_display }} TZS</div>
       </div>
       <div>
         <div class="text-xs text-slate-500">Latest paid service coverage</div>

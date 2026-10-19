@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize number_display %}
 
 {% block title %}Generate Invoice — {{ sheet.reference_number }}{% endblock %}
 
@@ -14,7 +14,7 @@
     <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900">Generate invoice</h1>
     <p class="mt-1 text-sm text-slate-600">
       {{ sheet.customer.name }} &middot; {{ sheet.title }} &middot;
-      <span class="font-medium text-slate-900">{{ sheet.subtotal|intcomma }} TZS</span>
+      <span class="font-medium text-slate-900">{{ sheet.subtotal|money_display }} TZS</span>
     </p>
   </header>
 

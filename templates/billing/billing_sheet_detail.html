@@ -69,8 +69,8 @@
                 {% if item.notes %}<div class="text-xs text-slate-500">{{ item.notes }}</div>{% endif %}
               </td>
               <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.quantity|quantity_display }}</td>
-              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price|intcomma }}</td>
-              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.total_price|intcomma }}</td>
+              <td class="px-4 py-3 text-right text-sm text-slate-700">{{ item.unit_price|money_display }}</td>
+              <td class="px-4 py-3 text-right text-sm font-medium text-slate-900">{{ item.total_price|money_display }}</td>
               {% if sheet.is_open %}
                 <td class="px-4 py-3 text-right text-sm">
                   <div class="inline-flex items-center gap-2">
@@ -96,7 +96,7 @@
           <tfoot class="bg-slate-50">
             <tr>
               <td colspan="3" class="px-4 py-3 text-right text-sm font-semibold text-slate-900">Subtotal</td>
-              <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ sheet.subtotal|intcomma }}</td>
+              <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ sheet.subtotal|money_display }}</td>
               {% if sheet.is_open %}<td></td>{% endif %}
             </tr>
           </tfoot>

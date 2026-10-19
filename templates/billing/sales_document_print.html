@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}Quotation{% endif %} {{ document.number }}</title>
+  <title>{% if document.document_type == 'invoice' %}Invoice{% else %}Quotation{% endif %} {{ document.number }}</title>
   <style>
     @page {
       size: A4;
@@ -33,8 +33,18 @@
     .party { display: table-cell; width: 100%; vertical-align: top; }
     .party + .party { padding-left: 8mm; border-left: 1px solid var(--line); }
     .eyebrow { margin-bottom: 1.5mm; color: var(--brand); font-size: 7.5pt; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-    .party-name { margin: 0 0 1.5mm; font-size: 12pt; font-weight: 800; }
-    .party-line { margin-top: .7mm; color: #475569; }
+    .party-name { margin: 0 0 2mm; font-size: 12pt; font-weight: 800; }
+    .party-details { width: 100%; border: 1px solid var(--line); border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--soft); color: #475569; break-inside: avoid; page-break-inside: avoid; }
+    .party-details col.tax-id { width: 17%; }
+    .party-details col.phone { width: 24%; }
+    .party-details col.address { width: 42%; }
+    .party-details td { padding: 2mm 2.6mm; border-left: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+    .party-details td:first-child { border-left: 0; }
+    .party-label { display: block; margin-bottom: .8mm; color: var(--muted); font-size: 7pt; font-weight: 800; letter-spacing: .06em; line-height: 1; text-transform: uppercase; }
+    .party-value { display: block; color: var(--ink); font-size: 8.6pt; font-weight: 700; line-height: 1.3; }
+    .party-tax .party-value,
+    .party-phone .party-value { overflow-wrap: anywhere; }
+    .party-details .shipping-address { display: block; margin-top: 1mm; color: #475569; font-size: 7.8pt; font-weight: 500; }
     table.items { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .items thead { display: table-header-group; }
     .items th { padding: 2.2mm 1.5mm; border-bottom: 1.5px solid var(--ink); background: #f1f5f9; color: #334155; font-size: 7.2pt; font-weight: 800; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
@@ -61,16 +71,12 @@
     .support-block { margin-bottom: 3mm; }
     .support-title, .summary-title { margin: 0 0 1.5mm; color: #334155; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .support-copy { color: #475569; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .payment-note { margin-top: 1.5mm; color: #334155; font-size: 7.8pt; }
     .summary { width: 100%; border-collapse: collapse; }
     .summary td { padding: 1.4mm 0 1.4mm 3mm; }
     .summary td:first-child { padding-left: 0; color: #475569; }
     .summary td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
     .summary .current-total td { padding-top: 2mm; border-top: 1px solid var(--line); color: var(--ink); font-weight: 800; }
-    .account { margin-top: 4mm; padding-top: 3mm; border-top: 2px solid var(--ink); }
-    .account .due td { padding-top: 2mm; border-top: 1px solid var(--line); color: var(--ink); font-size: 11pt; font-weight: 800; }
-    .account.has-prior .due td { color: var(--brand); font-size: 12pt; }
-    .account .outstanding td { padding-top: 2mm; border-top: 1px solid var(--line); font-weight: 800; }
-    .account-note { margin: 2mm 0 0; color: var(--muted); font-size: 7.4pt; line-height: 1.35; }
     .footer { margin-top: 7mm; padding-top: 3mm; border-top: 1px solid var(--line); color: var(--muted); font-size: 7.8pt; text-align: center; break-inside: avoid; }
     @media screen {
       body { padding: 18px; background: #e2e8f0; }
@@ -89,16 +95,16 @@
         <h1 class="company-name">{% if ACTIVE_BRANDING and ACTIVE_BRANDING.legal_name %}{{ ACTIVE_BRANDING.legal_name }}{% else %}{{ document.organization.name }}{% endif %}</h1>
       {% endif %}
       <div class="company-lines">
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.tin_number %}<div><strong>TIN: {{ ACTIVE_BRANDING.tin_number }}</strong></div>{% endif %}
+        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.vrn_number %}<div>VRN: {{ ACTIVE_BRANDING.vrn_number }}</div>{% endif %}
         {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line1 %}<div>{{ ACTIVE_BRANDING.address_line1 }}</div>{% endif %}
         {% if ACTIVE_BRANDING and ACTIVE_BRANDING.address_line2 %}<div>{{ ACTIVE_BRANDING.address_line2 }}</div>{% endif %}
         {% if ACTIVE_BRANDING and ACTIVE_BRANDING.phone %}<div>{{ ACTIVE_BRANDING.phone }}</div>{% endif %}
         {% if ACTIVE_BRANDING and ACTIVE_BRANDING.email %}<div>{{ ACTIVE_BRANDING.email }}</div>{% endif %}
-        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.tin_number %}<div>TIN: {{ ACTIVE_BRANDING.tin_number }}</div>{% endif %}
-        {% if ACTIVE_BRANDING and ACTIVE_BRANDING.vrn_number %}<div>VRN: {{ ACTIVE_BRANDING.vrn_number }}</div>{% endif %}
       </div>
     </div>
     <div class="document-meta">
-      <h2 class="doc-title">{% if document.document_type == 'invoice' %}Proforma Invoice{% else %}Quotation{% endif %}</h2>
+      <h2 class="doc-title">{% if document.document_type == 'invoice' %}Invoice{% else %}Quotation{% endif %}</h2>
       <table class="meta">
         <tr><td class="label">Number</td><td class="value">{{ document.number }}</td></tr>
         <tr><td class="label">Issue date</td><td class="value">{{ document.issue_date|date:"d M Y" }}</td></tr>
@@ -112,16 +118,24 @@
     <div class="party">
       <div class="eyebrow">Prepared for</div>
       <h3 class="party-name">{{ document.display_customer_name }}</h3>
-      {% if not document.is_walk_in_sale %}
-        {% if document.customer.address %}<div class="party-line">{{ document.customer.address }}</div>{% endif %}
-        {% if document.customer.phone %}<div class="party-line">{{ document.customer.phone }}</div>{% endif %}
-        {% if document.customer.email %}<div class="party-line">{{ document.customer.email }}</div>{% endif %}
-        {% if document.customer.tin_number %}<div class="party-line">TIN: {{ document.customer.tin_number }}</div>{% endif %}
-        {% if document.customer.vrn_number %}<div class="party-line">VRN: {{ document.customer.vrn_number }}</div>{% endif %}
-      {% endif %}
-      {% if document.shipping_address_snapshot %}
-        <div class="party-line"><strong>Ship to:</strong> {{ document.shipping_address_snapshot }}</div>
-      {% endif %}
+      <table class="party-details">
+        <colgroup>
+          <col class="tax-id">
+          <col class="tax-id">
+          <col class="phone">
+          <col class="address">
+        </colgroup>
+        <tr>
+          <td class="party-tax"><span class="party-label">TIN</span><span class="party-value">{% if not document.is_walk_in_sale and document.customer.tin_number %}{{ document.customer.tin_number }}{% else %}&mdash;{% endif %}</span></td>
+          <td class="party-tax"><span class="party-label">VRN</span><span class="party-value">{% if not document.is_walk_in_sale and document.customer.vrn_number %}{{ document.customer.vrn_number }}{% else %}&mdash;{% endif %}</span></td>
+          <td class="party-phone"><span class="party-label">Phone</span><span class="party-value">{% if not document.is_walk_in_sale and document.customer.phone %}{{ document.customer.phone }}{% else %}&mdash;{% endif %}</span></td>
+          <td class="party-address">
+            <span class="party-label">Address</span>
+            <span class="party-value">{% if not document.is_walk_in_sale and document.customer.address %}{{ document.customer.address }}{% else %}&mdash;{% endif %}</span>
+            {% if document.shipping_address_snapshot %}<span class="shipping-address"><strong>Ship to:</strong> {{ document.shipping_address_snapshot }}</span>{% endif %}
+          </td>
+        </tr>
+      </table>
     </div>
   </section>
 
@@ -144,15 +158,13 @@
         <td class="index">{{ forloop.counter }}</td>
         <td class="description">
           <div class="item-name">{% if item.product %}{{ item.product.name }}{% elif item.package %}{{ item.package.name }}{% else %}{{ item.description }}{% endif %}</div>
-          {% if item.product and item.product.sku %}<div class="item-secondary">SKU {{ item.product.sku }}</div>{% endif %}
-          {% if item.description and item.product or item.description and item.package %}<div class="item-secondary">{{ item.description }}</div>{% endif %}
         </td>
         <td class="unit">{{ item.unit_snapshot }}</td>
         <td class="quantity right">{{ item.quantity|quantity_display }}</td>
-        <td class="price right money">{{ document.currency|upper }} {{ item.unit_price|floatformat:2|intcomma }}</td>
-        {% if show_discount_column %}<td class="discount right money">{% if item.discount_amount %}{{ document.currency|upper }} {{ item.discount_amount|floatformat:2|intcomma }}{% else %}&mdash;{% endif %}</td>{% endif %}
+        <td class="price right money">{{ item.unit_price|money_display:document.currency }}</td>
+        {% if show_discount_column %}<td class="discount right money">{% if item.discount_amount %}{{ document.currency|upper }} {{ item.discount_amount|money_display:document.currency }}{% else %}&mdash;{% endif %}</td>{% endif %}
         {% if show_tax_column %}<td class="tax right">{% if item.product and not item.product.tax_eligible %}Exempt{% else %}{{ document.tax_rate|floatformat:"-2" }}%{% endif %}</td>{% endif %}
-        <td class="amount right money"><strong>{{ document.currency|upper }} {{ item.line_total|floatformat:2|intcomma }}</strong></td>
+        <td class="amount right money"><strong>{{ item.line_total|money_display:document.currency }}</strong></td>
       </tr>
       {% empty %}
       <tr><td colspan="8">No line items.</td></tr>
@@ -163,40 +175,22 @@
   <section class="closing{% if not ACTIVE_BRANDING or not ACTIVE_BRANDING.bank_details %} summary-only{% endif %}">
     {% if ACTIVE_BRANDING and ACTIVE_BRANDING.bank_details %}
     <div class="supporting">
-      <div class="support-block"><div class="support-title">Payment instructions</div><div class="support-copy">{{ ACTIVE_BRANDING.bank_details }}</div></div>
+      <div class="support-block">
+        <div class="support-title"></div>
+        <div class="support-copy">{{ ACTIVE_BRANDING.bank_details }}</div>
+        <div class="payment-note"><strong>NOTE: Upon payment, please email us the transfer slip.</strong></div>
+      </div>
     </div>
     {% endif %}
     <div class="summaries">
-      <div class="summary-title">{% if document.document_type == 'quotation' %}Quotation summary{% else %}Invoice summary{% endif %}</div>
+      {% comment %} <div class="summary-title">{% if document.document_type == 'quotation' %}Quotation summary{% else %}Invoice summary{% endif %}</div> {% endcomment %}
       <table class="summary">
-        <tr><td>Subtotal</td><td>{{ document.currency|upper }} {{ document.subtotal|floatformat:2|intcomma }}</td></tr>
-        {% if document.discount_amount %}<tr><td>Discount</td><td>-{{ document.currency|upper }} {{ document.discount_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
-        {% if document.tax_amount %}<tr><td>Tax ({{ document.tax_rate|floatformat:"-2" }}%)</td><td>{{ document.currency|upper }} {{ document.tax_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
-        <tr class="current-total"><td>{% if document.document_type == 'quotation' %}Quotation total{% else %}Current Invoice Total{% endif %}</td><td>{{ document.currency|upper }} {{ document.total|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Subtotal</td><td>{{ document.currency|upper }} {{ document.subtotal|money_display:document.currency }}</td></tr>
+        {% if document.discount_amount %}<tr><td>Discount</td><td>-{{ document.currency|upper }} {{ document.discount_amount|money_display:document.currency }}</td></tr>{% endif %}
+        <tr><td>Tax ({{ document.tax_rate|number_display:2 }}%)</td><td>{{ document.currency|upper }} {{ document.tax_amount|money_display:document.currency }}</td></tr>
+        {% if document.document_type == 'invoice' %}<tr><td>Balance carried forward</td><td>{{ document.currency|upper }} {{ invoice_account_summary.previous_outstanding_balance|default:0|money_display:document.currency }}</td></tr>{% endif %}
+        <tr class="current-total"><td>{% if document.document_type == 'quotation' %}Quotation total{% else %}Total Amount{% endif %}</td><td>{{ document.currency|upper }} {% if document.document_type == 'invoice' %}{{ invoice_account_summary.total_amount_due|money_display:document.currency }}{% else %}{{ document.total|money_display:document.currency }}{% endif %}</td></tr>
       </table>
-
-      {% if document.document_type == 'invoice' %}
-        {% if invoice_account_summary.has_previous_outstanding %}
-        <div class="account has-prior">
-          <div class="summary-title">Customer account summary</div>
-          <table class="summary">
-            <tr><td>Prior Balance at Issue</td><td>{{ document.currency|upper }} {{ invoice_account_summary.previous_outstanding_balance|floatformat:2|intcomma }}</td></tr>
-            <tr><td>+ Current Invoice Total</td><td>{{ document.currency|upper }} {{ invoice_account_summary.current_invoice_total|floatformat:2|intcomma }}</td></tr>
-            <tr class="due"><td>Amount Due at Issue</td><td>{{ document.currency|upper }} {{ invoice_account_summary.total_amount_due|floatformat:2|intcomma }}</td></tr>
-            {% if invoice_account_summary.has_payment %}<tr><td>- Payment Received</td><td>{{ document.currency|upper }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</td></tr>{% endif %}
-            <tr class="outstanding"><td>Current Account Outstanding</td><td>{{ document.currency|upper }} {{ invoice_account_summary.outstanding_account_balance|floatformat:2|intcomma }}</td></tr>
-          </table>
-          <p class="account-note">Prior balance is an issue-date snapshot and is not part of this invoice's item total. Payments are allocated to their original invoices.</p>
-        </div>
-        {% else %}
-        <div class="account">
-          <table class="summary">
-            {% if invoice_account_summary.has_payment %}<tr><td>Payment Received</td><td>-{{ document.currency|upper }} {{ invoice_account_summary.payment_received|floatformat:2|intcomma }}</td></tr>{% endif %}
-            <tr class="outstanding"><td>Current Invoice Balance</td><td>{{ document.currency|upper }} {{ invoice_account_summary.current_invoice_balance|floatformat:2|intcomma }}</td></tr>
-          </table>
-        </div>
-        {% endif %}
-      {% endif %}
     </div>
   </section>
 
