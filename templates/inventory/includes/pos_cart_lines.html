@@ -1,31 +1,42 @@
 {% load humanize number_display %}
 {% if lines %}
-  <div class="max-h-[42vh] divide-y divide-slate-200 overflow-y-auto" data-pos-lines>
+  <div class="pos-lines divide-y divide-slate-200" data-pos-lines>
     {% for line in lines %}
-      <div class="p-4" data-pos-line data-product-id="{{ line.product.pk }}">
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex min-w-0 items-start gap-3">
-            <div class="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-              {% if line.product.image %}<img src="{{ line.product.image.url }}" alt="" loading="lazy" class="h-full w-full object-cover">{% else %}<span class="flex h-full w-full items-center justify-center font-bold text-brand-700">{{ line.product.name|slice:":1"|upper }}</span>{% endif %}
-            </div>
-            <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2"><h3 class="truncate font-semibold text-slate-950">{{ line.product.name }}</h3><span class="rounded-full px-2 py-0.5 text-[11px] font-bold {% if line.pos_pricing_mode == 'wholesale' %}bg-violet-100 text-violet-800{% elif line.pos_pricing_mode == 'technician' %}bg-sky-100 text-sky-800{% else %}bg-slate-100 text-slate-600{% endif %}" data-pos-price-mode>{% if line.pos_pricing_mode == 'wholesale' %}Wholesale{% elif line.pos_pricing_mode == 'technician' %}Technician{% elif line.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span></div>
-            <p class="mt-1 text-xs text-slate-500"><span data-pos-unit-price>{{ line.unit_price|intcomma }}</span> TZS each{% if line.discount_amount %} · Discount {{ line.discount_amount|intcomma }}{% endif %}</p>
-            </div>
-          </div>
-          <div class="text-right font-bold text-slate-950"><span data-pos-line-total>{{ line.line_total|intcomma }}</span><span class="ml-1 text-xs font-medium text-slate-500">TZS</span></div>
+      <div class="pos-cart-row" data-pos-line data-product-id="{{ line.product.pk }}">
+        {% if cart.status == 'draft' %}
+          <form method="post" action="{% url 'inventory:cart_line_delete' cart.pk line.pk %}" class="pos-row-remove">{% csrf_token %}<button type="submit" class="pos-icon-action text-rose-700" aria-label="Remove {{ line.product.name }}" title="Remove {{ line.product.name }}" data-confirm="Remove {{ line.product.name }} from this draft sale?{% if line.product.is_serialized %} Its selected serial numbers will be cleared.{% endif %} Stock will not be changed." data-confirm-title="Remove item?" data-confirm-action="Remove item" data-confirm-tone="danger">&times;</button></form>
+        {% endif %}
+        <div class="pos-row-thumb" aria-hidden="true">{% if line.product.image %}<img src="{{ line.product.image.url }}" alt="" loading="lazy" class="h-full w-full object-contain">{% else %}<span>{{ line.product.name|slice:":1"|upper }}</span>{% endif %}</div>
+        <div class="pos-row-name min-w-0">
+          <h3 class="pos-line-name font-semibold text-slate-950" title="{{ line.product.name }}">{{ line.product.name }}</h3>
+          <p class="text-[11px] text-slate-500"><span data-pos-price-mode>{% if line.pos_pricing_mode == 'wholesale' %}Wholesale{% elif line.pos_pricing_mode == 'technician' %}Technician{% elif line.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if line.product.measure_unit %} · {{ line.product.measure_unit }}{% endif %}{% if line.discount_amount %} · Discount {{ line.discount_amount|money_display }} TZS{% endif %}</p>
+          {% if line.pos_pricing_mode == 'retail' and line.product.allow_wholesale and line.product.wholesale_price %}<p class="text-[11px] text-slate-500">Wholesale from {{ line.product.wholesale_min_quantity|quantity_display }} {{ line.product.measure_unit }}</p>{% endif %}
         </div>
-        <div class="mt-3 flex items-center justify-between gap-3">
+        {% if cart.status == 'draft' and can_apply_line_discount %}<div class="pos-row-edit"><button type="button" class="pos-line-discount-toggle" data-pos-line-discount-toggle aria-expanded="false" aria-controls="pos-line-discount-{{ line.pk }}" aria-label="Edit discount for {{ line.product.name }}" title="Edit item discount"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="2"></circle><circle cx="17" cy="17" r="2"></circle><path d="M19 5 5 19"></path></svg></button></div>{% endif %}
+        <div class="pos-row-quantity">
           {% if cart.status == 'draft' and not line.product.is_serialized %}
-            <div class="flex items-center rounded-lg border border-slate-200">
-              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="decrease"><button class="min-h-9 px-3 font-bold text-slate-600 hover:bg-slate-50" aria-label="Decrease {{ line.product.name }} quantity">−</button></form>
-              <span class="min-w-10 px-2 text-center text-sm font-semibold" data-pos-quantity>{{ line.quantity|quantity_display }}</span>
-              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="increase"><button class="min-h-9 px-3 font-bold text-brand-700 hover:bg-brand-50" aria-label="Increase {{ line.product.name }} quantity">+</button></form>
+            <div class="pos-quantity-stepper">
+              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="decrease"><button type="submit" aria-label="Decrease {{ line.product.name }} quantity">−</button></form>
+              <span data-pos-quantity>{{ line.quantity|quantity_display }}</span>
+              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="increase"><button type="submit" aria-label="Increase {{ line.product.name }} quantity">+</button></form>
             </div>
-          {% else %}<span class="text-sm text-slate-600">Qty {{ line.quantity|quantity_display }}</span>{% endif %}
-          {% if cart.status == 'draft' %}<div class="flex items-center gap-3"><a class="text-xs font-semibold text-brand-700 hover:text-brand-900" href="{% url 'inventory:cart_line_edit' cart.pk line.pk %}">Edit<span class="sr-only"> {{ line.product.name }}</span></a><form method="post" action="{% url 'inventory:cart_line_delete' cart.pk line.pk %}" class="inline">{% csrf_token %}<button type="submit" class="text-xs font-semibold text-rose-700 hover:text-rose-900" data-confirm="Remove {{ line.product.name }} from this draft sale?{% if line.product.is_serialized %} Its selected serial numbers will be cleared.{% endif %} Stock will not be changed." data-confirm-title="Remove item?" data-confirm-action="Remove item" data-confirm-tone="danger">Remove<span class="sr-only"> {{ line.product.name }}</span></button></form></div>{% endif %}
+          {% else %}<span class="text-sm text-slate-600">{{ line.quantity|quantity_display }}</span>{% endif %}
         </div>
-        {% if line.pos_pricing_mode == 'retail' and line.product.allow_wholesale and line.product.wholesale_price %}<p class="mt-3 text-xs text-slate-500">Wholesale price {{ line.product.wholesale_price|intcomma }} TZS applies from {{ line.product.wholesale_min_quantity|quantity_display }} {{ line.product.measure_unit }} for eligible customers.</p>{% endif %}
+        <div class="pos-row-unit text-slate-500"><span data-pos-unit-price>{{ line.unit_price|money_display }}</span> <span>TZS</span></div>
+        <div class="pos-row-total font-bold text-slate-950"><span data-pos-line-total>{{ line.line_total|money_display }}</span> <span>TZS</span></div>
+        {% if cart.status == 'draft' and can_apply_line_discount %}
+          <div id="pos-line-discount-{{ line.pk }}" class="pos-line-discount-editor" data-pos-line-discount-panel hidden>
+            <p class="text-xs text-slate-600">{{ line.product.name }} · {{ line.quantity|quantity_display }} × {{ line.unit_price|money_display }} TZS. Discount applies to this line only.</p>
+            <form method="post" action="{% url 'inventory:cart_line_discount' cart.pk line.pk %}" data-pos-line-discount-form class="pos-line-discount-form">
+              {% csrf_token %}
+              <label for="pos-line-discount-input-{{ line.pk }}" class="text-xs font-semibold text-slate-700">Item discount (TZS)</label>
+              <input id="pos-line-discount-input-{{ line.pk }}" name="discount_amount" type="number" min="0" step="0.01" required value="{{ line.discount_amount }}" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" inputmode="decimal">
+              <button type="submit" class="jims-btn jims-btn-primary jims-btn-compact">Save discount</button>
+            </form>
+            <p class="text-xs text-slate-600">The saved total is calculated by the server and checked against your discount limit.</p>
+            <p class="pos-line-discount-error text-sm text-rose-700" data-pos-line-discount-error role="alert" hidden></p>
+          </div>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

@@ -1,5 +1,9 @@
-{% load humanize %}
+{% load humanize number_display %}
 {% if cart.status == "draft" and lines %}
+  <button class="jims-btn jims-btn-quiet" type="submit"
+          form="cart-details-form-{{ cart.pk }}"
+          formaction="{% url 'inventory:cart_convert' cart.pk 'quotation' %}"
+          data-pos-convert>Save as quotation</button>
   <button class="jims-btn jims-btn-primary pos-pay-button w-full" type="submit"
           form="cart-details-form-{{ cart.pk }}"
           formaction="{% url 'inventory:cart_convert' cart.pk 'invoice' %}"
@@ -9,12 +13,8 @@
           data-confirm-action="Create invoice"
           data-loading-label="Creating invoice...">
     <span>Continue to payment</span>
-    <span class="pos-pay-amount"><span data-pos-payment-total>{{ grand_total|intcomma }}</span> TZS</span>
+    <span class="pos-pay-amount"><span data-pos-payment-total>{{ grand_total|money_display }}</span> TZS</span>
   </button>
-  <button class="jims-btn jims-btn-quiet w-full" type="submit"
-          form="cart-details-form-{{ cart.pk }}"
-          formaction="{% url 'inventory:cart_convert' cart.pk 'quotation' %}"
-          data-pos-convert>Save as quotation</button>
 {% elif cart.quotation %}
   <a class="jims-btn jims-btn-primary w-full" href="{% url 'billing:document_detail' 'quotation' cart.quotation.pk %}">Open quotation {{ cart.quotation.number }}</a>
 {% elif cart.invoice %}

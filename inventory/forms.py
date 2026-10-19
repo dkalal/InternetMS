@@ -258,9 +258,11 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
     def __init__(self, *args, organization=None, **kwargs):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['supplier'].queryset = Supplier.objects.filter(tenant=organization, is_active=True)
+        self.fields['supplier'].empty_label = 'Select supplier'
         self.fields['reference_number'].widget.attrs.update({
             'autocomplete': 'off',
             'spellcheck': 'false',
+            'placeholder': 'Reference number',
         })
         self.fields['reference_number'].help_text = (
             'Generated automatically. You may replace it with the supplier’s delivery or invoice reference.'
@@ -409,7 +411,7 @@ class CartForm(TenantFormMixin, forms.ModelForm):
     class Meta:
         model = Cart
         fields = ['customer', 'walk_in_name', 'shipping_address', 'sale_pricing_category', 'discount_amount', 'tax_rate', 'notes']
-        widgets = {'notes': forms.Textarea(attrs={'rows': 3})}
+        widgets = {'notes': forms.Textarea(attrs={'rows': 4, 'placeholder': 'Example: Parcel received at the office by Asha Juma, +255 712 345 678.'})}
         help_texts = {
             'customer': 'Leave blank for a walk-in customer.',
             'walk_in_name': 'Optional name to print when no customer record is selected.',
@@ -417,6 +419,7 @@ class CartForm(TenantFormMixin, forms.ModelForm):
             'sale_pricing_category': 'Customer category is automatic unless an authorized override is selected.',
             'discount_amount': 'Cart-wide discount applied after line discounts.',
             'tax_rate': 'VAT percentage applied after discounts.',
+            'notes': 'Internal staff note. Record handover details, the receiving person and phone number here. This note is excluded from customer printouts.',
         }
 
     def __init__(self, *args, organization=None, membership=None, **kwargs):
@@ -500,6 +503,12 @@ class CartForm(TenantFormMixin, forms.ModelForm):
                     self.add_error('discount_amount', str(exc))
                     break
         return cleaned
+
+
+class CartLineDiscountForm(forms.Form):
+    discount_amount = forms.DecimalField(
+        label='Item discount (TZS)', min_value=Decimal('0.00'), max_digits=14, decimal_places=2,
+    )
 
 
 class CartLineForm(TenantFormMixin, forms.ModelForm):

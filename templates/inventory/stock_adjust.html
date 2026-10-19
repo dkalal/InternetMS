@@ -15,7 +15,7 @@
     <section class="jims-panel p-5 lg:col-span-2">
       {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
       <div class="space-y-5">
-        {% include "components/form_field.html" with field=form.product %}
+        <div class="min-w-0 max-w-[23rem]">{% include "components/form_field.html" with field=form.product %}</div>
         <fieldset>
           <legend class="text-sm font-semibold text-slate-800">Adjustment direction <span class="text-rose-600">*</span></legend>
           <div class="mt-2 grid gap-3 sm:grid-cols-2">
@@ -27,10 +27,10 @@
           </div>
           {% for error in form.direction.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
         </fieldset>
-        {% include "components/form_field.html" with field=form.quantity %}
-        {% include "components/form_field.html" with field=form.reason %}
-        {% include "components/form_field.html" with field=form.serial_numbers %}
-        {% include "components/form_field.html" with field=form.notes %}
+        <div class="min-w-0 max-w-[12rem]">{% include "components/form_field.html" with field=form.quantity %}</div>
+        <div class="min-w-0 max-w-[34rem]">{% include "components/form_field.html" with field=form.reason %}</div>
+        <div class="min-w-0 max-w-[40rem]">{% include "components/form_field.html" with field=form.serial_numbers %}</div>
+        <div class="min-w-0 max-w-[40rem]">{% include "components/form_field.html" with field=form.notes %}</div>
       </div>
     </section>
 

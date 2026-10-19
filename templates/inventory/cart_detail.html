@@ -4,12 +4,11 @@
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
 
-<div class="jims-pos-page space-y-4" data-cart-subtotal="{{ subtotal }}" data-cart-taxable-subtotal="{{ taxable_subtotal }}" data-pos>
-  <header class="jims-page-header">
+<div class="jims-pos-page space-y-3" data-cart-subtotal="{{ subtotal }}" data-cart-taxable-subtotal="{{ taxable_subtotal }}" data-pos>
+  <header class="jims-page-header pos-page-heading">
     <div>
       <p class="text-sm font-semibold text-brand-700">Point of sale</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">New sale <span class="text-slate-400">#{{ cart.pk }}</span></h1>
-      <p class="mt-1 text-sm text-slate-600">Tap products to build the sale. Customer and checkout stay in this workspace.</p>
+      <h1 class="text-2xl font-bold tracking-tight text-slate-950">New sale <span class="text-slate-400">#{{ cart.pk }}</span></h1>
     </div>
     {% if cart.status == "draft" %}
       <form method="post" action="{% url 'inventory:cart_abandon' cart.pk %}" data-confirm="This will close the draft and remove it from active sales. The audit record will remain, and inventory will not change." data-confirm-title="Discard sale #{{ cart.pk }}?" data-confirm-action="Discard draft" data-confirm-tone="danger" data-submit-lock>
@@ -19,21 +18,21 @@
   </header>
 
   {% if cart.status == "draft" %}
-    <div class="grid grid-cols-2 gap-2 md:hidden" role="tablist" aria-label="Point of sale panels">
-      <button type="button" class="jims-btn jims-btn-primary" data-cart-tab="catalog" role="tab" aria-selected="true">Products</button>
-      <button type="button" class="jims-btn jims-btn-secondary" data-cart-tab="cart" role="tab" aria-selected="false">Cart (<span data-pos-cart-count>{{ lines|length }}</span>)</button>
+    <div class="pos-mobile-tabs grid grid-cols-2 gap-2" role="tablist" aria-label="Point of sale panels">
+      <button type="button" class="jims-btn {% if cart_form.errors %}jims-btn-secondary{% else %}jims-btn-primary{% endif %}" data-cart-tab="catalog" role="tab" aria-controls="pos-catalog-panel" aria-selected="{% if cart_form.errors %}false{% else %}true{% endif %}">Products</button>
+      <button type="button" class="jims-btn {% if cart_form.errors %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}" data-cart-tab="cart" role="tab" aria-controls="pos-cart-panel" aria-selected="{% if cart_form.errors %}true{% else %}false{% endif %}">Cart (<span data-pos-cart-count>{{ lines|length }}</span>)</button>
     </div>
   {% endif %}
 
-  <div class="pos-workspace grid gap-5 md:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1.55fr)_minmax(24rem,0.85fr)]">
+  <div class="pos-workspace {% if cart.status != 'draft' %}pos-workspace-single{% endif %}">
     {% if cart.status == "draft" %}
-      <section class="is-active min-w-0 space-y-3" data-cart-panel="catalog" data-pos-catalog>
+      <section id="pos-catalog-panel" class="{% if not cart_form.errors %}is-active{% endif %} min-w-0 space-y-3" data-cart-panel="catalog" data-pos-catalog role="tabpanel">
         <form method="get" class="jims-pos-toolbar">
-          <div class="flex flex-col gap-2 sm:flex-row">
+          <div class="flex flex-wrap gap-2">
             <label class="sr-only" for="catalog-search">Search products</label>
-            <input id="catalog-search" autofocus name="q" value="{{ query }}" class="min-h-11 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search by product name, SKU, brand or model">
+            <input id="catalog-search" name="q" value="{{ query }}" class="min-h-11 min-w-0 flex-[2_1_19rem] rounded-lg border border-slate-300 px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-brand-600" placeholder="Search name, SKU, brand or model">
             <label class="sr-only" for="catalog-category">Category</label>
-            <select id="catalog-category" name="category" class="min-h-11 rounded-lg border border-slate-300 px-3 py-2 text-sm" data-searchable-select="true" data-search-label="Category" data-search-placeholder="Search categories...">
+            <select id="catalog-category" name="category" class="min-h-11 min-w-0 flex-[1_1_10rem] rounded-lg border border-slate-300 px-3 py-2 text-sm sm:max-w-[12.5rem]" data-searchable-select="true" data-search-label="Category" data-search-placeholder="Search categories...">
               <option value="">All categories</option>
               {% for category in categories %}<option value="{{ category.pk }}" {% if category_id == category.pk|stringformat:"s" %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
             </select>
@@ -43,12 +42,12 @@
 
         <div class="pos-catalog-scroll" data-pos-catalog-scroll>
         {% if catalog %}
-          <div class="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          <div class="jims-pos-catalog-grid grid gap-3">
             {% for product in catalog %}
               <article class="jims-pos-product flex min-h-40 flex-col overflow-hidden" data-pos-product-card="{{ product.pk }}">
-                <div class="relative h-28 overflow-hidden border-b border-slate-200 bg-gradient-to-br from-brand-50 to-slate-100">
+                <div class="relative h-20 overflow-hidden border-b border-slate-200 bg-gradient-to-br from-brand-50 to-slate-100">
                   {% if product.image %}
-                    <img src="{{ product.image.url }}" alt="{{ product.name }}" loading="lazy" class="h-full w-full object-cover">
+                    <img src="{{ product.image.url }}" alt="{{ product.name }}" loading="lazy" class="h-full w-full object-contain">
                   {% else %}
                     <div class="flex h-full items-center justify-center text-4xl font-bold text-brand-700/70">{{ product.name|slice:":1"|upper }}</div>
                   {% endif %}
@@ -56,21 +55,23 @@
                     {% if product.item_type == "service" %}<span class="rounded-full bg-sky-50/95 px-2 py-1 text-xs font-semibold text-sky-800 shadow-sm">Service</span>{% elif product.available_stock > 0 %}<span class="rounded-full bg-emerald-50/95 px-2 py-1 text-xs font-semibold text-emerald-800 shadow-sm">{{ product.available_stock|quantity_display }} in stock</span>{% else %}<span class="rounded-full bg-rose-50/95 px-2 py-1 text-xs font-semibold text-rose-800 shadow-sm">Out of stock</span>{% endif %}
                   </div>
                 </div>
-                <div class="flex flex-1 flex-col p-4">
+                <div class="flex min-w-0 flex-1 flex-col p-2.5">
                 <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0"><h2 class="truncate font-semibold text-slate-950">{{ product.name }}</h2><p class="mt-1 truncate text-xs text-slate-500">{{ product.sku|default:"No SKU" }}</p></div>
+                  <div class="min-w-0"><h2 class="pos-product-name font-semibold text-slate-950" title="{{ product.name }}">{{ product.name }}</h2><p class="mt-1 truncate text-xs text-slate-500" title="{{ product.sku|default:'No SKU' }}">{{ product.sku|default:"No SKU" }}</p></div>
                 </div>
                 {% if not product.pos_ready %}<p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900" role="status">{{ product.pos_readiness_message }}</p>{% endif %}
-                <div class="mt-auto flex items-end justify-between gap-2 pt-4">
-                  <div><p class="text-lg font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|intcomma }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity|quantity_display }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity|quantity_display }}</p></div>
+                <div class="mt-auto min-w-0 pt-2">
+                  <p class="pos-product-price font-bold text-slate-950"><span data-pos-card-price>{{ product.pos_price|money_display }}</span> <span class="text-xs font-medium text-slate-500">TZS</span></p><p class="mt-1 text-xs text-slate-500"><span data-pos-card-price-label>{% if product.pos_pricing_mode == 'technician' %}Technician{% elif product.pos_pricing_mode == 'wholesale' %}Wholesale{% elif product.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if cart.sale_pricing_category == 'wholesale' and product.allow_wholesale and product.wholesale_price %} · Wholesale from {{ product.wholesale_min_quantity|quantity_display }}{% endif %}</p><p class="mt-1 text-xs font-medium text-brand-700 {% if not product.in_cart %}hidden{% endif %}" data-pos-card-quantity>In cart: {{ product.cart_quantity|quantity_display }}</p>
+                  <div class="mt-2 flex justify-end">
                   {% if not product.pos_ready %}<button class="jims-btn jims-btn-secondary jims-btn-compact" type="button" disabled>Pricing review</button>
                   {% elif product.is_serialized %}
                     {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
                   {% elif product.item_type == "service" or product.available_stock > 0 %}
                     <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>
-                      {% csrf_token %}<input type="hidden" name="product" value="{{ product.pk }}"><input type="hidden" name="direction" value="{% if product.in_cart %}increase{% else %}add{% endif %}"><button class="jims-btn jims-btn-primary jims-btn-compact" type="submit" data-loading-label="Adding...">{% if product.in_cart %}+ Add{% else %}Add{% endif %}</button>
+                      {% csrf_token %}<input type="hidden" name="product" value="{{ product.pk }}"><input type="hidden" name="direction" value="{% if product.in_cart %}increase{% else %}add{% endif %}"><button class="jims-btn jims-btn-primary jims-btn-compact" type="submit" aria-label="Add {{ product.name }} to sale" data-loading-label="Adding...">{% if product.in_cart %}+ Add{% else %}Add{% endif %}</button>
                     </form>
                   {% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
+                  </div>
                 </div>
                 </div>
               </article>
@@ -81,22 +82,59 @@
       </section>
     {% endif %}
 
-    <aside class="{% if cart.status != 'draft' %}is-active{% endif %}" data-cart-panel="cart" data-pos-cart>
-      <div class="space-y-3 pos-sidebar">
-        <section class="jims-panel overflow-hidden">
-          <div class="jims-panel-header flex items-center justify-between"><div><h2 class="font-semibold text-slate-950">Current sale</h2><p class="mt-1 text-xs text-slate-500"><span data-pos-line-count>{{ lines|length }}</span> line item{{ lines|length|pluralize }}</p></div>{% if cart.status == 'draft' %}<a class="text-sm font-semibold text-brand-700" href="{% url 'inventory:cart_line_create' cart.pk %}">Custom item</a>{% endif %}</div>
+    <aside id="pos-cart-panel" class="{% if cart.status != 'draft' or cart_form.errors %}is-active{% endif %} min-w-0" data-cart-panel="cart" data-pos-cart role="tabpanel">
+      <div class="pos-sidebar jims-panel">
+        <div class="pos-cart-tabs" role="tablist" aria-label="Sale details">
+          <button type="button" role="tab" aria-controls="pos-cart-items" aria-selected="{% if cart_form.customer.errors or cart_form.walk_in_name.errors or cart_form.sale_pricing_category.errors or cart_form.shipping_address.errors %}false{% else %}true{% endif %}" data-pos-detail-tab="items">Cart (<span data-pos-line-count>{{ lines|length }}</span>)</button>
+          {% if cart.status == 'draft' %}<button type="button" role="tab" aria-controls="pos-customer-fields" aria-selected="{% if cart_form.customer.errors or cart_form.walk_in_name.errors or cart_form.sale_pricing_category.errors %}true{% else %}false{% endif %}" data-pos-detail-tab="customer">Customer</button><button type="button" role="tab" aria-controls="pos-address-fields" aria-selected="{% if cart_form.shipping_address.errors %}true{% else %}false{% endif %}" data-pos-detail-tab="address">Address</button>{% endif %}
+        </div>
+        <div id="pos-cart-items" class="pos-detail-panel" data-pos-detail-panel="items" role="tabpanel" {% if cart_form.customer.errors or cart_form.walk_in_name.errors or cart_form.sale_pricing_category.errors or cart_form.shipping_address.errors %}hidden{% endif %}>
+          <div class="pos-cart-heading"><span class="font-semibold text-slate-950">Current sale</span></div>
           <div data-pos-lines-container>{% include "inventory/includes/pos_cart_lines.html" %}</div>
-        </section>
-
-        {% if cart.status == 'draft' %}
-          <details class="jims-panel p-4">
-            <summary class="cursor-pointer text-sm font-semibold text-slate-900">Customer and financial controls</summary>
-            <form id="cart-details-form-{{ cart.pk }}" method="post" class="mt-4 space-y-4 border-t border-slate-200 pt-4" data-pos-details>{% csrf_token %}{% include "components/form.html" with form=cart_form %}<button class="jims-btn jims-btn-secondary w-full" type="submit">Save details</button></form>
-          </details>
-        {% endif %}
-
+        </div>
+        <form id="cart-details-form-{{ cart.pk }}" method="post" data-pos-details>{% csrf_token %}
+          {% if cart_form.non_field_errors %}<div class="p-3 text-sm text-rose-700" role="alert">{{ cart_form.non_field_errors }}</div>{% endif %}
+          {% if cart.status == 'draft' %}
+            <div id="pos-customer-fields" class="pos-detail-panel p-4" data-pos-detail-panel="customer" role="tabpanel" {% if not cart_form.customer.errors and not cart_form.walk_in_name.errors and not cart_form.sale_pricing_category.errors %}hidden{% endif %}>
+              <div class="space-y-3">{% include "components/form_field.html" with field=cart_form.customer %}{% include "components/form_field.html" with field=cart_form.walk_in_name %}{% include "components/form_field.html" with field=cart_form.sale_pricing_category %}</div>
+              <button class="jims-btn jims-btn-secondary mt-4 w-full" type="submit">Save customer</button>
+            </div>
+            {% comment %} <div id="pos-address-fields" class="pos-detail-panel p-4" data-pos-detail-panel="address" role="tabpanel" {% if not cart_form.shipping_address.errors %}hidden{% endif %}>
+              <h3 class="text-sm font-semibold text-slate-950">Delivery address</h3>
+              <p class="mt-2 text-sm text-slate-600" data-pos-address-summary>{{ cart.shipping_address|default:"No delivery address saved. Collection is assumed." }}</p>
+              <button class="jims-btn jims-btn-secondary mt-4 w-full" type="button" data-pos-control="delivery" aria-haspopup="dialog" aria-controls="pos-edit-modal">{% if cart.shipping_address %}Edit delivery address{% else %}Add delivery address{% endif %}</button>
+            </div> {% endcomment %}
+          {% endif %}
+          {% if cart.status == 'draft' %}
+            <div class="pos-adjustments border-t border-slate-200 px-3 py-2">
+              <div class="pos-adjustment-actions">
+                <button type="button" data-pos-control="notes" aria-haspopup="dialog" aria-controls="pos-edit-modal">{% if cart.notes %}Edit note{% else %}Notes{% endif %}</button>
+                <button type="button" data-pos-control="discount" aria-haspopup="dialog" aria-controls="pos-edit-modal">Discount</button>
+                <button type="button" data-pos-control="tax" aria-haspopup="dialog" aria-controls="pos-edit-modal">Tax</button>
+                {% comment %} <button type="button" data-pos-control="delivery" aria-haspopup="dialog" aria-controls="pos-edit-modal">Delivery</button> {% endcomment %}
+              </div>
+            </div>
+            <div id="pos-edit-modal" class="pos-edit-modal" data-pos-edit-modal role="dialog" aria-modal="true" aria-labelledby="pos-edit-modal-title" aria-describedby="pos-edit-modal-description" {% if not cart_form.notes.errors and not cart_form.discount_amount.errors and not cart_form.tax_rate.errors and not cart_form.shipping_address.errors %}hidden{% endif %}>
+              <div class="pos-edit-modal-card" data-pos-edit-modal-card>
+                <div class="pos-edit-modal-header">
+                  <div class="min-w-0"><h2 id="pos-edit-modal-title" class="text-lg font-bold text-slate-950" data-pos-modal-title>{% if cart_form.shipping_address.errors %}Delivery address{% elif cart_form.discount_amount.errors %}Order discount{% elif cart_form.tax_rate.errors %}Tax / VAT{% elif cart_form.notes.errors %}Sale notes{% else %}Sale details{% endif %}</h2><p id="pos-edit-modal-description" class="mt-1 text-sm text-slate-600" data-pos-modal-description>Update this draft sale.</p></div>
+                  <button type="button" class="pos-edit-modal-close" data-pos-modal-close aria-label="Close dialog">&times;</button>
+                </div>
+                <div class="pos-edit-modal-total"><span>Current total</span><strong><span data-pos-modal-total>{{ grand_total|money_display }}</span> TZS</strong></div>
+                <div class="pos-edit-modal-body">
+                  <div data-pos-control-panel="notes" {% if not cart_form.notes.errors %}hidden{% endif %}>{% include "components/form_field.html" with field=cart_form.notes %}</div>
+                  <div data-pos-control-panel="discount" {% if not cart_form.discount_amount.errors %}hidden{% endif %}>{% include "components/form_field.html" with field=cart_form.discount_amount %}</div>
+                  <div data-pos-control-panel="tax" {% if not cart_form.tax_rate.errors %}hidden{% endif %}>{% include "components/form_field.html" with field=cart_form.tax_rate %}</div>
+                  <div data-pos-control-panel="delivery" {% if not cart_form.shipping_address.errors %}hidden{% endif %}>{% include "components/form_field.html" with field=cart_form.shipping_address %}</div>
+                  <p class="pos-edit-modal-feedback" data-pos-modal-feedback role="alert" hidden></p>
+                </div>
+                <div class="pos-edit-modal-actions"><button type="button" class="jims-btn jims-btn-secondary" data-pos-modal-close>Cancel</button><button type="submit" class="jims-btn jims-btn-primary" data-pos-modal-save>Save changes</button></div>
+              </div>
+            </div>
+          {% endif %}
+        </form>
         <div class="hidden rounded-lg border px-3 py-2 text-sm" data-pos-feedback role="status" aria-live="polite"></div>
-        <div class="pos-total-dock space-y-2"><section class="jims-panel p-5"><dl class="space-y-2 text-sm"><div class="flex justify-between"><dt class="text-slate-600">Subtotal</dt><dd class="font-medium"><span data-pos-subtotal>{{ subtotal|intcomma }}</span> TZS</dd></div><div class="flex justify-between"><dt class="text-slate-600">Discount</dt><dd class="font-medium" data-live-discount>-{{ cart.discount_amount }}</dd></div><div class="flex justify-between"><dt class="text-slate-600">VAT (<span data-live-tax-rate>{{ cart.tax_rate }}</span>%)</dt><dd class="font-medium" data-live-tax>{{ tax }}</dd></div><div class="flex justify-between border-t border-slate-200 pt-3 text-lg"><dt class="font-bold text-slate-950">Total</dt><dd class="font-bold text-brand-700"><span data-live-total>{{ grand_total }}</span> TZS</dd></div></dl></section><div class="space-y-2" data-pos-checkout-container>{% include "inventory/includes/pos_checkout.html" %}</div></div>
+        <div class="pos-total-dock"><dl class="pos-totals text-sm"><div><dt>Subtotal</dt><dd><span data-pos-subtotal>{{ subtotal|money_display }}</span> TZS</dd></div><div><dt>Discount</dt><dd data-live-discount>-{{ cart.discount_amount|money_display }}</dd></div><div><dt>VAT (<span data-live-tax-rate>{{ cart.tax_rate|number_display:2 }}</span>%)</dt><dd data-live-tax>{{ tax|money_display }}</dd></div><div class="pos-grand-total"><dt>Total</dt><dd><span data-live-total>{{ grand_total|money_display }}</span> TZS</dd></div></dl><div class="pos-checkout-actions" data-pos-checkout-container>{% include "inventory/includes/pos_checkout.html" %}</div></div>
       </div>
     </aside>
   </div>

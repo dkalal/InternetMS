@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
@@ -12,7 +12,7 @@ from .models import Product, ProductCategory
 from .forms import ProductForm, ProductUnitSuccessorForm
 from .services import ProductUnitTransitionError, ProductUnitTransitionService
 from custom_fields.services import CustomFieldService
-from users.permissions import PermissionCode, require_permission
+from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from inventory.services import audit
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
@@ -191,11 +191,15 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
 
     def dispatch(self, request, *args, **kwargs):
         require_organization(request)
-        return super().dispatch(request, *args, **kwargs)
+        require_permission(request, PermissionCode.PRODUCTS_CREATE)
+        response = super().dispatch(request, *args, **kwargs)
+        if request.GET.get('purchase_modal') == '1':
+            response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
 
     def form_valid(self, form):
         organization = require_organization(self.request)
-        require_permission(self.request, PermissionCode.PRODUCT_MANAGE)
+        require_permission(self.request, PermissionCode.PRODUCTS_CREATE)
         form.instance.organization = organization
         form.instance.tenant = organization
         form.instance.quantity = 0
@@ -215,7 +219,7 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                     'has_image': bool(self.object.image),
                 },
             )
-            legacy_quantity = self.request.POST.get('quantity')
+            legacy_quantity = None if self.request.GET.get('purchase_modal') == '1' else self.request.POST.get('quantity')
             if legacy_quantity and self.object.track_stock:
                 from decimal import Decimal
                 from inventory.services import InventoryService
@@ -229,7 +233,41 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                         notes='Opening balance supplied by the legacy product form.',
                         actor=self.request.user,
                     )
+        if self.request.GET.get('purchase_modal') == '1':
+            return render(self.request, 'inventory/includes/purchase_modal_created.html', {
+                'created_record': {
+                    'kind': 'product', 'id': self.object.pk, 'text': str(self.object),
+                    'name': self.object.name, 'sku': self.object.sku,
+                    'unit': self.object.sales_unit.label, 'serialized': self.object.is_serialized,
+                    'expiry': self.object.track_expiry,
+                },
+            })
+        if (
+            self.request.POST.get('next') == 'add_serials'
+            and self.object.is_serialized
+            and has_tenant_permission(
+                self.request.user,
+                organization,
+                PermissionCode.STOCK_ADJUST,
+                membership=getattr(self.request, 'membership', None),
+            )
+        ):
+            messages.success(
+                self.request,
+                f'{self.object.name} was created. Enter one serial number for each unit being added.',
+            )
+            return redirect(f'{reverse("inventory:stock_adjust")}?product={self.object.pk}')
         return response
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        if self.request.GET.get('purchase_modal') == '1':
+            for name, value in (
+                ('item_type', Product.ItemType.PHYSICAL), ('track_stock', True), ('is_active', True),
+            ):
+                form.fields[name].initial = value
+                form.fields[name].disabled = True
+        return form
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -239,6 +277,8 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['embedded_create'] = self.request.GET.get('purchase_modal') == '1'
+        context['quick_category_units'] = context['form'].fields['sales_unit'].queryset
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)
         categories = ProductCategory.objects.filter(tenant=require_organization(self.request)).prefetch_related('allowed_units')

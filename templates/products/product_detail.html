@@ -83,22 +83,22 @@
                 {% if INVENTORY_CAN_VIEW_COSTS %}
                 <div>
                     <dt class="text-xs text-slate-500">Buying price</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.buying_price|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.buying_price|money_display }} TZS</dd>
                 </div>
                 {% endif %}
                 <div>
                     <dt class="text-xs text-slate-500">Standard selling price</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.selling_price|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.selling_price|money_display }} TZS</dd>
                     {% if INVENTORY_CAN_MANAGE_PRODUCTS %}
                     <dt class="mt-3 text-xs text-slate-500">Technician price</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.effective_technician_price|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.effective_technician_price|money_display }} TZS</dd>
                     {% endif %}
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Wholesale price</dt>
                     <dd class="mt-1 text-sm font-medium text-slate-900">
                         {% if product.allow_wholesale and product.wholesale_price %}
-                            {{ product.wholesale_price|intcomma }} TZS from {{ product.wholesale_min_quantity|quantity_display }} {{ product.measure_unit }}
+                            {{ product.wholesale_price|money_display }} TZS from {{ product.wholesale_min_quantity|quantity_display }} {{ product.measure_unit }}
                         {% else %}
                             Not enabled
                         {% endif %}
@@ -107,7 +107,7 @@
                 {% if product.retail_price is not None and product.retail_price != product.selling_price %}
                 <div>
                     <dt class="text-xs text-slate-500">Legacy retail override</dt>
-                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.retail_price|intcomma }} TZS</dd>
+                    <dd class="mt-1 text-sm font-medium text-slate-900">{{ product.retail_price|money_display }} TZS</dd>
                     <p class="mt-1 text-xs text-slate-500">Retained for historical retail workflows; new standard sales use the standard price.</p>
                 </div>
                 {% endif %}

@@ -583,6 +583,7 @@
       var dirty = false;
       form.addEventListener("input", function () { dirty = true; });
       form.addEventListener("submit", function () { dirty = false; });
+      form.addEventListener("jims:discard", function () { dirty = false; });
       window.addEventListener("beforeunload", function (event) {
         if (!dirty) return;
         event.preventDefault();

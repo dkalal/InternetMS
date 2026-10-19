@@ -570,7 +570,7 @@ class InventoryAcceptanceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['line_items_total'], Decimal('1500000.00'))
-        self.assertContains(response, '1,500,000.00 TZS')
+        self.assertContains(response, '1,500,000 TZS')
 
     def test_cart_invoice_is_issued_and_can_create_a_receipt(self):
         self.receive(quantity=4)
@@ -631,6 +631,25 @@ class InventoryAcceptanceTests(TestCase):
         self.assertRedirects(repeat_response, reverse('inventory:cart_detail', args=[cart.pk]))
         self.assertEqual(Cart.objects.filter(created_by=self.admin, status=Cart.Status.DRAFT).count(), 1)
         self.assertEqual(self.client.get(reverse('inventory:cart_create')).status_code, 404)
+
+    def test_cart_list_total_uses_existing_discount_and_tax_calculation(self):
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, created_by=self.admin,
+            tax_rate=Decimal('18.00'), discount_amount=Decimal('10.00'),
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('2.00'),
+            unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:cart_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['carts'][0].display_total, Decimal('342.20'))
+        self.assertContains(response, 'TZS 342.2')
+        self.assertContains(response, 'jims-cart-list-shell')
+        self.assertNotContains(response, 'jims-list-shell')
 
     def test_discard_sale_is_soft_idempotent_audited_and_never_changes_stock(self):
         self.receive(quantity=5)
@@ -912,7 +931,7 @@ class InventoryAcceptanceTests(TestCase):
             response = self.client.post(url, {'product': self.product.pk, 'direction': 'add'}, **headers)
             self.assertEqual(response.status_code, 200)
         self.assertIn('Continue to payment', response.json()['checkout_html'])
-        self.assertIn('300.00', response.json()['checkout_html'])
+        self.assertIn('data-pos-payment-total>300</span> TZS', response.json()['checkout_html'])
         line = CartLine.objects.get(cart=cart, product=self.product)
         self.assertEqual(line.unit_price, Decimal('150.00'))
         response = self.client.post(url, {'product': self.product.pk, 'direction': 'increase'}, **headers)
@@ -950,7 +969,7 @@ class InventoryAcceptanceTests(TestCase):
         self.assertEqual(response.json()['taxable_subtotal'], '0.00')
         self.assertEqual(response.json()['tax'], '0.00')
         self.assertEqual(response.json()['grand_total'], '140.00')
-        self.assertIn('140.00', response.json()['checkout_html'])
+        self.assertIn('data-pos-payment-total>140</span> TZS', response.json()['checkout_html'])
         cart.refresh_from_db()
         self.assertEqual(cart.discount_amount, Decimal('10.00'))
         self.assertEqual(cart.tax_rate, Decimal('18.00'))

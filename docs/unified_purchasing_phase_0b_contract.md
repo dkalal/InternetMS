@@ -82,17 +82,21 @@ The purchase workspace must not serialize or render the full tenant catalog. Eac
 
 The bulk picker reuses the same protected search endpoint and only creates ordinary formset rows. Already-active products are identified before selection, selected products are de-duplicated again while rows are appended, and every resulting identifier is still validated by the tenant-scoped Django formset on submission. Bulk selection never writes stock or bypasses the draft/review/confirm lifecycle.
 
-### Phase 3A supplier quick-create contract
+### Legacy Phase 3A supplier quick-create endpoint contract
 
-The purchase workspace may create a supplier from company name and phone only. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It ignores unsupported advanced fields, returns structured validation errors, and selects the created active supplier without submitting or clearing the purchase workspace. Advanced supplier details remain owned by the full Suppliers workflow.
+The earlier quick-create endpoint may create a supplier from company name and phone only. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It ignores unsupported advanced fields and returns structured validation errors. The purchase dialog now uses the full Suppliers workflow described below.
 
 ### Phase 3B category quick-create contract
 
 The purchase product workflow may create a category from name and one existing active tenant unit only. The selected default unit is also the category's sole initial allowed unit. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, duplicate-safe, atomic, and audited. It rejects foreign-tenant and inactive units, ignores unsupported advanced category fields, and returns structured validation errors. This endpoint is a foundation for the product quick-create dialog; it must not add a disconnected category control to the purchase workspace.
 
-### Phase 3C product quick-create contract
+### Legacy Phase 3C product quick-create endpoint contract
 
-The purchase workspace may create an active physical stock product from name, tenant category, an allowed active sales/stock unit, selling price, and optional serial/expiry tracking. SKU is generated tenant-safely; quantity, stock, and initial buying cost start at zero and acquisition cost remains authoritative on the purchase line. Selling price remains required until a first-class pricing-required catalog state is introduced. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, atomic, and audited. A created product is appended to an ordinary purchase formset row and still passes the normal draft and confirmation boundaries.
+The earlier quick-create endpoint may create an active physical stock product from name, tenant category, an allowed active sales/stock unit, selling price, and optional serial/expiry tracking. SKU is generated tenant-safely; quantity, stock, and initial buying cost start at zero and acquisition cost remains authoritative on the purchase line. Selling price remains required until a first-class pricing-required catalog state is introduced. The endpoint is authenticated, POST-only, CSRF-protected, permission-checked, tenant-scoped, atomic, and audited. The purchase dialog now uses the full catalog workflow described below; every created product still passes the normal draft and confirmation boundaries.
+
+### Full-form creation from a purchase
+
+The purchase workspace opens the owning supplier and catalog create forms in a large, keyboard-accessible dialog. All fields and custom product fields on those pages remain available, with their existing server validation, file handling, permissions, tenant scoping, and audit behavior. The purchase context fixes a new supplier as active and a new catalog item as active, physical, and stock-tracked so the saved record can be selected on the purchase. Creation alone never changes stock; the purchase still follows its normal draft and receipt flow. The catalog create form can use the category quick-create endpoint to add a category with one active tenant unit, then select that category and unit without losing product form entries. The earlier minimal supplier and product quick-create endpoints remain available for compatibility but are no longer used by these dialogs.
 
 ### Phase 4A receipt-review contract
 

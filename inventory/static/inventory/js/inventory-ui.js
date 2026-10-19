@@ -19,6 +19,7 @@
       var itemType = document.getElementById("id_item_type");
       var trackStock = document.getElementById("id_track_stock");
       var serialized = document.getElementById("id_is_serialized");
+      var trackExpiry = document.getElementById("id_track_expiry");
       var buying = document.getElementById("id_buying_price");
       var selling = document.getElementById("id_selling_price");
       var technician = document.getElementById("id_technician_price");
@@ -36,15 +37,21 @@
         return isFinite(value) ? value : null;
       }
 
-      function syncProductFields() {
+      function syncProductFields(changedInput) {
         var service = itemType && itemType.value === "service";
-        if (service && trackStock && !trackStock.disabled) trackStock.checked = false;
+        if (!service && changedInput === serialized && serialized.checked && trackStock && !trackStock.disabled) {
+          trackStock.checked = true;
+        }
+        if (changedInput === trackStock && !trackStock.checked) {
+          if (serialized && !serialized.disabled) serialized.checked = false;
+          if (trackExpiry && !trackExpiry.disabled) trackExpiry.checked = false;
+        }
         document.querySelectorAll("[data-physical-only]").forEach(function (element) {
-          element.classList.toggle("hidden", service);
+          element.classList.toggle("hidden", service && !element.querySelector('[role="alert"]'));
         });
         var stockEnabled = !service && trackStock && trackStock.checked;
         document.querySelectorAll("[data-stock-only]").forEach(function (element) {
-          element.classList.toggle("hidden", !stockEnabled);
+          element.classList.toggle("hidden", !stockEnabled && !element.querySelector('[role="alert"]'));
         });
         var serialEnabled = stockEnabled && serialized && serialized.checked;
         document.querySelectorAll("[data-serialized-only]").forEach(function (element) {
@@ -68,6 +75,11 @@
         var marginRate = document.querySelector("[data-product-margin-rate]");
         var standardSelling = document.querySelector("[data-product-standard-selling]");
         var effectiveTechnicianNode = document.querySelector("[data-product-effective-technician]");
+        var summary = document.querySelector("[data-product-pricing-summary]");
+        var summaryReady = buy !== null && sell !== null && sell > 0 && buying.validity.valid && selling.validity.valid && (!technician || technician.validity.valid);
+        if (summary) summary.hidden = !summaryReady;
+        var placeholder = document.querySelector("[data-product-pricing-placeholder]");
+        if (placeholder) placeholder.hidden = summaryReady;
         if (margin) margin.textContent = money(profit);
         if (marginRate) marginRate.textContent = profit !== null && effective ? ((profit / effective) * 100).toFixed(2) + "%" : "—";
         if (standardSelling) standardSelling.textContent = money(effective);
@@ -75,17 +87,17 @@
       }
 
       function syncWholesale() {
-        if (wholesalePanel && wholesaleToggle) wholesalePanel.classList.toggle("hidden", !wholesaleToggle.checked);
+        if (wholesalePanel && wholesaleToggle) wholesalePanel.classList.toggle("hidden", !wholesaleToggle.checked && !wholesalePanel.querySelector('[role="alert"]'));
       }
 
       [itemType, trackStock, serialized].forEach(function (input) {
-        if (input) input.addEventListener("change", syncProductFields);
+        if (input) input.addEventListener("change", function () { syncProductFields(input); });
       });
       [buying, selling, technician].forEach(function (input) {
         if (input) input.addEventListener("input", syncPricing);
       });
       if (wholesaleToggle) wholesaleToggle.addEventListener("change", syncWholesale);
-      syncProductFields();
+      syncProductFields(null);
       syncPricing();
       syncWholesale();
     }
@@ -134,104 +146,6 @@
         });
         syncSerialPicker();
       }
-    }
-
-    var quickSupplierDialog = document.querySelector("[data-quick-supplier-dialog]");
-    var openQuickSupplier = document.querySelector("[data-open-quick-supplier]");
-    if (quickSupplierDialog && openQuickSupplier) {
-      var supplierForm = quickSupplierDialog.closest("form");
-      var supplierUrl = supplierForm.dataset.supplierQuickCreateUrl;
-      var supplierSelect = document.getElementById("id_supplier");
-      var supplierName = quickSupplierDialog.querySelector("[data-quick-supplier-name]");
-      var supplierPhone = quickSupplierDialog.querySelector("[data-quick-supplier-phone]");
-      var supplierNameError = quickSupplierDialog.querySelector("[data-quick-supplier-name-error]");
-      var supplierPhoneError = quickSupplierDialog.querySelector("[data-quick-supplier-phone-error]");
-      var supplierGeneralError = quickSupplierDialog.querySelector("[data-quick-supplier-error]");
-      var saveSupplier = quickSupplierDialog.querySelector("[data-save-quick-supplier]");
-      var closeSupplierButtons = quickSupplierDialog.querySelectorAll("[data-close-quick-supplier], [data-cancel-quick-supplier]");
-
-      function setSupplierError(node, message) {
-        node.textContent = message || "";
-        node.classList.toggle("hidden", !message);
-      }
-
-      function resetSupplierErrors() {
-        setSupplierError(supplierNameError, "");
-        setSupplierError(supplierPhoneError, "");
-        setSupplierError(supplierGeneralError, "");
-      }
-
-      function closeSupplierDialog() {
-        quickSupplierDialog.classList.add("hidden");
-        quickSupplierDialog.classList.remove("flex");
-        document.body.classList.remove("overflow-hidden");
-        openQuickSupplier.focus();
-      }
-
-      openQuickSupplier.addEventListener("click", function () {
-        resetSupplierErrors();
-        supplierName.value = "";
-        supplierPhone.value = "";
-        quickSupplierDialog.classList.remove("hidden");
-        quickSupplierDialog.classList.add("flex");
-        document.body.classList.add("overflow-hidden");
-        supplierName.focus();
-      });
-      closeSupplierButtons.forEach(function (button) { button.addEventListener("click", closeSupplierDialog); });
-      quickSupplierDialog.addEventListener("click", function (event) { if (event.target === quickSupplierDialog) closeSupplierDialog(); });
-      quickSupplierDialog.addEventListener("keydown", function (event) {
-        if (event.key === "Escape") { closeSupplierDialog(); return; }
-        if (event.key !== "Tab") return;
-        var focusable = Array.prototype.filter.call(
-          quickSupplierDialog.querySelectorAll("button:not([disabled]), input:not([disabled])"),
-          function (element) { return element.offsetParent !== null; }
-        );
-        if (!focusable.length) return;
-        var first = focusable[0];
-        var last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-      });
-      saveSupplier.addEventListener("click", function () {
-        resetSupplierErrors();
-        saveSupplier.disabled = true;
-        saveSupplier.textContent = "Saving…";
-        var csrf = supplierForm.querySelector("input[name='csrfmiddlewaretoken']");
-        var body = new URLSearchParams({ company_name: supplierName.value.trim(), phone: supplierPhone.value.trim() });
-        fetch(supplierUrl, {
-          method: "POST",
-          headers: { "X-CSRFToken": csrf.value, "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-          body: body.toString()
-        }).then(function (response) {
-          return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
-        }).then(function (result) {
-          if (!result.ok) {
-            var errors = result.payload.errors || {};
-            setSupplierError(supplierNameError, errors.company_name && errors.company_name[0] ? errors.company_name[0].message : "");
-            setSupplierError(supplierPhoneError, errors.phone && errors.phone[0] ? errors.phone[0].message : "");
-            if (!errors.company_name && !errors.phone) setSupplierError(supplierGeneralError, "Supplier could not be saved. Try again.");
-            return;
-          }
-          var supplier = result.payload.supplier;
-          supplierSelect.appendChild(new Option(supplier.text, String(supplier.id), true, true));
-          supplierSelect.value = String(supplier.id);
-          supplierSelect.dispatchEvent(new Event("change", { bubbles: true }));
-          closeSupplierDialog();
-        }).catch(function () {
-          setSupplierError(supplierGeneralError, "Supplier could not be saved. Check the connection and try again.");
-        }).finally(function () {
-          saveSupplier.disabled = false;
-          saveSupplier.textContent = "Save supplier";
-        });
-      });
-      [supplierName, supplierPhone].forEach(function (input) {
-        input.addEventListener("keydown", function (event) {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            if (!saveSupplier.disabled) saveSupplier.click();
-          }
-        });
-      });
     }
 
     var formset = document.querySelector("[data-purchase-formset]");
@@ -487,151 +401,102 @@
         });
       }
 
-      var quickProductDialog = document.querySelector("[data-quick-product-dialog]");
-      var openQuickProduct = document.querySelector("[data-open-quick-product]");
-      if (quickProductDialog && openQuickProduct && purchaseForm) {
-        var productUrl = purchaseForm.dataset.productQuickCreateUrl;
-        var categoryUrl = purchaseForm.dataset.categoryQuickCreateUrl;
-        var csrf = purchaseForm.querySelector("input[name='csrfmiddlewaretoken']");
-        var qpName = quickProductDialog.querySelector("[data-quick-product-name]");
-        var qpCategory = quickProductDialog.querySelector("[data-quick-product-category]");
-        var qpUnit = quickProductDialog.querySelector("[data-quick-product-unit]");
-        var qpPrice = quickProductDialog.querySelector("[data-quick-product-price]");
-        var qpSerialized = quickProductDialog.querySelector("[data-quick-product-serialized]");
-        var qpExpiry = quickProductDialog.querySelector("[data-quick-product-expiry]");
-        var qpError = quickProductDialog.querySelector("[data-quick-product-error]");
-        var qpFieldErrors = {
-          name: quickProductDialog.querySelector("[data-quick-product-name-error]"),
-          catalog_category: quickProductDialog.querySelector("[data-quick-product-category-error]"),
-          sales_unit: quickProductDialog.querySelector("[data-quick-product-unit-error]"),
-          selling_price: quickProductDialog.querySelector("[data-quick-product-price-error]")
-        };
-        var saveProduct = quickProductDialog.querySelector("[data-save-quick-product]");
-        var categoryPanel = quickProductDialog.querySelector("[data-quick-category-panel]");
-        var quickCategoryName = quickProductDialog.querySelector("[data-quick-category-name]");
-        var quickCategoryUnit = quickProductDialog.querySelector("[data-quick-category-unit]");
-        var quickCategoryError = quickProductDialog.querySelector("[data-quick-category-error]");
-        var quickCategoryNameError = quickProductDialog.querySelector("[data-quick-category-name-error]");
-        var quickCategoryUnitError = quickProductDialog.querySelector("[data-quick-category-unit-error]");
+      var createDialog = document.querySelector("[data-create-record-dialog]");
+      var createFrame = createDialog && createDialog.querySelector("[data-create-record-frame]");
+      var createTrigger = null;
+      var createDirty = false;
+      if (createDialog && createFrame && purchaseForm) {
+        var createTitle = createDialog.querySelector("[data-create-record-title]");
+        var createLoading = createDialog.querySelector("[data-create-record-loading]");
+        var createClose = createDialog.querySelector("[data-close-create-record]");
+        var supplierSelect = document.getElementById("id_supplier");
 
-        function showQuickError(node, message) {
-          node.textContent = message || "";
-          node.classList.toggle("hidden", !message);
-        }
-        function firstFieldError(errors, field) {
-          return errors && errors[field] && errors[field][0] ? errors[field][0].message : "";
-        }
-        function clearProductErrors() {
-          Object.keys(qpFieldErrors).forEach(function (field) { showQuickError(qpFieldErrors[field], ""); });
-          showQuickError(qpError, "");
-        }
-        function showProductErrors(errors) {
-          clearProductErrors();
-          Object.keys(qpFieldErrors).forEach(function (field) {
-            showQuickError(qpFieldErrors[field], firstFieldError(errors, field));
-          });
-          showQuickError(qpError, firstFieldError(errors, "__all__"));
-        }
-        function clearCategoryErrors() {
-          showQuickError(quickCategoryNameError, "");
-          showQuickError(quickCategoryUnitError, "");
-          showQuickError(quickCategoryError, "");
-        }
-        function resetQuickProduct() {
-          qpName.value = "";
-          qpCategory.value = "";
-          qpUnit.value = "";
-          qpPrice.value = "";
-          qpSerialized.checked = false;
-          qpExpiry.checked = false;
-          quickCategoryName.value = "";
-          quickCategoryUnit.value = "";
-          categoryPanel.classList.add("hidden");
-          clearCategoryErrors();
-          clearProductErrors();
-        }
-        function closeQuickProduct() {
-          quickProductDialog.classList.add("hidden");
-          quickProductDialog.classList.remove("flex");
+        function closeCreateDialog(force) {
+          if (!force && createDirty && !window.confirm("Discard the details entered in this form?")) return;
+          try {
+            createFrame.contentDocument.querySelectorAll("form[data-unsaved-form]").forEach(function (form) {
+              form.dispatchEvent(new Event("jims:discard"));
+            });
+          } catch (error) { /* The frame may still be loading. */ }
+          createDialog.classList.add("hidden");
+          createDialog.classList.remove("flex");
           document.body.classList.remove("overflow-hidden");
-          openQuickProduct.focus();
+          createFrame.removeAttribute("src");
+          createFrame.classList.add("hidden");
+          createDirty = false;
+          if (createTrigger) createTrigger.focus();
         }
-        openQuickProduct.addEventListener("click", function () {
-          clearProductErrors();
-          clearCategoryErrors();
-          quickProductDialog.classList.remove("hidden");
-          quickProductDialog.classList.add("flex");
-          document.body.classList.add("overflow-hidden");
-          qpName.focus();
-        });
-        quickProductDialog.querySelectorAll("[data-close-quick-product], [data-cancel-quick-product]").forEach(function (button) {
-          button.addEventListener("click", closeQuickProduct);
-        });
-        quickProductDialog.addEventListener("click", function (event) {
-          if (event.target === quickProductDialog) closeQuickProduct();
-        });
-        quickProductDialog.addEventListener("keydown", function (event) {
-          if (event.key === "Escape") { closeQuickProduct(); return; }
-          if (event.key === "Enter") { event.preventDefault(); return; }
-          if (event.key !== "Tab") return;
-          var focusable = Array.prototype.filter.call(
-            quickProductDialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled])"),
-            function (element) { return element.offsetParent !== null; }
-          );
-          if (!focusable.length) return;
-          var first = focusable[0];
-          var last = focusable[focusable.length - 1];
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-        });
-        qpCategory.addEventListener("change", function () {
-          var option = qpCategory.options[qpCategory.selectedIndex];
-          if (option && option.dataset.defaultUnit) qpUnit.value = option.dataset.defaultUnit;
-        });
-        quickProductDialog.querySelector("[data-toggle-quick-category]").addEventListener("click", function () {
-          categoryPanel.classList.toggle("hidden");
-        });
-        quickProductDialog.querySelector("[data-save-quick-category]").addEventListener("click", function () {
-          clearCategoryErrors();
-          fetch(categoryUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: new URLSearchParams({ name: quickCategoryName.value.trim(), default_unit: quickCategoryUnit.value }).toString() })
-            .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
-            .then(function (result) {
-              if (!result.ok) {
-                showQuickError(quickCategoryNameError, firstFieldError(result.payload.errors, "name"));
-                showQuickError(quickCategoryUnitError, firstFieldError(result.payload.errors, "default_unit"));
-                showQuickError(quickCategoryError, firstFieldError(result.payload.errors, "__all__"));
-                return;
-              }
-              var category = result.payload.category;
-              var option = new Option(category.text, String(category.id), true, true);
-              option.dataset.defaultUnit = String(category.default_unit.id);
-              qpCategory.appendChild(option);
-              qpUnit.value = String(category.default_unit.id);
-              categoryPanel.classList.add("hidden");
-              quickCategoryName.value = "";
-              quickCategoryUnit.value = "";
-              clearCategoryErrors();
-            }).catch(function () { showQuickError(quickCategoryError, "Category could not be saved. Check the connection."); });
-        });
-        saveProduct.addEventListener("click", function () {
-          clearProductErrors();
-          var body = new URLSearchParams({
-            name: qpName.value.trim(), catalog_category: qpCategory.value, sales_unit: qpUnit.value,
-            selling_price: qpPrice.value, is_serialized: qpSerialized.checked ? "on" : "",
-            track_expiry: qpExpiry.checked ? "on" : ""
+
+        document.querySelectorAll("[data-create-record-url]").forEach(function (trigger) {
+          trigger.addEventListener("click", function (event) {
+            event.preventDefault();
+            createTrigger = trigger;
+            createDirty = false;
+            createTitle.textContent = trigger.dataset.createRecordKind === "supplier" ? "New supplier" : "New stock product";
+            createLoading.classList.remove("hidden");
+            createFrame.classList.add("hidden");
+            createFrame.title = createTitle.textContent + " form";
+            createDialog.classList.remove("hidden");
+            createDialog.classList.add("flex");
+            document.body.classList.add("overflow-hidden");
+            createClose.focus();
+            createFrame.src = trigger.dataset.createRecordUrl;
           });
-          saveProduct.disabled = true;
-          fetch(productUrl, { method: "POST", headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: body.toString() })
-            .then(function (response) { return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; }); })
-            .then(function (result) {
-              if (!result.ok) { showProductErrors(result.payload.errors); return; }
-              var line = appendLine(result.payload.product);
+        });
+        createClose.addEventListener("click", function () { closeCreateDialog(false); });
+        createDialog.addEventListener("click", function (event) {
+          if (event.target === createDialog) closeCreateDialog(false);
+        });
+        createDialog.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") { event.preventDefault(); closeCreateDialog(false); return; }
+          if (event.key !== "Tab") return;
+          var elements = [createClose, createFrame].filter(function (node) { return !node.classList.contains("hidden"); });
+          if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements[elements.length - 1].focus(); }
+          else if (!event.shiftKey && document.activeElement === elements[elements.length - 1]) { event.preventDefault(); elements[0].focus(); }
+        });
+        window.addEventListener("message", function (event) {
+          if (event.origin === window.location.origin && event.source === createFrame.contentWindow && event.data && event.data.type === "jims-purchase-modal-close") closeCreateDialog(false);
+        });
+        createFrame.addEventListener("load", function () {
+          var frameDocument;
+          try { frameDocument = createFrame.contentDocument; } catch (error) { frameDocument = null; }
+          if (!frameDocument) return;
+          var marker = frameDocument.getElementById("purchase-modal-created");
+          if (marker) {
+            var created = JSON.parse(marker.textContent);
+            if (created.kind === "supplier" && createTrigger.dataset.createRecordKind === "supplier" && supplierSelect) {
+              supplierSelect.add(new Option(created.text, String(created.id), true, true));
+              supplierSelect.value = String(created.id);
+              supplierSelect.dispatchEvent(new Event("change", { bubbles: true }));
+              closeCreateDialog(true);
+            } else if (created.kind === "product" && createTrigger.dataset.createRecordKind === "product") {
+              var line = appendLine(created);
               var quantity = line.querySelector("input[name$='-quantity']");
-              resetQuickProduct();
-              closeQuickProduct();
+              closeCreateDialog(true);
               if (quantity) quantity.focus();
-            }).catch(function () { showQuickError(qpError, "Product could not be saved. Check the connection."); })
-            .finally(function () { saveProduct.disabled = false; });
+            }
+            return;
+          }
+          createLoading.classList.add("hidden");
+          createFrame.classList.remove("hidden");
+          frameDocument.addEventListener("input", function () { createDirty = true; });
+          frameDocument.addEventListener("change", function () { createDirty = true; });
+          frameDocument.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && !frameDocument.querySelector('[role="dialog"]:not([hidden])')) {
+              event.preventDefault();
+              closeCreateDialog(false);
+            }
+            if (event.key !== "Tab") return;
+            var focusable = Array.prototype.filter.call(
+              frameDocument.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+              function (node) { return node.offsetParent !== null; }
+            );
+            if ((event.shiftKey && document.activeElement === createFrame && frameDocument.activeElement === focusable[0]) ||
+                (!event.shiftKey && frameDocument.activeElement === focusable[focusable.length - 1])) {
+              event.preventDefault();
+              createClose.focus();
+            }
+          });
         });
       }
 
@@ -913,7 +778,7 @@
     }
 
     var cart = document.querySelector("[data-cart-subtotal]");
-    if (cart) {
+    if (cart && !document.querySelector("[data-pos]")) {
       var discount = document.getElementById("id_discount_amount");
       var rate = document.getElementById("id_tax_rate");
 
@@ -933,11 +798,11 @@
         var total = taxable === 0 && taxableSubtotal === 0
           ? subtotal - discountValue
           : subtotal - discountValue + tax;
-        if (discountOutput) discountOutput.textContent = "-" + discountValue.toFixed(2);
-        if (rateOutput) rateOutput.textContent = rateValue.toFixed(2);
-        if (taxOutput) taxOutput.textContent = tax.toFixed(2);
-        if (totalOutput) totalOutput.textContent = total.toFixed(2);
-        paymentOutputs.forEach(function (output) { output.textContent = total.toFixed(2); });
+        if (discountOutput) discountOutput.textContent = "-" + tzsDisplayFormatter.format(discountValue);
+        if (rateOutput) rateOutput.textContent = tzsDisplayFormatter.format(rateValue);
+        if (taxOutput) taxOutput.textContent = tzsDisplayFormatter.format(tax);
+        if (totalOutput) totalOutput.textContent = tzsDisplayFormatter.format(total);
+        paymentOutputs.forEach(function (output) { output.textContent = tzsDisplayFormatter.format(total); });
       }
 
       if (discount) discount.addEventListener("input", syncCartTotals);
@@ -947,7 +812,115 @@
 
     var pos = document.querySelector("[data-pos]");
     if (pos) {
-      var formatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      var formatter = new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 2 });
+      var workspace = pos.querySelector(".pos-workspace");
+      function measureWorkspace() {
+        if (workspace) workspace.style.setProperty("--pos-workspace-top", workspace.getBoundingClientRect().top + "px");
+      }
+      measureWorkspace();
+      window.addEventListener("resize", measureWorkspace);
+
+      function selectDetailTab(name) {
+        pos.querySelectorAll("[data-pos-detail-tab]").forEach(function (tab) {
+          tab.setAttribute("aria-selected", String(tab.dataset.posDetailTab === name));
+        });
+        pos.querySelectorAll("[data-pos-detail-panel]").forEach(function (panel) {
+          panel.hidden = panel.dataset.posDetailPanel !== name;
+        });
+      }
+      var modal = pos.querySelector("[data-pos-edit-modal]");
+      var modalReturnFocus = null;
+      var modalControl = null;
+      var modalFields = { notes: "notes", discount: "discount_amount", tax: "tax_rate", delivery: "shipping_address" };
+      var modalCopy = {
+        notes: { title: "Internal sale notes", description: "Record office handover details, such as who received a parcel and their phone number. Staff can view this note; it is excluded from customer printouts.", save: "Save internal note" },
+        discount: { title: "Order discount", description: "Set the cart-wide discount amount in TZS.", save: "Save discount" },
+        tax: { title: "Tax / VAT", description: "Set the VAT percentage for this sale.", save: "Save tax" },
+        delivery: { title: "Delivery address", description: "Add an address for a walk-in sale, or leave it blank for collection.", save: "Save address" }
+      };
+      var savedModalValues = {};
+      Object.keys(modalFields).forEach(function (name) {
+        var field = document.getElementById("id_" + modalFields[name]);
+        if (field) savedModalValues[name] = field.value;
+      });
+
+      function openPosModal(name, trigger) {
+        if (!modal || !modalCopy[name]) return;
+        if (trigger) modalReturnFocus = trigger;
+        modalControl = name;
+        modal.querySelector("[data-pos-modal-title]").textContent = modalCopy[name].title;
+        modal.querySelector("[data-pos-modal-description]").textContent = modalCopy[name].description;
+        modal.querySelector("[data-pos-modal-save]").textContent = modalCopy[name].save;
+        modal.querySelectorAll("[data-pos-control-panel]").forEach(function (panel) {
+          panel.hidden = panel.dataset.posControlPanel !== name;
+        });
+        var feedback = modal.querySelector("[data-pos-modal-feedback]");
+        feedback.hidden = true;
+        feedback.textContent = "";
+        modal.hidden = false;
+        document.body.classList.add("pos-modal-open");
+        var field = document.getElementById("id_" + modalFields[name]);
+        window.requestAnimationFrame(function () {
+          if (field && !field.disabled) field.focus();
+          else modal.querySelector("[data-pos-modal-save]").focus();
+        });
+      }
+
+      function closePosModal(options) {
+        options = options || {};
+        if (!modal || modal.hidden || (detailsRequest && !options.force)) return;
+        if (options.restore !== false && modalControl) {
+          var field = document.getElementById("id_" + modalFields[modalControl]);
+          if (field && Object.prototype.hasOwnProperty.call(savedModalValues, modalControl)) field.value = savedModalValues[modalControl];
+        }
+        modal.hidden = true;
+        document.body.classList.remove("pos-modal-open");
+        modalControl = null;
+        if (options.returnFocus !== false && modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus();
+        modalReturnFocus = null;
+      }
+
+      function showModalFeedback(message) {
+        if (!modal || modal.hidden) return;
+        var feedback = modal.querySelector("[data-pos-modal-feedback]");
+        feedback.textContent = message;
+        feedback.hidden = false;
+      }
+
+      pos.addEventListener("click", function (event) {
+        var tab = event.target.closest("[data-pos-detail-tab]");
+        if (tab) selectDetailTab(tab.dataset.posDetailTab);
+        var control = event.target.closest("[data-pos-control]");
+        if (control) openPosModal(control.dataset.posControl, control);
+        var lineDiscountToggle = event.target.closest("[data-pos-line-discount-toggle]");
+        if (lineDiscountToggle) {
+          var panel = document.getElementById(lineDiscountToggle.getAttribute("aria-controls"));
+          if (panel) {
+            var opening = panel.hidden;
+            pos.querySelectorAll("[data-pos-line-discount-panel]").forEach(function (other) { other.hidden = true; });
+            pos.querySelectorAll("[data-pos-line-discount-toggle]").forEach(function (other) { other.setAttribute("aria-expanded", "false"); });
+            panel.hidden = !opening;
+            lineDiscountToggle.setAttribute("aria-expanded", String(opening));
+            if (opening) panel.querySelector("input[name='discount_amount']").focus();
+          }
+        }
+        if (event.target.closest("[data-pos-modal-close]")) closePosModal();
+      });
+      if (modal) {
+        modal.addEventListener("click", function (event) { if (event.target === modal) closePosModal(); });
+        modal.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") { event.preventDefault(); closePosModal(); }
+          if (event.key !== "Tab") return;
+          var focusable = Array.prototype.filter.call(modal.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href]"), function (element) { return element.getClientRects().length > 0; });
+          if (!focusable.length) return;
+          if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable[focusable.length - 1].focus(); }
+          else if (!event.shiftKey && document.activeElement === focusable[focusable.length - 1]) { event.preventDefault(); focusable[0].focus(); }
+        });
+        if (!modal.hidden) {
+          var errorPanel = modal.querySelector("[data-pos-control-panel]:not([hidden])");
+          if (errorPanel) openPosModal(errorPanel.dataset.posControlPanel, pos.querySelector('[data-pos-control="' + errorPanel.dataset.posControlPanel + '"]'));
+        }
+      }
 
       function showPosFeedback(message, level) {
         var feedback = pos.querySelector("[data-pos-feedback]");
@@ -971,11 +944,13 @@
         var rateOutput = pos.querySelector("[data-live-tax-rate]");
         var taxOutput = pos.querySelector("[data-live-tax]");
         var totalOutput = pos.querySelector("[data-live-total]");
+        var modalTotal = pos.querySelector("[data-pos-modal-total]");
         if (subtotal) subtotal.textContent = formatter.format(number(data.subtotal));
         if (discountOutput) discountOutput.textContent = "-" + formatter.format(number(data.discount));
         if (rateOutput) rateOutput.textContent = formatter.format(number(data.tax_rate));
         if (taxOutput) taxOutput.textContent = formatter.format(number(data.tax));
         if (totalOutput) totalOutput.textContent = formatter.format(number(data.grand_total));
+        if (modalTotal) modalTotal.textContent = formatter.format(number(data.grand_total));
         pos.querySelectorAll("[data-pos-line-count], [data-pos-cart-count]").forEach(function (output) {
           output.textContent = data.line_count;
         });
@@ -999,7 +974,6 @@
       }
 
       var detailsForm = pos.querySelector("form[data-pos-details]");
-      var detailsTimer;
       var detailsRequest;
 
       function setCheckoutPending(pending) {
@@ -1007,13 +981,16 @@
           button.disabled = pending;
           button.setAttribute("aria-disabled", pending ? "true" : "false");
         });
+        if (modal) modal.querySelectorAll("[data-pos-modal-save], [data-pos-modal-close]").forEach(function (button) { button.disabled = pending; });
       }
 
       function savePosDetails() {
         if (!detailsForm) return;
         setCheckoutPending(true);
-        if (detailsRequest) detailsRequest.abort();
+        if (detailsRequest) return;
         detailsRequest = new AbortController();
+        detailsForm.querySelectorAll("[data-pos-field-error]").forEach(function (node) { node.remove(); });
+        detailsForm.querySelectorAll("[aria-invalid='true']").forEach(function (node) { node.removeAttribute("aria-invalid"); });
         var token = detailsForm.querySelector("input[name='csrfmiddlewaretoken']");
         fetch(detailsForm.action || window.location.href, {
           method: "POST",
@@ -1030,46 +1007,111 @@
         }).then(function (result) {
           if (!result.response.ok) {
             if (result.data.cart_html) updatePos(result.data);
-            setCheckoutPending(true);
-            var detailsPanel = detailsForm.closest("details");
-            if (detailsPanel) detailsPanel.open = true;
+            var firstInvalid;
+            var firstInvalidName;
+            Object.keys(result.data.errors || {}).forEach(function (name) {
+              var field = detailsForm.elements.namedItem(name);
+              if (!field || !field.closest) return;
+              var visibleField = document.getElementById(field.id + "-search") || field;
+              var isFirst = !firstInvalid;
+              if (isFirst) { firstInvalid = visibleField; firstInvalidName = name; }
+              field.setAttribute("aria-invalid", "true");
+              visibleField.setAttribute("aria-invalid", "true");
+              var error = document.createElement("p");
+              error.dataset.posFieldError = name;
+              error.className = "text-sm text-rose-700";
+              error.setAttribute("role", "alert");
+              error.textContent = result.data.errors[name].map(function (item) { return item.message; }).join(" ");
+              field.insertAdjacentElement("afterend", error);
+            });
+            if (firstInvalidName === "customer" || firstInvalidName === "walk_in_name" || firstInvalidName === "sale_pricing_category") {
+              closePosModal({ force: true, restore: false, returnFocus: false });
+              selectDetailTab("customer");
+            } else {
+              var controlName = { notes: "notes", discount_amount: "discount", tax_rate: "tax", shipping_address: "delivery" }[firstInvalidName];
+              if (controlName) openPosModal(controlName, pos.querySelector('[data-pos-control="' + controlName + '"]'));
+            }
+            if (firstInvalid) firstInvalid.focus();
+            showModalFeedback(result.data.message || "Sale details could not be saved.");
             showPosFeedback(result.data.message || "Sale details could not be saved.", "warning");
             return;
           }
           updatePos(result.data);
+          Object.keys(modalFields).forEach(function (name) {
+            var field = document.getElementById("id_" + modalFields[name]);
+            if (field) savedModalValues[name] = field.value;
+          });
+          var notesButton = pos.querySelector('[data-pos-control="notes"]');
+          if (notesButton) notesButton.textContent = savedModalValues.notes ? "Edit note" : "Notes";
+          var addressSummary = pos.querySelector("[data-pos-address-summary]");
+          if (addressSummary) addressSummary.textContent = savedModalValues.delivery || "No delivery address saved. Collection is assumed.";
+          closePosModal({ force: true, restore: false });
           setCheckoutPending(false);
           showPosFeedback(result.data.message, result.data.level);
         }).catch(function (error) {
-          if (error.name !== "AbortError") showPosFeedback("Connection issue. Sale details were not saved; try again.", "warning");
+          if (error.name !== "AbortError") {
+            showPosFeedback("Connection issue. Sale details were not saved; try again.", "warning");
+            showModalFeedback("Connection issue. Your changes were not saved; try again.");
+          }
+        }).finally(function () {
+          detailsRequest = null;
+          setCheckoutPending(false);
         });
       }
 
-      function queuePosDetailsSave() {
-        syncCartTotals();
-        setCheckoutPending(true);
-        window.clearTimeout(detailsTimer);
-        detailsTimer = window.setTimeout(savePosDetails, 450);
-      }
-
       if (detailsForm) {
-        detailsForm.addEventListener("input", queuePosDetailsSave);
-        detailsForm.addEventListener("change", queuePosDetailsSave);
         detailsForm.addEventListener("submit", function (event) {
           if (event.submitter && event.submitter.matches("[data-pos-convert]")) {
-            window.clearTimeout(detailsTimer);
-            if (detailsRequest) detailsRequest.abort();
+            if (detailsRequest) event.preventDefault();
             return;
           }
           event.preventDefault();
-          window.clearTimeout(detailsTimer);
           savePosDetails();
         });
       }
 
       pos.addEventListener("submit", function (event) {
+        var form = event.target.closest("form[data-pos-line-discount-form]");
+        if (!form) return;
+        event.preventDefault();
+        if (form.dataset.pending === "true") return;
+        form.dataset.pending = "true";
+        var button = form.querySelector("button[type='submit']");
+        var error = form.closest("[data-pos-line-discount-panel]").querySelector("[data-pos-line-discount-error]");
+        var token = form.querySelector("input[name='csrfmiddlewaretoken']");
+        error.hidden = true;
+        error.textContent = "";
+        if (button) button.disabled = true;
+        fetch(form.action, {
+          method: "POST", body: new FormData(form), credentials: "same-origin",
+          headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest", "X-CSRFToken": token ? token.value : "" }
+        }).then(function (response) {
+          return response.json().then(function (data) { return { response: response, data: data }; });
+        }).then(function (result) {
+          if (!result.response.ok) {
+            error.textContent = result.data.message || "Check the item discount and try again.";
+            error.hidden = false;
+            error.focus();
+            return;
+          }
+          updatePos(result.data);
+          showPosFeedback(result.data.message, result.data.level);
+        }).catch(function () {
+          error.textContent = "Connection issue. Item discount was not saved; try again.";
+          error.hidden = false;
+        }).finally(function () {
+          form.dataset.pending = "false";
+          if (button) button.disabled = false;
+        });
+      });
+
+      var adjustPending = false;
+      pos.addEventListener("submit", function (event) {
         var form = event.target.closest("form[data-pos-adjust]");
         if (!form) return;
         event.preventDefault();
+        if (adjustPending) return;
+        adjustPending = true;
         var button = form.querySelector("button");
         if (button && button.disabled) return;
         if (button) button.disabled = true;
@@ -1091,6 +1133,7 @@
             return;
           }
           if (!result.response.ok) {
+            if (result.data.cart_html) updatePos(result.data);
             showPosFeedback(result.data.message || "The cart could not be updated.", "warning");
             return;
           }
@@ -1099,6 +1142,7 @@
         }).catch(function () {
           showPosFeedback("Connection issue. Your cart was not changed; try again.", "warning");
         }).finally(function () {
+          adjustPending = false;
           if (button) button.disabled = false;
         });
       });

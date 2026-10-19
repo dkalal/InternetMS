@@ -471,6 +471,54 @@ class InventoryService:
 
 class CartService:
     @classmethod
+    def set_line_discount(cls, *, organization, cart_id, line_id, discount_amount, actor, membership=None):
+        """Apply one draft-line discount under the same checkout and grant rules."""
+        from products.pricing import BelowCostError, validate_net_unit_price
+        from users.permissions import PermissionCode, has_tenant_permission
+
+        if not has_tenant_permission(actor, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership):
+            raise InventoryError('You do not have permission to apply discounts.')
+        with transaction.atomic():
+            cart = Cart.objects.select_for_update().filter(
+                tenant=organization, pk=cart_id, status=Cart.Status.DRAFT,
+            ).first()
+            if cart is None:
+                raise InventoryError('This draft sale is unavailable.')
+            line = CartLine.objects.select_for_update().select_related('product').filter(
+                tenant=organization, cart=cart, pk=line_id,
+            ).first()
+            if line is None:
+                raise InventoryError('This item is unavailable in the draft sale.')
+            cls.refresh_cart_prices(cart=cart)
+            line.refresh_from_db()
+            amount = money(discount_amount)
+            if amount < 0 or amount > line.quantity * line.unit_price:
+                raise InventoryError('Item discount cannot exceed the line amount.')
+            line.discount_amount = amount
+            line.save(update_fields=['discount_amount', 'updated_at'])
+            cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
+            lines = list(cart.lines.select_related('product').order_by('id'))
+            subtotal = sum((item.line_total for item in lines), Decimal('0.00'))
+            if cart.discount_amount > subtotal:
+                raise InventoryError('Cart discount cannot exceed the subtotal after item discounts.')
+            allocated = Decimal('0.00')
+            for index, item in enumerate(lines):
+                if index == len(lines) - 1:
+                    share = cart.discount_amount - allocated
+                else:
+                    share = cart.discount_amount * item.line_total / subtotal if subtotal else Decimal('0.00')
+                    allocated += share
+                try:
+                    validate_net_unit_price(
+                        product=item.product, quantity=item.quantity, unit_price=item.unit_price,
+                        line_discount=item.discount_amount, allocated_document_discount=share,
+                        actor=actor, organization=organization,
+                    )
+                except BelowCostError as exc:
+                    raise InventoryError(str(exc)) from exc
+            return cart
+
+    @classmethod
     def validate_discount_authority(cls, *, cart, actor, membership=None):
         """Enforce the actor's current cap over all line and cart discounts."""
         from users.permissions import discount_authorization_error, membership_for

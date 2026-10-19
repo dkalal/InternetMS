@@ -1,0 +1,11 @@
+<script>
+  (() => {
+    const update = (field) => {
+      const wrapper = field?.closest('[data-inside-caption]');
+      if (wrapper) wrapper.classList.toggle('has-value', Boolean(field.value));
+    };
+    document.querySelectorAll('[data-inside-caption] input, [data-inside-caption] select').forEach(update);
+    document.addEventListener('input', (event) => update(event.target));
+    document.addEventListener('change', (event) => update(event.target));
+  })();
+</script>

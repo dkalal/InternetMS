@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}{{ workspace_title }}{% endblock %}
 {% block content %}
 <noscript><div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="alert"><strong>JavaScript is required for product search.</strong> Enable JavaScript to add or change purchase products safely. Existing draft data remains unchanged.</div></noscript>
@@ -20,29 +20,29 @@
     {% if form.non_field_errors %}<div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert"><p class="font-semibold">The purchase could not be saved.</p>{{ form.non_field_errors }}</div>{% endif %}
     <section class="jims-panel">
       <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 1</p><h2 class="mt-1 font-semibold text-slate-950">Supplier and purchase information</h2><p class="mt-1 text-sm text-slate-600">Choose an active supplier in this organization and record the delivery reference and date.</p></div>
-      <div class="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="lg:col-span-2">{% include "components/form_field.html" with field=form.supplier %}<button type="button" class="mt-2 text-sm font-semibold text-brand-700 hover:text-brand-900" data-open-quick-supplier>+ New supplier</button></div>
-        {% include "components/form_field.html" with field=form.reference_number %}{% include "components/form_field.html" with field=form.purchase_date %}
-        <div class="sm:col-span-2 lg:col-span-4">{% include "components/form_field.html" with field=form.notes %}</div>
+      <div class="flex flex-wrap items-start gap-4 p-4 sm:p-5">
+        <div class="min-w-0 w-full sm:max-w-[20rem] sm:flex-[1_1_16rem]">{% include "components/inside_caption_field.html" with field=form.supplier %}{% if INVENTORY_CAN_MANAGE_SUPPLIERS %}<a href="{% url 'inventory:supplier_create' %}" data-open-quick-supplier data-create-record-url="{% url 'inventory:supplier_create' %}?purchase_modal=1" data-create-record-kind="supplier" class="mt-2 inline-block text-sm font-semibold text-brand-700 hover:text-brand-900">+ New supplier</a>{% endif %}</div>
+        <div class="min-w-0 w-full sm:max-w-[15rem] sm:flex-[1_1_12rem]">{% include "components/inside_caption_field.html" with field=form.reference_number %}</div>
+        <div class="min-w-0 w-full sm:max-w-[11rem] sm:flex-[1_1_9rem]">{% include "components/inside_caption_field.html" with field=form.purchase_date %}</div>
+        <div class="w-full">{% include "components/form_field.html" with field=form.notes %}</div>
       </div>
     </section>
 
-    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-quick-supplier-dialog role="dialog" aria-modal="true" aria-labelledby="quick-supplier-title">
-      <div class="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-5"><div><h2 id="quick-supplier-title" class="text-lg font-bold text-slate-950">New supplier</h2><p class="mt-1 text-sm text-slate-600">Add the essential details now. Complete advanced details later from Suppliers.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-quick-supplier aria-label="Close new supplier dialog">Close</button></div>
-        <div class="space-y-4 p-5">
-          <div><label for="quick-supplier-name" class="block text-sm font-medium text-slate-700">Supplier/company name <span class="text-rose-600">*</span></label><input id="quick-supplier-name" type="text" maxlength="200" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" autocomplete="organization" data-quick-supplier-name><p class="mt-1 hidden text-sm text-rose-600" data-quick-supplier-name-error role="alert"></p></div>
-          <div><label for="quick-supplier-phone" class="block text-sm font-medium text-slate-700">Phone <span class="text-rose-600">*</span></label><input id="quick-supplier-phone" type="tel" maxlength="40" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="+255…" autocomplete="tel" data-quick-supplier-phone><p class="mt-1 hidden text-sm text-rose-600" data-quick-supplier-phone-error role="alert"></p></div>
-          <p class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700" data-quick-supplier-error role="alert"></p>
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/60 p-2 sm:p-5" data-create-record-dialog data-quick-supplier-dialog role="dialog" aria-modal="true" aria-labelledby="create-record-title" aria-describedby="create-record-description">
+      <div class="flex h-[min(94dvh,58rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
+          <div><p class="text-xs font-bold uppercase tracking-wide text-brand-700">Purchase setup</p><h2 id="create-record-title" class="mt-1 text-lg font-bold text-slate-950" data-create-record-title></h2><p id="create-record-description" class="mt-1 text-sm text-slate-600">Complete the details, save, and return to this purchase.</p></div>
+          <button type="button" class="jims-btn jims-btn-secondary shrink-0" data-close-create-record aria-label="Close creation dialog">Close</button>
         </div>
-        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4"><button type="button" class="jims-btn jims-btn-secondary" data-cancel-quick-supplier>Cancel</button><button type="button" class="jims-btn jims-btn-primary" data-save-quick-supplier data-loading-label="Saving…">Save supplier</button></div>
+        <p class="px-5 py-3 text-sm text-slate-600" data-create-record-loading role="status">Loading form...</p>
+        <iframe class="hidden min-h-0 w-full flex-1 border-0" title="Create record" data-create-record-frame></iframe>
       </div>
     </div>
 
     <section class="jims-panel" data-purchase-items-panel>
       <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2</p><h2 class="mt-1 font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">Enter quantity and unit cost in each product's selected sales/stock unit.</p></div>
-        <div class="flex flex-wrap gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-open-quick-product>+ New product</button><button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add one row</button><button type="button" class="jims-btn jims-btn-secondary" data-open-paste-rows>Paste rows</button><button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products>Add multiple products</button></div>
+        <div class="flex flex-wrap gap-2">{% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-create' %}" data-open-quick-product data-create-record-url="{% url 'product-create' %}?purchase_modal=1" data-create-record-kind="product" class="jims-btn jims-btn-secondary">+ New product</a>{% endif %}<button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add one row</button><button type="button" class="jims-btn jims-btn-secondary" data-open-paste-rows>Paste rows</button><button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products>Add multiple products</button></div>
       </div>
       {{ formset.management_form }}
       {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><p class="font-semibold">Check the purchase items.</p>{{ formset.non_form_errors }}</div>{% endif %}
@@ -86,22 +86,6 @@
       </template>
     </section>
 
-    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-quick-product-dialog role="dialog" aria-modal="true" aria-labelledby="quick-product-title">
-      <div class="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
-        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-5"><div><h2 id="quick-product-title" class="text-lg font-bold text-slate-950">New stock product</h2><p class="mt-1 text-sm text-slate-600">Create the essentials now; complete advanced catalog details later.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-quick-product>Close</button></div>
-        <div class="space-y-4 p-5">
-          <div><label class="block text-sm font-medium text-slate-700">Product name *</label><input type="text" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-name><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-name-error role="alert"></p></div>
-          <div><label class="block text-sm font-medium text-slate-700">Category *</label><select class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-category><option value="">Select category</option>{% for category in quick_product_categories %}<option value="{{ category.pk }}" data-default-unit="{{ category.default_unit_id|default:'' }}">{{ category.name }}</option>{% endfor %}</select><button type="button" class="mt-2 text-sm font-semibold text-brand-700" data-toggle-quick-category>+ New category</button><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-category-error></p></div>
-          <div class="hidden space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3" data-quick-category-panel><p class="text-sm font-semibold text-slate-900">Create category</p><div><input type="text" placeholder="Category name" class="block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-category-name><p class="mt-1 hidden text-sm text-rose-600" data-quick-category-name-error role="alert"></p></div><div><select class="block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-category-unit><option value="">Default unit</option>{% for unit in quick_product_units %}<option value="{{ unit.pk }}">{{ unit.label }}</option>{% endfor %}</select><p class="mt-1 hidden text-sm text-rose-600" data-quick-category-unit-error role="alert"></p></div><p class="hidden text-sm text-rose-600" data-quick-category-error role="alert"></p><button type="button" class="jims-btn jims-btn-secondary" data-save-quick-category>Create category</button></div>
-          <div><label class="block text-sm font-medium text-slate-700">Sales/stock unit *</label><select class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-unit><option value="">Select unit</option>{% for unit in quick_product_units %}<option value="{{ unit.pk }}">{{ unit.label }}</option>{% endfor %}</select><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-unit-error></p></div>
-          <div><label class="block text-sm font-medium text-slate-700">Selling price *</label><input type="number" min="0.01" step="0.01" class="mt-1 block min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-quick-product-price><p class="mt-1 hidden text-sm text-rose-600" data-quick-product-price-error role="alert"></p><p class="mt-1 text-xs text-slate-500">Required by the current catalog safety rule. Receiving will still re-check it against the resulting cost floor.</p></div>
-          <div class="flex flex-wrap gap-5"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-quick-product-serialized> Serialized</label><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-quick-product-expiry> Track expiry</label></div>
-          <p class="hidden rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700" data-quick-product-error></p>
-        </div>
-        <div class="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4"><button type="button" class="jims-btn jims-btn-secondary" data-cancel-quick-product>Cancel</button><button type="button" class="jims-btn jims-btn-primary" data-save-quick-product>Save &amp; add product</button></div>
-      </div>
-    </div>
-
     <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-paste-rows-dialog role="dialog" aria-modal="true" aria-labelledby="paste-rows-title">
       <div class="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-4 sm:p-5"><div><h2 id="paste-rows-title" class="text-lg font-bold text-slate-950">Paste purchase rows</h2><p class="mt-1 text-sm text-slate-600">Copy up to 200 rows from Excel or Google Sheets. Nothing is saved until the purchase draft is submitted.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-paste-rows>Close</button></div>
@@ -128,7 +112,7 @@
       <div class="jims-panel-header"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 3</p><h2 id="purchase-summary-heading" class="mt-1 font-semibold text-slate-950">Purchase summary</h2></div>
       <dl class="grid gap-px bg-slate-200 sm:grid-cols-3">
         <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Valid lines</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ valid_line_count }}</dd></div>
-        <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Authoritative total</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ authoritative_total|intcomma }} TZS</dd></div>
+        <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Authoritative total</dt><dd class="mt-1 text-xl font-bold text-slate-950">{{ authoritative_total|money_display }} TZS</dd></div>
         <div class="bg-white p-4"><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Stock impact</dt><dd class="mt-1 text-sm font-bold text-amber-800">Draft — stock has not changed</dd></div>
       </dl>
       <p class="border-t border-slate-200 px-4 py-3 text-xs text-slate-600">The server recalculates totals from valid saved lines. Browser previews are informational only.</p>
@@ -144,4 +128,7 @@
     </div>
   </form>
 </div>
+{% endblock %}
+{% block extra_js %}
+{% include "components/inside_caption_script.html" %}
 {% endblock %}

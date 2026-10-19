@@ -236,7 +236,10 @@ class ProductStockCostFloorFormTests(TestCase):
         url = reverse('product-update', args=[self.product.pk])
         response = self.client.get(url)
         self.assertContains(response, 'weighted-average cost of stock on hand')
-        self.assertContains(response, '70,000.000000')
+        self.assertContains(response, '70,000')
+        self.assertContains(response, 'data-product-pricing-summary')
+        self.assertContains(response, 'aria-label="Pricing summary"')
+        self.assertContains(response, 'sm:w-[176px]')
 
         response = self.client.post(url, self.form_data())
         self.assertEqual(response.status_code, 200)
@@ -493,15 +496,111 @@ class ProductListViewTests(TestCase):
         self.assertEqual(response.context["active_sort"], "name")
 
     def test_product_create_page_renders(self):
+        manager = User.objects.create_user(username="product-manager", password="pass")
+        UserAccessProfile.objects.create(
+            user=manager,
+            tenant=self.org1,
+            role=UserAccessProfile.Role.TENANT_ADMIN,
+        )
+        self.client.login(username="product-manager", password="pass")
         response = self.client.get(reverse("product-create"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Save product")
-        self.assertContains(response, "Pricing summary")
+        self.assertContains(response, 'class="jims-form-page jims-product-form-page')
+        self.assertContains(response, 'sm:w-[320px]')
+        self.assertContains(response, 'data-product-image-preview')
+        self.assertContains(response, 'data-product-margin>')
+        self.assertContains(response, 'aria-label="Pricing summary"')
         self.assertContains(response, 'enctype="multipart/form-data"')
         self.assertContains(response, 'data-product-image-preview')
         self.assertNotContains(response, 'name="measure_unit"')
         self.assertNotContains(response, 'name="retail_price"')
+
+    def test_product_create_and_purchase_modal_offer_tenant_scoped_category_creation(self):
+        manager = User.objects.create_user(username="category-product-manager", password="pass")
+        UserAccessProfile.objects.create(
+            user=manager, tenant=self.org1, role=UserAccessProfile.Role.TENANT_ADMIN,
+        )
+        local_unit = UnitOfMeasure.objects.create(
+            organization=self.org1, tenant=self.org1, name="Piece", symbol="pc",
+        )
+        foreign_unit = UnitOfMeasure.objects.create(
+            organization=self.org2, tenant=self.org2, name="Foreign unit", symbol="fu",
+        )
+        self.client.login(username="category-product-manager", password="pass")
+        for params in ({}, {"purchase_modal": "1"}):
+            with self.subTest(params=params):
+                response = self.client.get(reverse("product-create"), params)
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, 'data-add-product-category')
+                self.assertContains(response, reverse('inventory:purchase_category_quick_create'))
+                self.assertContains(response, f'<option value="{local_unit.pk}">', html=False)
+                self.assertNotContains(response, f'<option value="{foreign_unit.pk}">', html=False)
+
+    def test_product_create_supports_serialized_stock_items(self):
+        manager = User.objects.create_user(username="serialized-product-manager", password="pass")
+        UserAccessProfile.objects.create(
+            user=manager,
+            tenant=self.org1,
+            role=UserAccessProfile.Role.TENANT_ADMIN,
+        )
+        self.client.login(username="serialized-product-manager", password="pass")
+        unit = UnitOfMeasure.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Piece",
+            symbol="Pc",
+        )
+        category = ProductCategory.objects.create(
+            organization=self.org1,
+            tenant=self.org1,
+            name="Serialized devices",
+            default_unit=unit,
+        )
+        category.allowed_units.set([unit])
+
+        get_response = self.client.get(reverse("product-create"))
+        self.assertContains(get_response, 'name="is_serialized"')
+        self.assertContains(get_response, "Serial numbers are recorded with stock")
+        self.assertContains(get_response, "Save &amp; add serial numbers")
+
+        response = self.client.post(reverse("product-create"), {
+            "sku": "SERIAL-ROUTER-1",
+            "name": "Serialized router",
+            "item_type": Product.ItemType.PHYSICAL,
+            "catalog_category": category.pk,
+            "sales_unit": unit.pk,
+            "buying_price": "100000",
+            "selling_price": "150000",
+            "technician_price": "",
+            "wholesale_price": "",
+            "wholesale_min_quantity": "1",
+            "is_serialized": "on",
+            "reorder_threshold": "0",
+            "tax_eligible": "on",
+            "is_active": "on",
+            "category": "hardware",
+            "next": "add_serials",
+        })
+
+        product = Product.objects.get(tenant=self.org1, sku="SERIAL-ROUTER-1")
+        stock_url = f'{reverse("inventory:stock_adjust")}?product={product.pk}'
+        self.assertRedirects(response, stock_url)
+        self.assertTrue(product.is_serialized)
+        self.assertTrue(product.track_stock)
+        self.assertEqual(product.quantity, Decimal("0"))
+
+        stock_response = self.client.get(stock_url)
+        self.assertEqual(stock_response.status_code, 200)
+        self.assertEqual(stock_response.context["form"]["product"].value(), str(product.pk))
+        self.assertContains(stock_response, 'name="serial_numbers"')
+        self.assertContains(stock_response, "One serial per line")
+
+    def test_sales_user_cannot_open_product_create_page(self):
+        response = self.client.get(reverse("product-create"))
+
+        self.assertEqual(response.status_code, 403)
 
     def test_category_unit_is_applied_when_creating_a_catalog_item(self):
         category = ProductCategory.objects.create(

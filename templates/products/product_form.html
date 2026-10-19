@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add catalog item{% endif %}{% endblock %}
 {% block content %}
-{% include "inventory/includes/module_nav.html" %}
+{% if not embedded_create %}{% include "inventory/includes/module_nav.html" %}{% endif %}
 
-<div class="jims-form-page jims-form-page--standard space-y-5">
+<div class="jims-form-page jims-product-form-page max-w-[80rem] space-y-4">
   <header class="jims-page-header">
     <div>
       <nav class="jims-breadcrumb" aria-label="Breadcrumb">
@@ -13,9 +13,8 @@
         <span>{% if form.instance.pk %}Edit item{% else %}New item{% endif %}</span>
       </nav>
       <h1 class="jims-page-title mt-1">{% if form.instance.pk %}Edit {{ form.instance.name }}{% else %}Add product or service{% endif %}</h1>
-      <p class="jims-page-subtitle">Create one reusable catalog record for purchasing, sales, quotations, and invoices.</p>
     </div>
-    <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Back to catalog</a>
+    {% if not embedded_create %}<a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Back to catalog</a>{% endif %}
   </header>
 
   {% if has_movement_history %}
@@ -25,158 +24,127 @@
     </div>
   {% endif %}
 
-  <form method="post" enctype="multipart/form-data" class="space-y-5" data-product-form data-unsaved-form data-submit-lock>
+  <form method="post" enctype="multipart/form-data" class="jims-form-section" data-product-form data-unsaved-form data-submit-lock>
     {% csrf_token %}
-    {% if form.non_field_errors %}
-      <div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">
-        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
-      </div>
+    {% if form.errors %}
+      <section class="jims-error-summary" aria-labelledby="product-errors-title" role="alert" tabindex="-1">
+        <h2 id="product-errors-title" class="font-semibold text-rose-950">Fix the highlighted fields</h2>
+        <div class="mt-2 space-y-1 text-sm">
+          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+          {% for field in form %}{% if field.errors %}<a class="block underline" href="#{{ field.id_for_label }}">{{ field.label }} needs attention</a>{% endif %}{% endfor %}
+        </div>
+      </section>
     {% endif %}
 
-    <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_19rem] 2xl:grid-cols-[14rem_minmax(0,1fr)_19rem]">
-      <aside class="hidden 2xl:order-1 2xl:block">
-        <nav class="jims-panel sticky top-24 p-3" aria-label="Product form sections">
-          <p class="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">On this page</p>
-          <a class="jims-sidebar-link" href="#product-basics">Item foundation</a>
-          <a class="jims-sidebar-link" href="#product-image">Catalog photo</a>
-          <a class="jims-sidebar-link" href="#product-identifiers">Classification</a>
-          {% if INVENTORY_CAN_VIEW_COSTS %}<a class="jims-sidebar-link" href="#product-pricing">Commercial settings</a>{% endif %}
-          <a class="jims-sidebar-link" href="#product-inventory">Inventory controls</a>
-          <a class="jims-sidebar-link" href="#product-association">Customer association</a>
-        </nav>
-      </aside>
-
-      <div class="space-y-5 2xl:order-2">
-        <section id="product-basics" class="jims-form-section">
-          <div class="jims-panel-header">
-            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">1 · Basic information</p>
-            <h2 class="mt-1 font-semibold text-slate-950">What are you selling?</h2>
-            <p class="mt-1 text-sm text-slate-600">Use a clear customer-facing name and short operational description.</p>
+    <div class="{% if INVENTORY_CAN_VIEW_COSTS %}lg:grid lg:grid-cols-[minmax(0,1fr)_18rem]{% endif %}">
+    <div class="min-w-0 divide-y divide-slate-200">
+      <section id="product-basics" class="p-4 sm:p-5">
+        <h2 class="mb-3 font-semibold text-slate-950">General</h2>
+        <div class="flex flex-wrap items-end gap-x-4 gap-y-3">
+          <div class="w-full min-w-0 sm:w-[320px]">{% include "components/form_field.html" with field=form.name hide_help=True %}</div>
+          <div class="w-full min-w-0 sm:w-[200px]">{% include "components/form_field.html" with field=form.item_type hide_help=True %}</div>
+          <div class="min-w-0">{% include "products/includes/inline_checkbox.html" with field=form.is_active %}</div>
+        </div>
+        <div class="mt-3 flex flex-wrap items-start gap-x-4 gap-y-3">
+          <div class="w-full min-w-0 sm:w-[210px]">
+            {% include "components/form_field.html" with field=form.catalog_category hide_help=True %}
+            {% if not form.instance.pk and INVENTORY_CAN_MANAGE_CATEGORIES %}<button type="button" class="mt-1 text-xs font-semibold text-brand-700 hover:underline" data-add-product-category aria-expanded="false" aria-controls="product-new-category">+ Add new category</button>{% endif %}
           </div>
-          <div class="grid gap-4 p-5 sm:grid-cols-2">
-            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.name %}</div>
-            <div id="product-image" class="sm:col-span-2">
-              <div class="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
-                <div class="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" data-product-image-preview>
-                  {% if form.instance.image %}
-                    <img src="{{ form.instance.image.url }}" alt="Current photo for {{ form.instance.name }}" class="h-full w-full object-cover" data-product-image-preview-img>
-                    <div class="hidden h-full w-full items-center justify-center bg-gradient-to-br from-brand-50 to-slate-100 text-3xl font-bold text-brand-700" data-product-image-placeholder>{{ form.instance.name|slice:":1"|upper }}</div>
-                  {% else %}
-                    <img src="" alt="Selected product preview" class="hidden h-full w-full object-cover" data-product-image-preview-img>
-                    <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-brand-50 to-slate-100" data-product-image-placeholder>
-                      <svg class="h-9 w-9 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Z"/></svg>
-                    </div>
-                  {% endif %}
+          <div class="w-full min-w-0 sm:w-[140px]">{% include "components/form_field.html" with field=form.sales_unit hide_help=True %}</div>
+          <div class="w-full min-w-0 sm:w-[190px]">{% include "components/form_field.html" with field=form.sku hide_help=True %}</div>
+        </div>
+        {% if not form.instance.pk and INVENTORY_CAN_MANAGE_CATEGORIES %}
+        <div id="product-new-category" class="mt-3 hidden rounded-lg border border-brand-200 bg-brand-50 p-3" data-new-product-category data-create-url="{% url 'inventory:purchase_category_quick_create' %}">
+          <h3 class="text-sm font-semibold text-slate-950">Add new category</h3>
+          <p class="mt-1 text-xs text-slate-600">Choose the unit this category will use. You can manage more units later from Categories.</p>
+          <div class="mt-3 flex flex-wrap items-end gap-3">
+            <div class="w-full sm:w-[220px]"><label for="product-category-name" class="block text-sm font-medium text-slate-700">Category name <span class="text-rose-600">*</span></label><input id="product-category-name" type="text" maxlength="120" class="mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" data-new-category-name></div>
+            <div class="w-full sm:w-[170px]"><label for="product-category-unit" class="block text-sm font-medium text-slate-700">Default unit <span class="text-rose-600">*</span></label><select id="product-category-unit" class="jims-select mt-1 w-full" data-new-category-unit><option value="">Select unit</option>{% for unit in quick_category_units %}<option value="{{ unit.pk }}">{{ unit.label }}</option>{% endfor %}</select></div>
+            <button type="button" class="jims-btn jims-btn-primary" data-save-product-category>Add category</button>
+            <button type="button" class="jims-btn jims-btn-secondary" data-cancel-product-category>Cancel</button>
+          </div>
+          <p class="mt-2 hidden text-sm text-rose-700" data-new-category-error role="alert"></p>
+        </div>
+        {% endif %}
+        <div class="hidden">{{ form.category }}</div>
+        <details class="mt-3 text-xs text-slate-600"><summary class="cursor-pointer font-medium text-brand-700">Identifier and item guidance</summary><p class="mt-1">A SKU is generated when left blank. Physical items can use stock, serial, expiry and reorder controls. Services do not use inventory controls.</p></details>
+      </section>
+
+      {% if INVENTORY_CAN_VIEW_COSTS %}
+      <section id="product-pricing" class="p-4 sm:p-5">
+        <h2 class="mb-3 font-semibold text-slate-950">Pricing</h2>
+        {% if form.current_cost_floor is not None %}<div class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="note"><strong>Minimum selling threshold:</strong> above TZS {{ form.current_cost_floor|number_display:6 }} per {{ form.instance.get_measure_unit_display }}{% if form.movement_backed_cost %}, based on the weighted-average cost of stock on hand{% endif %}.</div>{% endif %}
+        <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
+          <div class="w-full min-w-0 sm:w-[176px]">{% include "components/form_field.html" with field=form.buying_price hide_help=True %}</div>
+          <div class="w-full min-w-0 sm:w-[176px]">{% include "components/form_field.html" with field=form.selling_price hide_help=True %}</div>
+          <div class="w-full min-w-0 sm:w-[176px]">{% include "components/form_field.html" with field=form.technician_price hide_help=True %}</div>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-x-7 gap-y-1">
+          {% include "products/includes/inline_checkbox.html" with field=form.tax_eligible %}
+          {% include "products/includes/inline_checkbox.html" with field=form.allow_wholesale %}
+        </div>
+        <div class="mt-2 flex flex-wrap gap-3" data-wholesale-panel>
+          <div class="w-full sm:w-[176px]">{% include "components/form_field.html" with field=form.wholesale_price hide_help=True %}</div>
+          <div class="w-full sm:w-[176px]">{% include "components/form_field.html" with field=form.wholesale_min_quantity hide_help=True %}</div>
+        </div>
+        <details class="mt-3 text-xs text-slate-600"><summary class="cursor-pointer font-medium text-brand-700">Pricing guidance</summary><p class="mt-1">Technician price uses the standard selling price when blank. Gross margin and margin rate are guidance based on buying price and standard selling price.</p></details>
+      </section>
+      {% endif %}
+
+      <section id="product-inventory" class="p-4 sm:p-5" data-physical-only>
+        <h2 class="mb-2 font-semibold text-slate-950">Inventory</h2>
+        <div class="flex flex-wrap items-end gap-x-6 gap-y-2">
+          {% include "products/includes/inline_checkbox.html" with field=form.track_stock %}
+          {% include "products/includes/inline_checkbox.html" with field=form.is_serialized %}
+          <div data-stock-only class="w-full sm:w-[112px]">{% include "components/form_field.html" with field=form.reorder_threshold hide_help=True %}</div>
+          <div data-stock-only>{% include "products/includes/inline_checkbox.html" with field=form.track_expiry %}</div>
+        </div>
+        <div class="mt-3 hidden rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900" data-serialized-only role="status">
+          <strong>Serial numbers are recorded with stock.</strong> Save this catalog item first, then enter one unique serial number for every unit received or added.
+        </div>
+        <details class="mt-2 text-xs text-slate-600"><summary class="cursor-pointer font-medium text-brand-700">Stock guidance</summary><p class="mt-1">Stock balances change through receiving and authorized adjustments. Each received serialized unit needs a unique serial number.</p></details>
+      </section>
+      <section class="p-0">
+            <details id="product-image" class="group" {% if form.image.errors or form.description.errors or form.brand.errors or form.model_number.errors %}open{% endif %}>
+              <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600/30">
+                <span><strong class="text-sm text-slate-900">Photo, description and specifications</strong><span class="ml-2 text-xs font-normal text-slate-500">Optional</span></span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" class="h-4 w-4 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m5 7.5 5 5 5-5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </summary>
+              <div class="grid gap-4 border-t border-slate-200 bg-white p-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
+                <div class="relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-white" data-product-image-preview>
+                  {% if form.instance.image %}<img src="{{ form.instance.image.url }}" alt="Current photo for {{ form.instance.name }}" class="h-full w-full object-cover" data-product-image-preview-img><div class="hidden h-full w-full items-center justify-center bg-brand-50 text-2xl font-bold text-brand-700" data-product-image-placeholder>{{ form.instance.name|slice:":1"|upper }}</div>{% else %}<img src="" alt="Selected product preview" class="hidden h-full w-full object-cover" data-product-image-preview-img><div class="flex h-full w-full items-center justify-center bg-brand-50" data-product-image-placeholder><svg class="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Z"/></svg></div>{% endif %}
                 </div>
-                <div>
+                <div class="min-w-0 space-y-4">
                   {% include "components/form_field.html" with field=form.image %}
-                  <p class="mt-2 text-xs leading-5 text-slate-500">Square or landscape photos work best. Images are resized to 1600 px and converted to WebP automatically.</p>
+                  {% include "components/form_field.html" with field=form.description %}
+                  <div class="grid gap-3 sm:grid-cols-2" data-physical-only><div>{% include "components/form_field.html" with field=form.brand %}</div><div>{% include "components/form_field.html" with field=form.model_number %}</div></div>
                 </div>
               </div>
-            </div>
-            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.description %}</div>
-            <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
-          </div>
-        </section>
-
-        <section id="product-identifiers" class="jims-form-section">
-          <div class="jims-panel-header">
-            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">2 · Classification and identifiers</p>
-            <h2 class="mt-1 font-semibold text-slate-950">Make the item easy to find</h2>
-          </div>
-          <div class="grid gap-4 p-5 sm:grid-cols-2">
-            <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.item_type %}
-              <div class="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950" data-product-type-summary aria-live="polite">Choose an item type to see the relevant stock controls.</div>
-            </div>
-            {% include "components/form_field.html" with field=form.catalog_category %}
-            {% include "components/form_field.html" with field=form.sales_unit %}
-            {% include "components/form_field.html" with field=form.sku %}
-            <div data-physical-only>{% include "components/form_field.html" with field=form.brand %}</div>
-            <div data-physical-only>{% include "components/form_field.html" with field=form.model_number %}</div>
-            <div class="hidden">{{ form.category }}</div>
-          </div>
-        </section>
-
-        {% if INVENTORY_CAN_VIEW_COSTS %}
-          <section id="product-pricing" class="jims-form-section">
-            <div class="jims-panel-header">
-              <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">3 · Pricing</p>
-              <h2 class="mt-1 font-semibold text-slate-950">Set acquisition and selling prices</h2>
-              <p class="mt-1 text-sm text-slate-600">Margin is calculated for guidance and is never a separate editable value.</p>
-            </div>
-            {% if form.current_cost_floor is not None %}
-              <div class="mx-5 mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="note">
-                <p class="font-semibold">Current minimum selling threshold: above TZS {{ form.current_cost_floor|floatformat:6|intcomma }} per {{ form.instance.get_measure_unit_display }}</p>
-                {% if form.movement_backed_cost %}
-                  <p class="mt-1">This is the weighted-average cost of stock on hand, not the buying price shown below. Standard, technician, and enabled wholesale prices must each be above it. Changing the buying price does not change historical stock cost.</p>
-                {% else %}
-                  <p class="mt-1">No positive movement-backed stock sets a higher cost floor, so the buying price is used. Selling prices must be strictly above it.</p>
-                {% endif %}
-              </div>
-            {% endif %}
-            <div class="grid gap-4 p-5 sm:grid-cols-2">
-              <div>{% include "components/form_field.html" with field=form.buying_price %}</div>
-              {% include "components/form_field.html" with field=form.selling_price %}
-              {% include "components/form_field.html" with field=form.technician_price %}
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.tax_eligible %}</div>
-              <div class="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.allow_wholesale %}</div>
-              <div class="grid gap-4 sm:col-span-2 sm:grid-cols-2" data-wholesale-panel>
-                {% include "components/form_field.html" with field=form.wholesale_price %}
-                {% include "components/form_field.html" with field=form.wholesale_min_quantity %}
-              </div>
-            </div>
-          </section>
-        {% endif %}
-
-        <section id="product-inventory" class="jims-form-section" data-physical-only>
-          <div class="jims-panel-header">
-            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">4 · Inventory settings</p>
-            <h2 class="mt-1 font-semibold text-slate-950">Control how physical stock is tracked</h2>
-            <p class="mt-1 text-sm text-slate-600">Initial and ongoing quantities are recorded through receiving or authorized adjustments, never here.</p>
-          </div>
-          <div class="grid gap-4 p-5 sm:grid-cols-2">
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.track_stock %}</div>
-            <div data-stock-only>{% include "components/form_field.html" with field=form.reorder_threshold %}</div>
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4" data-stock-only>{% include "components/form_field.html" with field=form.is_serialized %}</div>
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4" data-stock-only>{% include "components/form_field.html" with field=form.track_expiry %}</div>
-            <div class="sm:col-span-2 hidden rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900" data-serialized-only>
-              Each received unit must have one unique serial number. Sales will require selecting exactly one available serial per unit.
-            </div>
-          </div>
-        </section>
-
-        {% include "includes/custom_fields_form.html" %}
+            </details>
+      </section>
+      {% include "includes/custom_fields_form.html" with compact_collapsed=True product_compact=True %}
+    </div>
+    {% if INVENTORY_CAN_VIEW_COSTS %}
+    <aside class="border-t border-slate-200 p-4 sm:p-5 lg:border-l lg:border-t-0" aria-label="Pricing summary">
+      <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
+        <p class="mt-2 text-xs text-slate-600" data-product-pricing-placeholder>Enter buying and standard prices to preview the margin.</p>
+        <dl class="mt-4 space-y-3 text-sm" data-product-pricing-summary hidden aria-live="polite">
+          <div class="flex justify-between gap-3"><dt class="text-slate-600">Standard selling</dt><dd class="text-right font-semibold text-slate-950" data-product-standard-selling></dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-600">Effective technician</dt><dd class="text-right font-semibold text-slate-950" data-product-effective-technician></dd></div>
+          <div class="flex justify-between gap-3 border-t border-slate-200 pt-3"><dt class="text-slate-600">Gross margin</dt><dd class="text-right font-semibold text-slate-950" data-product-margin></dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-600">Margin rate</dt><dd class="text-right font-semibold text-slate-950" data-product-margin-rate></dd></div>
+        </dl>
+        <p class="mt-3 text-xs leading-5 text-slate-500">Margin is guidance based on buying price and standard selling price.</p>
       </div>
-
-      <aside class="space-y-4 2xl:order-3">
-        {% if INVENTORY_CAN_VIEW_COSTS %}
-          <section class="jims-panel p-5 2xl:sticky 2xl:top-24">
-            <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
-            <dl class="mt-4 space-y-3 text-sm">
-              <div class="flex justify-between gap-4"><dt class="text-slate-500">Standard selling</dt><dd class="font-semibold text-slate-950" data-product-standard-selling>—</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-slate-500">Effective technician</dt><dd class="font-semibold text-slate-950" data-product-effective-technician>—</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-slate-500">Gross margin</dt><dd class="font-semibold text-slate-950" data-product-margin>—</dd></div>
-              <div class="flex justify-between gap-4 border-t border-slate-200 pt-3"><dt class="text-slate-500">Margin rate</dt><dd class="font-semibold text-slate-950" data-product-margin-rate>—</dd></div>
-            </dl>
-            <p class="mt-4 text-xs leading-5 text-slate-500">Operational margin guidance only; it is not full accounting profit.</p>
-          </section>
-        {% else %}
-          <section class="jims-panel p-5 2xl:sticky 2xl:top-24">
-            <h2 class="text-sm font-semibold text-slate-950">Pricing summary</h2>
-            <p class="mt-2 text-sm leading-6 text-slate-600">Buying cost and margin details require cost-report permission. No sensitive values are shown for your role.</p>
-          </section>
-        {% endif %}
-      </aside>
+    </aside>
+    {% endif %}
     </div>
 
-    <div class="jims-form-actions">
-      <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p class="text-xs text-slate-500">Catalog changes affect future documents. Stock balances remain movement-controlled.</p>
-        <div class="flex justify-end gap-2">
-          <a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
+    <div class="jims-product-actions flex flex-wrap justify-end gap-2 border-t border-slate-200 p-4 sm:p-5">
+          {% if embedded_create %}<button type="button" class="jims-btn jims-btn-secondary" onclick="window.parent.postMessage({type: 'jims-purchase-modal-close'}, window.location.origin)">Cancel</button>{% else %}<a href="{% url 'product-list' %}" class="jims-btn jims-btn-secondary">Cancel</a>{% endif %}
+          {% if not embedded_create and INVENTORY_CAN_MANAGE_STOCK %}<button type="submit" name="next" value="add_serials" class="jims-btn jims-btn-secondary hidden" data-serialized-only data-loading-label="Saving…">Save &amp; add serial numbers</button>{% endif %}
           <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">{% if form.instance.pk %}Save changes{% else %}Save product{% endif %}</button>
-        </div>
-      </div>
     </div>
   </form>
 
@@ -184,12 +152,14 @@
 </div>
 {{ unit_rules|json_script:"product-unit-rules" }}
 <script>
+  document.querySelector('.jims-error-summary')?.focus();
   (() => {
     const categoryField = document.getElementById('id_catalog_category');
     const unitField = document.getElementById('id_sales_unit');
     const rulesNode = document.getElementById('product-unit-rules');
     if (!categoryField || !unitField || !rulesNode) return;
     const rules = JSON.parse(rulesNode.textContent || '{}');
+    const categoryPanel = document.querySelector('[data-new-product-category]');
     let previousCategory = categoryField.value;
     const syncUnits = () => {
       const rule = rules[categoryField.value] || { allowed: [], default: '' };
@@ -209,6 +179,65 @@
     };
     categoryField.addEventListener('change', syncUnits);
     syncUnits();
+
+    if (categoryPanel) {
+      const openButton = document.querySelector('[data-add-product-category]');
+      const nameInput = categoryPanel.querySelector('[data-new-category-name]');
+      const unitInput = categoryPanel.querySelector('[data-new-category-unit]');
+      const saveButton = categoryPanel.querySelector('[data-save-product-category]');
+      const errorNode = categoryPanel.querySelector('[data-new-category-error]');
+      const closePanel = () => {
+        categoryPanel.classList.add('hidden');
+        openButton.setAttribute('aria-expanded', 'false');
+        openButton.focus();
+      };
+      openButton.addEventListener('click', () => {
+        categoryPanel.classList.remove('hidden');
+        openButton.setAttribute('aria-expanded', 'true');
+        nameInput.focus();
+      });
+      categoryPanel.querySelector('[data-cancel-product-category]').addEventListener('click', closePanel);
+      saveButton.addEventListener('click', async () => {
+        errorNode.classList.add('hidden');
+        const name = nameInput.value.trim();
+        if (!name || !unitInput.value) {
+          errorNode.textContent = 'Enter a category name and choose its default unit.';
+          errorNode.classList.remove('hidden');
+          (!name ? nameInput : unitInput).focus();
+          return;
+        }
+        saveButton.disabled = true;
+        try {
+          const response = await fetch(categoryPanel.dataset.createUrl, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': document.querySelector('[data-product-form] input[name="csrfmiddlewaretoken"]').value},
+            body: new URLSearchParams({name, default_unit: unitInput.value}),
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            const errors = result.errors || {};
+            errorNode.textContent = Object.values(errors).flat().map(error => error.message).join(' ') || 'Category could not be saved. Try again.';
+            errorNode.classList.remove('hidden');
+            return;
+          }
+          const category = result.category;
+          rules[String(category.id)] = {allowed: [category.default_unit.id], default: category.default_unit.id};
+          categoryField.add(new Option(category.text, category.id));
+          categoryField.value = String(category.id);
+          categoryField.dispatchEvent(new Event('change', {bubbles: true}));
+          unitField.value = String(category.default_unit.id);
+          unitField.dispatchEvent(new Event('change', {bubbles: true}));
+          nameInput.value = '';
+          unitInput.value = '';
+          closePanel();
+        } catch (error) {
+          errorNode.textContent = 'Category could not be saved. Check your connection and try again.';
+          errorNode.classList.remove('hidden');
+        } finally {
+          saveButton.disabled = false;
+        }
+      });
+    }
   })();
 
   (() => {
@@ -229,4 +258,5 @@
     });
   })();
 </script>
+
 {% endblock %}

@@ -148,7 +148,7 @@
                     {% include "components/status_badge.html" with value="available" label="Available" %}
                   {% endif %}
                 </td>
-                <td class="text-right font-semibold text-slate-950">{{ product.selling_price|intcomma }} TZS</td>
+                <td class="text-right font-semibold text-slate-950">{{ product.selling_price|money_display }} TZS</td>
                 <td>{% if product.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</td>
                 <td class="text-right">
                   <div class="jims-menu">
@@ -183,7 +183,7 @@
             </div>
             <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div><div class="text-xs text-slate-500">Type</div><div class="mt-1 font-medium">{% if product.item_type == "service" %}Service{% else %}Physical product{% endif %}</div></div>
-              <div class="text-right"><div class="text-xs text-slate-500">Price</div><div class="mt-1 font-semibold">{{ product.selling_price|intcomma }} TZS</div></div>
+              <div class="text-right"><div class="text-xs text-slate-500">Price</div><div class="mt-1 font-semibold">{{ product.selling_price|money_display }} TZS</div></div>
               <div class="col-span-2 border-t border-slate-100 pt-3">
                 {% if product.item_type == "service" %}
                   {% include "components/status_badge.html" with value="service" label="Service · no stock tracking" %}

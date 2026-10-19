@@ -39,7 +39,7 @@
   {% if purchase.status == "draft" and request.GET.receive == "1" %}
     <section class="rounded-xl border-2 border-brand-300 bg-brand-50 p-4 sm:p-5" aria-labelledby="receive-review-heading">
       <h2 id="receive-review-heading" class="font-bold text-brand-950">Final confirmation required</h2>
-      <p class="mt-1 text-sm text-brand-900">Review {{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}, supplier {{ purchase.supplier.company_name }}, reference {{ purchase.reference_number }}{% if INVENTORY_CAN_VIEW_COSTS %}, and the authoritative total of {{ line_items_total|intcomma }} TZS{% endif %}. Confirming creates immutable stock movements and updates live stock.</p>
+      <p class="mt-1 text-sm text-brand-900">Review {{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}, supplier {{ purchase.supplier.company_name }}, reference {{ purchase.reference_number }}{% if INVENTORY_CAN_VIEW_COSTS %}, and the authoritative total of {{ line_items_total|money_display }} TZS{% endif %}. Confirming creates immutable stock movements and updates live stock.</p>
       {% if INVENTORY_CAN_MANAGE_PURCHASES %}<div class="mt-4 flex flex-col gap-2 sm:flex-row"><a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Back to editing</a><form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-submit-lock>{% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive Stock</button></form></div>{% endif %}
     </section>
   {% endif %}
@@ -63,7 +63,7 @@
   </section>
 
   <section class="jims-panel overflow-hidden">
-    <div class="jims-panel-header flex items-center justify-between"><div><h2 class="font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">{{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}</p></div>{% if INVENTORY_CAN_VIEW_COSTS %}<div class="text-right"><div class="text-xs text-slate-500">Total cost</div><div class="font-bold text-slate-950">{{ line_items_total|intcomma }} TZS</div></div>{% endif %}</div>
+    <div class="jims-panel-header flex items-center justify-between"><div><h2 class="font-semibold text-slate-950">Purchase items</h2><p class="mt-1 text-sm text-slate-600">{{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}</p></div>{% if INVENTORY_CAN_VIEW_COSTS %}<div class="text-right"><div class="text-xs text-slate-500">Total cost</div><div class="font-bold text-slate-950">{{ line_items_total|money_display }} TZS</div></div>{% endif %}</div>
     <div class="jims-table-wrap">
       <table class="jims-table">
         <thead><tr><th>Product</th><th class="text-right">Quantity</th>{% if INVENTORY_CAN_VIEW_COSTS %}<th class="text-right">Unit cost</th><th class="text-right">Line total</th>{% endif %}<th>Batch</th><th>Expiry</th><th>Serial numbers</th></tr></thead>

@@ -89,13 +89,19 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
         self.fields['category'].empty_label = None
-        unit_label = self.instance.get_measure_unit_display() if self.instance.pk else 'selected sales unit'
-        self.fields['buying_price'].label = f'Buying price per {unit_label}'
-        self.fields['selling_price'].label = f'Selling price per {unit_label}'
-        self.fields['technician_price'].label = f'Technician price per {unit_label}'
-        self.fields['wholesale_price'].label = f'Wholesale price per {unit_label}'
+        self.fields['buying_price'].label = 'Buying price (TZS)'
+        self.fields['selling_price'].label = 'Standard price (TZS)'
+        self.fields['technician_price'].label = 'Technician price (TZS)'
+        self.fields['wholesale_price'].label = 'Wholesale price (TZS)'
         self.fields['buying_price'].widget.attrs.update({'step': '0.000001', 'min': '0'})
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Router, radio, cable, software license...')
+        self.fields['sku'].widget.attrs.setdefault('placeholder', 'SKU (generated if left blank)')
+        for field_name, placeholder in (
+            ('buying_price', 'Buying price'),
+            ('selling_price', 'Standard price'),
+            ('technician_price', 'Technician price'),
+        ):
+            self.fields[field_name].widget.attrs.setdefault('placeholder', placeholder)
         self.has_transaction_history = bool(self.instance.pk and self.instance.has_unit_history())
         # Compatibility name used by the existing template/view context.
         self.has_movement_history = self.has_transaction_history

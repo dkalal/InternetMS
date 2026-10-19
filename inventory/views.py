@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, F, Max, OuterRef, Q, Subquery, Sum
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum
 from django.db.models.functions import Upper
 from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
@@ -32,6 +32,7 @@ from users.tenancy import require_organization
 
 from .forms import (
     CartForm,
+    CartLineDiscountForm,
     CartLineForm,
     InventoryImportForm,
     InventorySettingsForm,
@@ -112,6 +113,9 @@ def _form_error_summary(form):
 
 def _pos_response(request, cart, *, message='', level='success', status=200, errors=None):
     workspace = _cart_workspace(cart)
+    workspace['can_apply_line_discount'] = has_tenant_permission(
+        request.user, cart.tenant, PermissionCode.CART_DISCOUNT_APPLY, membership=request.membership,
+    )
     payload = {
         'ok': status < 400,
         'message': message,
@@ -330,9 +334,13 @@ def supplier_list(request):
 @login_required
 def supplier_form(request, pk=None):
     organization = _scope(request, PermissionCode.SUPPLIER_MANAGE)
+    embedded_create = pk is None and request.GET.get('purchase_modal') == '1'
     supplier = get_object_or_404(Supplier.objects.filter(tenant=organization), pk=pk) if pk else None
     old = {'company_name': supplier.company_name, 'is_active': supplier.is_active} if supplier else {}
     form = SupplierForm(request.POST or None, instance=supplier, organization=organization)
+    if embedded_create:
+        form.fields['is_active'].initial = True
+        form.fields['is_active'].disabled = True
     if request.method == 'POST' and form.is_valid():
         obj = form.save(commit=False)
         obj.organization = obj.tenant = organization
@@ -340,11 +348,21 @@ def supplier_form(request, pk=None):
             obj.created_by = request.user
         obj.save()
         audit(organization=organization, actor=request.user, action='inventory.supplier.saved', obj=obj, old_value=old, new_value={'company_name': obj.company_name, 'is_active': obj.is_active})
+        if embedded_create:
+            response = render(request, 'inventory/includes/purchase_modal_created.html', {
+                'created_record': {'kind': 'supplier', 'id': obj.pk, 'text': str(obj)},
+            })
+            response['X-Frame-Options'] = 'SAMEORIGIN'
+            return response
         messages.success(request, 'Supplier saved.')
         return redirect('inventory:supplier_list')
-    return render(request, 'inventory/supplier_form.html', {
+    response = render(request, 'inventory/supplier_form.html', {
         'form': form, 'supplier': supplier, 'title': 'Edit supplier' if supplier else 'New supplier',
+        'embedded_create': embedded_create,
     })
+    if embedded_create:
+        response['X-Frame-Options'] = 'SAMEORIGIN'
+    return response
 
 
 @login_required
@@ -991,7 +1009,9 @@ def cart_list(request):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     carts = Cart.objects.filter(tenant=organization).select_related(
         'customer', 'created_by', 'quotation', 'invoice'
-    ).annotate(item_count=Count('lines'))
+    ).annotate(item_count=Count('lines')).prefetch_related(
+        Prefetch('lines', queryset=CartLine.objects.filter(tenant=organization).select_related('product'), to_attr='list_lines')
+    )
     status = request.GET.get('status', '').strip()
     query = request.GET.get('q', '').strip()
     if status in Cart.Status.values:
@@ -1001,6 +1021,16 @@ def cart_list(request):
         if query.isdigit():
             cart_search |= Q(pk=int(query))
         carts = carts.filter(cart_search)
+    carts = list(carts)
+    for cart in carts:
+        try:
+            _, _, cart.display_total = BillingService.compute_totals(
+                tax_rate=cart.tax_rate,
+                line_items=cart.list_lines,
+                discount_amount=cart.discount_amount,
+            )
+        except BillingServiceError:
+            cart.display_total = None
     return render(request, 'inventory/cart_list.html', {
         'carts': carts, 'statuses': Cart.Status.choices, 'status': status, 'query': query,
     })
@@ -1113,6 +1143,9 @@ def cart_detail(request, pk):
         )
     return render(request, 'inventory/cart_detail.html', {
         'cart': cart, 'cart_form': cart_form, **workspace,
+        'can_apply_line_discount': has_tenant_permission(
+            request.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=request.membership,
+        ),
         'catalog': catalog, 'query': query, 'category_id': category_id,
         'categories': ProductCategory.objects.filter(tenant=organization, is_active=True).order_by('name'),
         'can_register_payment': has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership),
@@ -1169,6 +1202,42 @@ def cart_line_form(request, cart_pk, line_pk=None):
         'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
         'title': 'Edit cart item' if line else 'Add cart item',
     })
+
+
+@login_required
+@require_POST
+def cart_line_discount(request, cart_pk, line_pk):
+    organization = _scope(request, PermissionCode.CART_MANAGE)
+    require_permission(request, PermissionCode.CART_DISCOUNT_APPLY)
+    cart = get_object_or_404(
+        Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk,
+    )
+    get_object_or_404(CartLine.objects.filter(tenant=organization, cart=cart), pk=line_pk)
+    form = CartLineDiscountForm(request.POST)
+    if not form.is_valid():
+        message = _form_error_summary(form)
+        if _is_pos_request(request):
+            return _pos_response(request, cart, message=message, level='warning', status=422,
+                                 errors=form.errors.get_json_data())
+        messages.error(request, message)
+        return redirect('inventory:cart_detail', pk=cart.pk)
+    try:
+        cart = CartService.set_line_discount(
+            organization=organization, cart_id=cart.pk, line_id=line_pk,
+            discount_amount=form.cleaned_data['discount_amount'], actor=request.user,
+            membership=request.membership,
+        )
+    except InventoryError as exc:
+        if _is_pos_request(request):
+            cart.refresh_from_db()
+            return _pos_response(request, cart, message=str(exc), level='warning', status=422,
+                                 errors={'discount_amount': [{'message': str(exc), 'code': ''}]})
+        messages.error(request, str(exc))
+        return redirect('inventory:cart_detail', pk=cart.pk)
+    if _is_pos_request(request):
+        return _pos_response(request, cart, message='Item discount saved.')
+    messages.success(request, 'Item discount saved.')
+    return redirect('inventory:cart_detail', pk=cart.pk)
 
 
 @login_required
