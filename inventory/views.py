@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import csv
+import hashlib
+import json
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum
-from django.db.models.functions import Upper
 from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
@@ -21,6 +22,8 @@ from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from billing.models import BillingDocument
 from billing.services import BillingService, BillingServiceError
@@ -59,6 +62,7 @@ from .models import (
     InventorySaleLine,
     InventorySettings,
     Purchase,
+    PurchaseImportSubmission,
     PurchaseLine,
     StockMovement,
     StockUnit,
@@ -66,6 +70,8 @@ from .models import (
 )
 from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService, audit, money
+from .purchase_import import HEADERS as MIXED_HEADERS, ImportInputError, parse_input, submitted_rows, validate_rows
+from .purchase_batch import apply_purchase_batch
 
 
 def _scope(request, permission):
@@ -417,7 +423,66 @@ def purchase_list(request):
 PURCHASE_WORKSPACE_ACTIONS = frozenset({'save_continue', 'save_review', 'confirm_receive'})
 PURCHASE_PRODUCT_SEARCH_PAGE_SIZE = 20
 PURCHASE_PASTE_MAX_ROWS = 200
-PURCHASE_PASTE_DECIMAL_VALIDATOR = DecimalValidator(max_digits=16, decimal_places=6)
+
+
+@login_required
+@require_GET
+def purchase_rows_template(request):
+    _scope(request, PermissionCode.PURCHASES_CREATE)
+    output = purchase_rows_template_bytes()
+    response = HttpResponse(output, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = 'attachment; filename="purchase_rows_template.xlsx"'
+    return response
+
+
+def purchase_rows_template_bytes():
+    workbook = Workbook()
+    rows = workbook.active
+    rows.title = 'Purchase rows'
+    rows.append(MIXED_HEADERS)
+    rows.freeze_panes = 'A2'
+    widths = (24, 32, 16, 18, 28, 18, 18, 24, 24, 16, 16, 24, 18, 42, 24)
+    for index, width in enumerate(widths, start=1):
+        letter = rows.cell(1, index).column_letter
+        rows.column_dimensions[letter].width = width
+        cell = rows.cell(1, index)
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='4F35D7' if index <= 3 else '64748B')
+        cell.alignment = Alignment(wrap_text=True)
+    for row in rows.iter_rows(min_row=2, max_row=201, min_col=1, max_col=len(MIXED_HEADERS)):
+        for column in (0, 13, 14):
+            row[column].number_format = '@'
+        for column in (2, 3, 6):
+            row[column].number_format = '0.######'
+        row[12].number_format = 'yyyy-mm-dd'
+    instructions = workbook.create_sheet('Instructions')
+    instructions.column_dimensions['A'].width = 105
+    lines = [
+        'Purchase rows template — instructions',
+        'Version 2: Purchase rows sheet has one header and blank data rows. Instructions/examples on this sheet are never imported.',
+        'Existing example: enter an active stock SKU; other product attributes are taken from the catalog.',
+        'New example: leave SKU blank, enter product name, category, unit, selling price and tracking choices.',
+        'Unknown supplied SKU requires explicit Create new or an existing-product selection.',
+        'Rows sharing a staging reference can create one proposed product only after review.',
+        'Quantity and unit cost use that product’s selected sales/stock unit.',
+        'Use plain numbers without currency symbols or thousands separators. Quantity and unit cost support six decimals; selling price supports two.',
+        'Format SKU, serial numbers and staging reference as text to preserve leading zeros.',
+        'Use YYYY-MM-DD for expiry. Enter comma-separated serial numbers in one cell.',
+        'Serialized products need one unique serial for each whole unit. Other tracking fields follow purchase validation.',
+        f'Paste at most {PURCHASE_PASTE_MAX_ROWS} rows. Include the header for version-2 rows; six-column legacy rows may omit it.',
+        'Previewing does not save a purchase or change stock.',
+        '',
+        'ILLUSTRATIVE EXAMPLES — these are not purchase rows',
+        'Existing: EXAMPLE-SKU | Router | 2 | 12.345678',
+        'New: blank SKU | New router | 2 | 12.345678 | Devices | pc | 90.00',
+    ]
+    for line in lines:
+        instructions.append([line])
+    instructions['A1'].font = Font(bold=True, size=14)
+    instructions['A15'].font = Font(bold=True, color='9A3412')
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 @login_required
@@ -425,7 +490,7 @@ PURCHASE_PASTE_DECIMAL_VALIDATOR = DecimalValidator(max_digits=16, decimal_place
 @never_cache
 def purchase_product_search(request):
     """Return a small tenant-scoped product page for the purchase combobox."""
-    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE)
     query = request.GET.get('q', '').strip()[:100]
     try:
         page = min(max(int(request.GET.get('page', '1')), 1), 1000)
@@ -458,6 +523,7 @@ def purchase_product_search(request):
                 'name': product.name,
                 'sku': product.sku,
                 'unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
+                'unit_id': product.sales_unit_id,
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
             }
@@ -470,113 +536,40 @@ def purchase_product_search(request):
 @login_required
 @require_POST
 def purchase_rows_preview(request):
-    """Validate spreadsheet-style purchase rows without mutating any record."""
-    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
-    raw_text = request.POST.get('rows', '')
-    if len(raw_text) > 100_000:
-        return JsonResponse({'error': 'Pasted data is too large.'}, status=400)
+    """Shared XLSX/TSV preview. No products, purchases or stock are written."""
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE)
     try:
-        parsed = [row for row in csv.reader(StringIO(raw_text), delimiter='\t', strict=True) if any(cell.strip() for cell in row)]
-    except csv.Error:
-        return JsonResponse({'error': 'Pasted rows contain invalid spreadsheet quoting.'}, status=400)
-    # Normalize manually typed, whitespace-delimited rows before collecting SKUs.
-    # Otherwise an otherwise valid space-separated SKU is absent from the single
-    # tenant-scoped catalog lookup unless a tab-separated row happens to share it.
-    parsed = [row[0].split() if len(row) == 1 and len(row[0].split()) > 1 else row for row in parsed]
-    if parsed and parsed[0] and parsed[0][0].strip().lower() in {'sku', 'product sku'}:
-        parsed = parsed[1:]
-    if not parsed:
-        return JsonResponse({'error': 'Paste at least one purchase row.'}, status=400)
-    if len(parsed) > PURCHASE_PASTE_MAX_ROWS:
-        return JsonResponse({'error': f'Paste no more than {PURCHASE_PASTE_MAX_ROWS} rows at a time.'}, status=400)
-    sku_values = {row[0].strip().upper() for row in parsed if row and row[0].strip()}
-    products = {
-        product.sku.upper(): product
-        for product in Product.objects.annotate(normalized_sku=Upper('sku')).filter(
-            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL,
-            track_stock=True, normalized_sku__in=sku_values,
-        ).select_related('sales_unit')
+        rows = (submitted_rows(request.POST['review_rows']) if 'review_rows' in request.POST
+                else parse_input(text=request.POST.get('rows', ''), upload=request.FILES.get('file')))
+        results = validate_rows(rows, organization=organization)
+    except ImportInputError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+    counts = {status: sum(row['status'] == status for row in results)
+              for status in ('matched', 'new', 'unresolved', 'invalid', 'excluded')}
+    detailed_summary = {
+        'total': len(results), 'valid': sum(row['valid'] for row in results),
+        'matched': counts['matched'], 'new': counts['new'],
+        'needs_attention': counts['unresolved'] + counts['invalid'], 'excluded': counts['excluded'],
     }
-    results = []
-    for index, cells in enumerate(parsed, start=1):
-        cells = [cell.strip() for cell in cells] + [''] * 6
-        sku, quantity_raw, cost_raw, batch, expiry_raw, serial_raw = cells[:6]
-        errors = []
-        if any(cell.strip() for cell in cells[6:]):
-            errors.append('Use no more than six columns.')
-        if len(batch) > 100:
-            errors.append('Batch reference must be 100 characters or fewer.')
-        product = products.get(sku.upper()) if sku else None
-        if not sku:
-            errors.append('SKU is required.')
-        elif product is None:
-            errors.append('No active stock product matches this SKU.')
-        quantity = None
-        if not quantity_raw:
-            errors.append('Quantity is required.')
-        else:
-            try:
-                quantity = Decimal(quantity_raw)
-                if not quantity.is_finite() or quantity <= 0:
-                    raise ValueError
-                PURCHASE_PASTE_DECIMAL_VALIDATOR(quantity)
-            except (ArithmeticError, ValueError, ValidationError):
-                quantity = None
-                errors.append('Quantity must be greater than zero.')
-        unit_cost = None
-        if not cost_raw:
-            errors.append('Unit cost is required.')
-        else:
-            try:
-                unit_cost = Decimal(cost_raw)
-                if not unit_cost.is_finite() or unit_cost < 0:
-                    raise ValueError
-                PURCHASE_PASTE_DECIMAL_VALIDATOR(unit_cost)
-            except (ArithmeticError, ValueError, ValidationError):
-                unit_cost = None
-                errors.append('Unit cost must be zero or greater.')
-        expiry = None
-        if expiry_raw:
-            try:
-                expiry = date.fromisoformat(expiry_raw)
-            except ValueError:
-                errors.append('Expiry must use YYYY-MM-DD.')
-        serials = [value.strip() for value in serial_raw.replace('|', ',').split(',') if value.strip()]
-        if product and product.is_serialized and quantity is not None:
-            if quantity != quantity.to_integral_value() or len(serials) != int(quantity):
-                errors.append('Serialized products require one serial number per whole unit.')
-            if len({value.upper() for value in serials}) != len(serials):
-                errors.append('Serial numbers must be unique within the row.')
-        results.append({
-            'row': index, 'valid': not errors, 'errors': errors,
-            'product': ({
-                'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
-                'unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
-                'serialized': product.is_serialized, 'expiry': product.track_expiry,
-            } if product else None),
-            'quantity': str(quantity) if quantity is not None else quantity_raw,
-            'unit_cost': str(unit_cost) if unit_cost is not None else cost_raw,
-            'batch_reference': batch, 'expiry_date': expiry.isoformat() if expiry else expiry_raw,
-            'serial_numbers': '\n'.join(serials),
-        })
-    return JsonResponse({
-        'rows': results,
-        'summary': {'total': len(results), 'valid': sum(row['valid'] for row in results)},
-    })
+    legacy = 'review_rows' not in request.POST and not request.FILES and not any(
+        'product_name' in row for row in rows
+    )
+    return JsonResponse({'rows': results, 'summary': (
+        {'total': detailed_summary['total'], 'valid': detailed_summary['valid']} if legacy else detailed_summary
+    ), 'review_summary': detailed_summary})
 
 
 @login_required
 @require_POST
 def purchase_product_quick_create(request):
-    organization = _scope(request, PermissionCode.PRODUCT_MANAGE)
+    organization = _scope(request, PermissionCode.PRODUCTS_CREATE)
     form = QuickPurchaseProductForm(request.POST, organization=organization)
-    if not form.is_valid():
-        return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
     try:
         with transaction.atomic():
-            product = form.save(commit=False)
-            product.organization = product.tenant = organization
-            product.save()
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            if not form.is_valid():
+                return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
+            product = form.save(commit=True)
             audit(
                 organization=organization, actor=request.user,
                 action='inventory.product.created_quick', obj=product,
@@ -588,7 +581,7 @@ def purchase_product_quick_create(request):
                     'track_expiry': product.track_expiry,
                 },
             )
-    except IntegrityError:
+    except (IntegrityError, ValidationError):
         return JsonResponse({'errors': {'__all__': [{
             'message': 'Product could not be saved safely. Refresh and try again.', 'code': 'integrity',
         }]}}, status=409)
@@ -648,10 +641,11 @@ def _purchase_product_meta(organization, formset):
     }
     return {
         str(product.pk): {
+            'name': product.name,
             'serialized': product.is_serialized,
             'expiry': product.track_expiry,
             'sku': product.sku,
-            'base_unit': product.get_measure_unit_display(),
+            'base_unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
         }
         for product in Product.objects.filter(
             tenant=organization,
@@ -659,7 +653,7 @@ def _purchase_product_meta(organization, formset):
             is_active=True,
             item_type=Product.ItemType.PHYSICAL,
             track_stock=True,
-        ).order_by('name')
+        ).select_related('sales_unit').order_by('name')
     }
 
 
@@ -690,11 +684,16 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'product_meta': _purchase_product_meta(organization, formset),
         'product_search_url': reverse('inventory:purchase_product_search'),
         'purchase_rows_preview_url': reverse('inventory:purchase_rows_preview'),
+        'import_token': request.POST.get('import_token') or str(uuid.uuid4()),
+        'import_rows': request.POST.get('import_rows', ''),
         'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
         'category_quick_create_url': reverse('inventory:purchase_category_quick_create'),
         'product_quick_create_url': reverse('inventory:purchase_product_quick_create'),
         'quick_product_categories': ProductCategory.objects.filter(tenant=organization, is_active=True),
         'quick_product_units': UnitOfMeasure.objects.filter(tenant=organization, is_active=True).order_by('name'),
+        'can_create_import_product': has_tenant_permission(
+            request.user, organization, PermissionCode.PRODUCTS_CREATE, membership=request.membership
+        ),
         'valid_line_count': line_count,
         'authoritative_total': authoritative_total.quantize(Decimal('0.01')),
         'can_confirm_purchase': has_tenant_permission(
@@ -703,8 +702,16 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
     })
 
 
-def _save_purchase_draft(*, form, formset, organization, actor, creating):
+def _save_purchase_draft(*, form, formset, organization, actor, creating,
+                         import_rows=None, import_token=None, import_fingerprint=None, membership=None):
     with transaction.atomic():
+        if import_rows:
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            previous = PurchaseImportSubmission.objects.filter(tenant=organization, token=import_token).first()
+            if previous:
+                if previous.fingerprint != import_fingerprint:
+                    raise ImportInputError('This import token was already used with different content. Review and apply a new batch.')
+                return previous.purchase
         purchase = form.save(commit=False)
         purchase.organization = purchase.tenant = organization
         if creating:
@@ -717,8 +724,12 @@ def _save_purchase_draft(*, form, formset, organization, actor, creating):
         purchase.save()
         formset.instance = purchase
         formset.save()
+        if import_rows:
+            apply_purchase_batch(purchase=purchase, rows=import_rows, organization=organization,
+                                 actor=actor, membership=membership)
         total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
         total = total.quantize(Decimal('0.01'))
+        DecimalValidator(14, 2)(total)
         Purchase.objects.filter(tenant=organization, pk=purchase.pk).update(total_cost=total)
         purchase.total_cost = total
         audit(
@@ -728,7 +739,47 @@ def _save_purchase_draft(*, form, formset, organization, actor, creating):
             obj=purchase,
             new_value={'reference_number': purchase.reference_number, 'total_cost': str(total)},
         )
+        if import_rows:
+            PurchaseImportSubmission.objects.create(
+                organization=organization, tenant=organization, token=import_token,
+                fingerprint=import_fingerprint, purchase=purchase,
+            )
     return purchase
+
+
+def _import_request(request, organization):
+    raw = request.POST.get('import_rows', '')
+    if not raw:
+        return [], None, None
+    rows = submitted_rows(raw)
+    if len(rows) > PURCHASE_PASTE_MAX_ROWS:
+        raise ImportInputError('The batch exceeds 200 rows.')
+    try:
+        manual_count = int(request.POST.get('lines-TOTAL_FORMS', '0'))
+    except ValueError as exc:
+        raise ImportInputError('Purchase row count is invalid.') from exc
+    if manual_count + len(rows) > 250:
+        raise ImportInputError('The workspace supports at most 250 total rows.')
+    try:
+        token = uuid.UUID(request.POST.get('import_token', ''))
+    except (ValueError, AttributeError) as exc:
+        raise ImportInputError('Import token is missing or invalid. Review the batch again.') from exc
+    pairs = sorted((key, request.POST.getlist(key)) for key in request.POST if key != 'csrfmiddlewaretoken')
+    fingerprint = hashlib.sha256(json.dumps(pairs, sort_keys=True).encode('utf-8')).hexdigest()
+    return rows, token, fingerprint
+
+
+def _import_replay(organization, token, fingerprint, action, expected_purchase_id=None):
+    if not token:
+        return None
+    receipt = PurchaseImportSubmission.objects.filter(tenant=organization, token=token).select_related('purchase').first()
+    if not receipt:
+        return None
+    if receipt.fingerprint != fingerprint:
+        raise ImportInputError('This import token was already saved with different content. Review a new batch.')
+    if expected_purchase_id and receipt.purchase_id != expected_purchase_id:
+        raise ImportInputError('This import token belongs to another purchase. Review a new batch.')
+    return _purchase_action_redirect(receipt.purchase, action)
 
 
 def _purchase_action_redirect(purchase, action):
@@ -740,8 +791,20 @@ def _purchase_action_redirect(purchase, action):
 
 
 @login_required
+@transaction.atomic
 def purchase_create(request):
-    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE)
+    import_rows, import_token, import_fingerprint, import_error = [], None, None, None
+    if request.method == 'POST':
+        try:
+            import_rows, import_token, import_fingerprint = _import_request(request, organization)
+            if import_rows:
+                type(organization).objects.select_for_update().get(pk=organization.pk)
+                replay = _import_replay(organization, import_token, import_fingerprint, request.POST.get('action', ''))
+                if replay:
+                    return replay
+        except ImportInputError as exc:
+            import_error = str(exc)
     purchase = Purchase(organization=organization, tenant=organization, created_by=request.user)
     form_initial = None
     # Previewing does not consume a sequence number. The hidden marker lets a
@@ -751,20 +814,27 @@ def purchase_create(request):
         purchase.reference_number = PurchaseReferenceNumberService.preview_next_number(organization=organization)
         form_initial = {'auto_generated_reference': purchase.reference_number}
     form = PurchaseForm(request.POST or None, instance=purchase, organization=organization, initial=form_initial)
-    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization)
+    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization,
+                                   import_present=bool(import_rows))
     if request.method == 'POST':
+        if import_error:
+            form.add_error(None, import_error)
         action = request.POST.get('action', '')
         form_valid = form.is_valid()
         formset_valid = formset.is_valid()
         if action not in PURCHASE_WORKSPACE_ACTIONS:
             form.add_error(None, 'Choose a valid purchase action and try again.')
-        elif form_valid and formset_valid:
+        elif form_valid and formset_valid and not import_error:
             try:
                 purchase = _save_purchase_draft(
-                    form=form, formset=formset, organization=organization, actor=request.user, creating=True
+                    form=form, formset=formset, organization=organization, actor=request.user, creating=True,
+                    import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
+                    membership=request.membership,
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
+            except (ImportInputError, ValidationError) as exc:
+                form.add_error(None, str(exc))
             else:
                 if action == 'save_continue':
                     messages.success(request, 'Purchase draft saved. Continue editing when ready.')
@@ -779,27 +849,50 @@ def purchase_create(request):
 
 
 @login_required
+@transaction.atomic
 def purchase_edit(request, pk):
-    organization = _scope(request, PermissionCode.PURCHASE_CONFIRM)
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE)
     purchase = get_object_or_404(Purchase.objects.filter(tenant=organization), pk=pk)
+    if not has_tenant_permission(request.user, organization, PermissionCode.PURCHASE_VIEW,
+                                 membership=request.membership) and purchase.created_by_id != request.user.pk:
+        raise Http404
     if purchase.status != Purchase.Status.DRAFT:
         messages.error(request, 'Only draft purchases can be edited.')
         return redirect('inventory:purchase_detail', pk=purchase.pk)
-    form = PurchaseForm(request.POST or None, instance=purchase, organization=organization)
-    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization)
+    import_rows, import_token, import_fingerprint, import_error = [], None, None, None
     if request.method == 'POST':
+        try:
+            import_rows, import_token, import_fingerprint = _import_request(request, organization)
+            if import_rows:
+                type(organization).objects.select_for_update().get(pk=organization.pk)
+                replay = _import_replay(organization, import_token, import_fingerprint,
+                                        request.POST.get('action', ''), expected_purchase_id=purchase.pk)
+                if replay:
+                    return replay
+        except ImportInputError as exc:
+            import_error = str(exc)
+    form = PurchaseForm(request.POST or None, instance=purchase, organization=organization)
+    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization,
+                                   import_present=bool(import_rows))
+    if request.method == 'POST':
+        if import_error:
+            form.add_error(None, import_error)
         action = request.POST.get('action', '')
         form_valid = form.is_valid()
         formset_valid = formset.is_valid()
         if action not in PURCHASE_WORKSPACE_ACTIONS:
             form.add_error(None, 'Choose a valid purchase action and try again.')
-        elif form_valid and formset_valid:
+        elif form_valid and formset_valid and not import_error:
             try:
                 purchase = _save_purchase_draft(
-                    form=form, formset=formset, organization=organization, actor=request.user, creating=False
+                    form=form, formset=formset, organization=organization, actor=request.user, creating=False,
+                    import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
+                    membership=request.membership,
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
+            except (ImportInputError, ValidationError) as exc:
+                form.add_error(None, str(exc))
             else:
                 if action == 'save_continue':
                     messages.success(request, 'Purchase draft updated. Continue editing when ready.')
@@ -831,8 +924,15 @@ def purchase_cancel(request, pk):
 @ensure_csrf_cookie
 @never_cache
 def purchase_detail(request, pk):
-    organization = _scope(request, PermissionCode.PURCHASE_VIEW)
+    try:
+        organization = _scope(request, PermissionCode.PURCHASE_VIEW)
+        can_view_all = True
+    except PermissionDenied:
+        organization = _scope(request, PermissionCode.PURCHASES_CREATE)
+        can_view_all = False
     purchase = get_object_or_404(Purchase.objects.filter(tenant=organization).select_related('supplier', 'created_by', 'confirmed_by'), pk=pk)
+    if not can_view_all and purchase.created_by_id != request.user.pk:
+        raise Http404
     # Lines are the source of truth for a draft receipt. This also renders a
     # correct total for historical drafts that predate draft-total syncing.
     purchase_lines = list(purchase.lines.select_related('product'))
@@ -880,6 +980,9 @@ def purchase_detail(request, pk):
             })
     return render(request, 'inventory/purchase_detail.html', {
         'purchase': purchase,
+        'can_edit_purchase': purchase.status == Purchase.Status.DRAFT and has_tenant_permission(
+            request.user, organization, PermissionCode.PURCHASES_CREATE, membership=request.membership
+        ) and (can_view_all or purchase.created_by_id == request.user.pk),
         'purchase_lines': purchase_lines,
         'line_items_total': line_items_total,
         'product_type_count': len(incoming_by_product),

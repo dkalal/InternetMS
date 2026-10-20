@@ -1,0 +1,24 @@
+<article class="purchase-line" data-purchase-line {% if line_form.errors %}data-line-invalid="true"{% endif %}>
+  {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
+  <div class="hidden">{{ line_form.DELETE }}</div>
+  <div class="purchase-grid-row">
+    <div class="purchase-cell purchase-cell-number" data-line-number>{{ line_number|default:"" }}</div>
+    <div class="purchase-cell purchase-cell-product">
+      {% include "components/form_field.html" with field=line_form.product hide_help=True %}
+      <p data-product-hint></p>
+    </div>
+    <div class="purchase-cell purchase-cell-quantity">{% include "components/form_field.html" with field=line_form.quantity hide_help=True %}</div>
+    <div class="purchase-cell purchase-cell-unit" data-product-unit aria-label="Unit">&#8212;</div>
+    <div class="purchase-cell purchase-cell-cost">{% include "components/form_field.html" with field=line_form.unit_cost hide_help=True %}</div>
+    <div class="purchase-cell purchase-cell-amount" data-line-total aria-label="Estimated line amount in TZS">&#8212;</div>
+    <div class="purchase-cell purchase-cell-details"><button type="button" class="purchase-line-details" data-open-line-details aria-expanded="false">Details</button></div>
+    <div class="purchase-cell purchase-cell-remove"><button type="button" data-remove-line aria-label="Remove purchase line">&#215;</button></div>
+  </div>
+  {% if line_form.non_field_errors %}<div class="px-3 pb-2 text-sm text-rose-700" role="alert">{{ line_form.non_field_errors }}</div>{% endif %}
+  <div class="hidden" data-line-fields>
+    <div data-line-tracking>{% include "components/form_field.html" with field=line_form.batch_reference hide_help=True %}</div>
+    <div data-line-serials>{% include "components/form_field.html" with field=line_form.serial_numbers hide_help=True %}</div>
+    <div data-line-expiry>{% include "components/form_field.html" with field=line_form.expiry_date hide_help=True %}</div>
+  </div>
+  <div data-mobile-tracking-host></div>
+</article>

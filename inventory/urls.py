@@ -17,6 +17,7 @@ urlpatterns = [
     path('purchases/', views.purchase_list, name='purchase_list'),
     path('purchases/products/search/', views.purchase_product_search, name='purchase_product_search'),
     path('purchases/rows/preview/', views.purchase_rows_preview, name='purchase_rows_preview'),
+    path('purchases/rows/template/', views.purchase_rows_template, name='purchase_rows_template'),
     path('purchases/products/quick-create/', views.purchase_product_quick_create, name='purchase_product_quick_create'),
     path('purchases/categories/quick-create/', views.purchase_category_quick_create, name='purchase_category_quick_create'),
     path('purchases/suppliers/quick-create/', views.purchase_supplier_quick_create, name='purchase_supplier_quick_create'),

@@ -181,6 +181,7 @@ TENANT_OPERATION_PERMISSIONS = frozenset({
 DELEGABLE_PERMISSIONS = frozenset({
     PermissionCode.CUSTOMERS_VIEW, PermissionCode.CUSTOMERS_CREATE, PermissionCode.CUSTOMERS_UPDATE,
     PermissionCode.PACKAGES_VIEW, PermissionCode.PRODUCTS_VIEW, PermissionCode.INVENTORY_VIEW,
+    PermissionCode.PURCHASES_CREATE,
     PermissionCode.SALES_DOCUMENTS_VIEW_OWN, PermissionCode.SALES_DOCUMENTS_CREATE,
     PermissionCode.QUOTATIONS_UPDATE_OWN_DRAFT, PermissionCode.QUOTATIONS_SEND,
     PermissionCode.INVOICES_UPDATE_OWN_DRAFT, PermissionCode.INVOICES_ISSUE_OWN,

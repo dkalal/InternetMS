@@ -6,7 +6,7 @@
 <div class="space-y-5">
   <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:text-brand-700" href="{% url 'inventory:purchase_list' %}">Purchases</a><span class="px-1">/</span><span>{{ purchase.reference_number }}</span></nav>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:text-brand-700" href="{% if INVENTORY_CAN_VIEW_PURCHASES %}{% url 'inventory:purchase_list' %}{% else %}{% url 'inventory:dashboard' %}{% endif %}">{% if INVENTORY_CAN_VIEW_PURCHASES %}Purchases{% else %}Inventory{% endif %}</a><span class="px-1">/</span><span>{{ purchase.reference_number }}</span></nav>
       <div class="mt-1 flex flex-wrap items-center gap-3">
         <h1 class="text-2xl font-bold tracking-tight text-slate-950">{{ purchase.reference_number }}</h1>
         {% include "components/status_badge.html" with value=purchase.status label=purchase.get_status_display %}
@@ -25,6 +25,8 @@
         <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive</button>
       </form>
       </div>
+    {% elif can_edit_purchase %}
+      <a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Edit draft</a>
     {% endif %}
   </header>
 
@@ -40,7 +42,7 @@
     <section class="rounded-xl border-2 border-brand-300 bg-brand-50 p-4 sm:p-5" aria-labelledby="receive-review-heading">
       <h2 id="receive-review-heading" class="font-bold text-brand-950">Final confirmation required</h2>
       <p class="mt-1 text-sm text-brand-900">Review {{ purchase_lines|length }} line{{ purchase_lines|length|pluralize }}, supplier {{ purchase.supplier.company_name }}, reference {{ purchase.reference_number }}{% if INVENTORY_CAN_VIEW_COSTS %}, and the authoritative total of {{ line_items_total|money_display }} TZS{% endif %}. Confirming creates immutable stock movements and updates live stock.</p>
-      {% if INVENTORY_CAN_MANAGE_PURCHASES %}<div class="mt-4 flex flex-col gap-2 sm:flex-row"><a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Back to editing</a><form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-submit-lock>{% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive Stock</button></form></div>{% endif %}
+      {% if INVENTORY_CAN_MANAGE_PURCHASES %}<div class="mt-4 flex flex-col gap-2 sm:flex-row"><a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary">Back to editing</a><form method="post" action="{% url 'inventory:purchase_confirm' purchase.pk %}" data-submit-lock>{% csrf_token %}<button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Receiving…">Confirm &amp; Receive Stock</button></form></div>{% elif can_edit_purchase %}<a href="{% url 'inventory:purchase_edit' purchase.pk %}" class="jims-btn jims-btn-secondary mt-4">Back to editing</a>{% endif %}
     </section>
   {% endif %}
 

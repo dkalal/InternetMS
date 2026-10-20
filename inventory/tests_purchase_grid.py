@@ -154,10 +154,29 @@ class CompactPurchaseGridTests(TestCase):
         self.assertContains(response, 'data-bulk-product-dialog')
         self.assertContains(response, 'data-purchase-workspace')
         self.assertContains(response, 'data-purchase-items-panel')
-        self.assertContains(response, 'pb-64 sm:pb-24')
+        self.assertContains(response, 'data-tracking-panel')
+        self.assertContains(response, 'data-open-line-details')
         self.assertContains(response, 'GRID-RTR-A')
         self.assertNotContains(response, 'GRID-RTR-B')
         self.assertNotContains(response, 'PRIVATE-GRID-RTR')
+        self.assertEqual(response.context['product_meta'][str(self.product.pk)]['name'], self.product.name)
+
+    def test_tracking_errors_keep_selected_product_identity_and_entered_values(self):
+        self.product.is_serialized = True
+        self.product.save(update_fields=['is_serialized'])
+        payload = self.payload(self.product)
+        payload['lines-0-serial_numbers'] = '0001'
+        payload['lines-0-batch_reference'] = '00123'
+
+        response = self.client.post(reverse('inventory:purchase_create'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Purchase.objects.filter(tenant=self.organization).exists())
+        self.assertEqual(response.context['product_meta'][str(self.product.pk)]['name'], 'Router A')
+        self.assertEqual(response.context['formset'].forms[0]['serial_numbers'].value(), '0001')
+        self.assertEqual(response.context['formset'].forms[0]['batch_reference'].value(), '00123')
+        self.assertContains(response, 'data-line-invalid="true"')
+        self.assertContains(response, 'Enter exactly 2 unique serial numbers.')
 
     def test_remote_combobox_reliably_hides_its_backing_product_select(self):
         script_path = Path(__file__).parent / 'static/inventory/js/inventory-ui.js'
@@ -170,8 +189,8 @@ class CompactPurchaseGridTests(TestCase):
     def test_purchase_items_panel_does_not_clip_remote_search_results(self):
         template = (Path(__file__).parent.parent / 'templates/inventory/purchase_form.html').read_text(encoding='utf-8')
 
-        self.assertIn('class="jims-panel" data-purchase-items-panel', template)
-        self.assertNotIn('class="jims-panel overflow-hidden" data-purchase-items-panel', template)
+        self.assertIn('data-purchase-items-panel', template)
+        self.assertNotIn('overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm', template)
 
     def test_high_volume_workspace_saves_many_remote_selected_products_as_one_draft(self):
         products = [self.product, self.unselected_product]

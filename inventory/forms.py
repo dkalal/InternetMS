@@ -2,7 +2,6 @@ from decimal import Decimal
 
 from django import forms
 from django.forms import BaseInlineFormSet, inlineformset_factory
-from django.utils.text import slugify
 
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
@@ -146,12 +145,15 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
 
     class Meta:
         model = Product
-        fields = ['name', 'catalog_category', 'sales_unit', 'selling_price', 'is_serialized', 'track_expiry']
+        fields = ['name', 'sku', 'catalog_category', 'sales_unit', 'selling_price', 'brand', 'model_number', 'is_serialized', 'track_expiry']
 
-    def __init__(self, *args, organization=None, **kwargs):
+    def __init__(self, *args, organization=None, allow_extra_fields=False, **kwargs):
         super().__init__(*args, organization=organization, **kwargs)
         self.fields['catalog_category'].queryset = ProductCategory.objects.filter(tenant=organization, is_active=True)
         self.fields['sales_unit'].queryset = UnitOfMeasure.objects.filter(tenant=organization, is_active=True)
+        if not allow_extra_fields:
+            for name in ('sku', 'brand', 'model_number'):
+                self.fields[name].disabled = True
 
     def clean_name(self):
         value = (self.cleaned_data.get('name') or '').strip()
@@ -169,13 +171,6 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
 
     def save(self, commit=True):
         product = super().save(commit=False)
-        base = (slugify(product.name).replace('-', '')[:24] or 'ITEM').upper()
-        sku = base
-        suffix = 1
-        while Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku).exists():
-            suffix += 1
-            sku = f'{base}-{suffix}'
-        product.sku = sku
         product.item_type = Product.ItemType.PHYSICAL
         product.track_stock = True
         product.quantity = Decimal('0.000000')
@@ -185,7 +180,8 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
         product.measure_unit = self.cleaned_data['sales_unit'].label
         product.is_active = True
         if commit:
-            product.save()
+            from products.creation import save_purchase_product
+            save_purchase_product(product, organization=self.organization, supplied_sku=self.cleaned_data.get('sku') or '')
         return product
 
 
@@ -288,7 +284,7 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         model = PurchaseLine
         fields = ['product', 'quantity', 'unit_cost', 'batch_reference', 'expiry_date', 'serial_numbers']
         widgets = {
-            'quantity': forms.NumberInput(attrs={'min': '0.01', 'step': '0.01'}),
+            'quantity': forms.NumberInput(attrs={'min': '0.000001', 'step': '0.000001'}),
             'unit_cost': forms.NumberInput(attrs={'min': '0', 'step': '0.000001'}),
             'expiry_date': forms.DateInput(attrs={'type': 'date'}),
             'serial_numbers': forms.Textarea(attrs={'rows': 3, 'placeholder': 'One serial per line'}),
@@ -316,8 +312,10 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['product'].widget.attrs.pop('data-searchable-select', None)
         self.fields['product'].widget.attrs.pop('data-search-label', None)
         self.fields['product'].widget.attrs.pop('data-search-placeholder', None)
-        self.fields['quantity'].label = 'Quantity received'
+        self.fields['quantity'].label = 'Quantity'
         self.fields['unit_cost'].label = 'Unit cost'
+        self.fields['batch_reference'].label = 'Batch reference (optional)'
+        self.fields['batch_reference'].widget.attrs['placeholder'] = 'e.g. BATCH-001'
 
     def clean(self):
         cleaned = super().clean()
@@ -343,8 +341,9 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineFormSet(BaseInlineFormSet):
-    def __init__(self, *args, organization=None, **kwargs):
+    def __init__(self, *args, organization=None, import_present=False, **kwargs):
         self.organization = organization
+        self.import_present = import_present
         super().__init__(*args, **kwargs)
         for form in self.forms:
             form.organization = organization
@@ -357,7 +356,7 @@ class PurchaseLineFormSet(BaseInlineFormSet):
     def clean(self):
         super().clean()
         active = [form for form in self.forms if form.cleaned_data and not form.cleaned_data.get('DELETE')]
-        if not active:
+        if not active and not self.import_present:
             raise forms.ValidationError('Add at least one purchase line.')
 
 

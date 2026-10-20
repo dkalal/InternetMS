@@ -14,6 +14,7 @@ def inventory_access(request):
         'INVENTORY_CAN_VIEW_STOCK': allowed(PermissionCode.STOCK_VIEW),
         'INVENTORY_CAN_VIEW_MOVEMENTS': allowed(PermissionCode.STOCK_MOVEMENT_VIEW),
         'INVENTORY_CAN_VIEW_PURCHASES': allowed(PermissionCode.PURCHASE_VIEW),
+        'INVENTORY_CAN_CREATE_PURCHASES': allowed(PermissionCode.PURCHASES_CREATE),
         'INVENTORY_CAN_MANAGE_PURCHASES': allowed(PermissionCode.PURCHASE_CONFIRM),
         'INVENTORY_CAN_MANAGE_SUPPLIERS': allowed(PermissionCode.SUPPLIER_MANAGE),
         'INVENTORY_CAN_MANAGE_CARTS': allowed(PermissionCode.CART_MANAGE),

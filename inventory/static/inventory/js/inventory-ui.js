@@ -157,6 +157,71 @@
       var productSearchUrl = purchaseForm ? purchaseForm.dataset.productSearchUrl : "";
       var metaNode = document.getElementById("purchase-product-meta");
       var productMeta = metaNode ? JSON.parse(metaNode.textContent) : {};
+      var trackingPanel = document.querySelector('[data-tracking-panel]');
+      var trackingFields = trackingPanel && trackingPanel.querySelector('[data-tracking-fields]');
+      var workspaceColumns = document.querySelector('[data-purchase-grid-layout]');
+      var selectedLine = null;
+
+      function fieldFor(line, suffix) {
+        return line.querySelector('[name$="-' + suffix + '"]') ||
+          (selectedLine === line ? trackingFields.querySelector('[name$="-' + suffix + '"]') : null);
+      }
+
+      function closeLineDetails() {
+        if (!selectedLine) return;
+        selectedLine.querySelector('[data-open-line-details]').setAttribute('aria-expanded', 'false');
+        selectedLine.classList.remove('is-selected');
+        ['tracking', 'serials', 'expiry'].forEach(function (kind) {
+          var field = trackingFields.querySelector('[data-line-' + kind + ']');
+          if (field) selectedLine.querySelector('[data-line-fields]').appendChild(field);
+        });
+        selectedLine = null;
+        trackingPanel.hidden = true;
+        trackingPanel.style.display = 'none';
+        workspaceColumns.classList.remove('has-tracking');
+        workspaceColumns.appendChild(trackingPanel);
+      }
+
+      function productName(product, meta) {
+        if (meta && meta.name) return meta.name;
+        return product && product.value && product.selectedIndex >= 0
+          ? product.options[product.selectedIndex].textContent.split(' · ')[0] : 'Choose a product';
+      }
+
+      function placeTrackingPanel() {
+        if (!selectedLine) return;
+        var host = window.matchMedia('(max-width: 1399px)').matches
+          ? selectedLine.querySelector('[data-mobile-tracking-host]') : workspaceColumns;
+        if (trackingPanel.parentNode !== host) host.appendChild(trackingPanel);
+      }
+
+      function openLineDetails(line) {
+        if (!trackingPanel) return;
+        if (selectedLine === line) return;
+        closeLineDetails();
+        selectedLine = line;
+        ['tracking', 'serials', 'expiry'].forEach(function (kind) {
+          var field = line.querySelector('[data-line-' + kind + ']');
+          if (field) trackingFields.appendChild(field);
+        });
+        line.querySelector('[data-open-line-details]').setAttribute('aria-expanded', 'true');
+        line.classList.add('is-selected');
+        trackingPanel.hidden = false;
+        trackingPanel.style.display = 'flex';
+        workspaceColumns.classList.add('has-tracking');
+        placeTrackingPanel();
+        syncLine(line);
+        var error = trackingFields.querySelector('[role="alert"]');
+        var focusField = error && error.parentNode.querySelector('input:not([type="hidden"]), textarea');
+        if (!focusField) focusField = trackingFields.querySelector('input:not([type="hidden"]), textarea');
+        if (focusField) focusField.focus();
+      }
+
+      if (trackingPanel) trackingPanel.querySelector('[data-close-line-details]').addEventListener('click', function () {
+        var button = selectedLine && selectedLine.querySelector('[data-open-line-details]');
+        closeLineDetails();
+        if (button) button.focus();
+      });
 
       function activeLines() {
         return Array.prototype.filter.call(formset.querySelectorAll("[data-purchase-line]"), function (line) {
@@ -175,14 +240,13 @@
           var select = line.querySelector("select[name$='-product']");
           var hint = line.querySelector("[data-product-hint]");
           if (select && select.value && counts[select.value] > 1 && hint) {
-            hint.textContent = "This product appears more than once. Keep separate rows only for different batch or expiry details.";
-            hint.classList.add("text-amber-700");
+            var repeatedMeta = productMeta[select.value];
+            hint.textContent = 'SKU: ' + (repeatedMeta ? repeatedMeta.sku : '—') + ' · Repeated product; check batch/expiry details.';
+            hint.classList.add('is-duplicate');
           } else if (hint) {
-            hint.classList.remove("text-amber-700");
+            hint.classList.remove('is-duplicate');
             var meta = select && select.value ? productMeta[select.value] : null;
-            hint.textContent = meta
-              ? meta.sku + (meta.serialized ? " · Serial numbers required" : "") + (meta.expiry ? " · Expiry tracked" : "")
-              : "Search by name, SKU, brand or model.";
+            hint.textContent = meta ? 'SKU: ' + meta.sku : '';
           }
         });
       }
@@ -210,15 +274,19 @@
         input.setAttribute("role", "combobox");
         input.setAttribute("aria-autocomplete", "list");
         input.setAttribute("aria-expanded", "false");
+        input.id = select.id + '-search';
+        input.dataset.purchaseProductSearch = 'true';
         var list = document.createElement("div");
         list.className = "absolute z-40 mt-1 hidden max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl";
         list.setAttribute("role", "listbox");
+        list.id = select.id + '-results';
+        input.setAttribute('aria-controls', list.id);
         wrapper.appendChild(input);
         wrapper.appendChild(list);
         select.parentNode.insertBefore(wrapper, select);
 
         var selectedOption = select.options[select.selectedIndex];
-        if (select.value && selectedOption) input.value = selectedOption.textContent.trim();
+        if (select.value && selectedOption) input.value = productName(select, productMeta[select.value]);
         var timer = null;
         var controller = null;
 
@@ -252,12 +320,13 @@
               var option = new Option(result.text, String(result.id), true, true);
               select.replaceChildren(new Option("Select a product", ""), option);
               productMeta[String(result.id)] = {
+                name: result.name || result.text,
                 sku: result.sku || "",
                 base_unit: result.unit || "Unit",
                 serialized: Boolean(result.serialized),
                 expiry: Boolean(result.expiry)
               };
-              input.value = result.text;
+              input.value = result.name || result.text;
               closeList();
               select.dispatchEvent(new Event("change", { bubbles: true }));
             });
@@ -328,44 +397,108 @@
       function syncLine(line) {
         var product = line.querySelector("select[name$='-product']");
         var meta = product ? productMeta[product.value] : null;
-        line.querySelectorAll("[data-line-serials]").forEach(function (field) {
-          field.classList.toggle("hidden", !(meta && meta.serialized));
+        ['tracking', 'serials', 'expiry'].forEach(function (kind) {
+          var field = line.querySelector('[data-line-' + kind + ']') ||
+            (selectedLine === line ? trackingFields.querySelector('[data-line-' + kind + ']') : null);
+          if (field) field.classList.toggle('hidden', selectedLine !== line ||
+            (kind === 'serials' && !(meta && meta.serialized) && !field.querySelector('[role="alert"]')) ||
+            (kind === 'expiry' && !(meta && meta.expiry) && !field.querySelector('[role="alert"]')));
         });
-        line.querySelectorAll("[data-line-expiry]").forEach(function (field) {
-          field.classList.toggle("hidden", !(meta && meta.expiry));
-        });
-        var hint = line.querySelector("[data-product-hint]");
-        if (hint) {
-          hint.textContent = meta
-            ? meta.sku + (meta.serialized ? " · Serial numbers required" : "") + (meta.expiry ? " · Expiry tracked" : "")
-            : "Search by name, SKU, brand or model.";
-        }
+        line.querySelector('.purchase-cell-product').classList.toggle('has-product', Boolean(product && product.value));
         var unit = line.querySelector("[data-product-unit]");
-        if (unit) unit.textContent = "Unit — " + (meta ? meta.base_unit : "—");
+        if (unit) unit.textContent = meta ? meta.base_unit : '—';
         var quantity = line.querySelector("input[name$='-quantity']");
         var unitCost = line.querySelector("input[name$='-unit_cost']");
         var total = line.querySelector("[data-line-total]");
-        if (total) total.textContent = tzsDisplayFormatter.format(number(quantity && quantity.value) * number(unitCost && unitCost.value)) + " TZS";
+        if (total) total.textContent = product && product.value
+          ? tzsDisplayFormatter.format(number(quantity && quantity.value) * number(unitCost && unitCost.value)) : '—';
+        var serials = fieldFor(line, 'serial_numbers');
+        var expiry = fieldFor(line, 'expiry_date');
+        var batch = fieldFor(line, 'batch_reference');
+        var serialValues = serials ? serials.value.replace(/,/g, '\n').split(/\n/).map(function (part) { return part.trim(); }).filter(Boolean) : [];
+        var count = serialValues.length;
+        var needed = number(quantity && quantity.value);
+        var uniqueSerials = new Set(serialValues.map(function (value) { return value.toUpperCase(); })).size === count;
+        var serialsComplete = needed > 0 && Number.isInteger(needed) && count === needed && uniqueSerials;
+        var incomplete = Boolean(meta && ((meta.serialized && !serialsComplete) || (meta.expiry && expiry && !expiry.value)));
+        if (selectedLine === line) {
+          trackingPanel.querySelector('[data-tracking-title]').textContent = 'Line ' + (activeLines().indexOf(line) + 1) + ' · Tracking details';
+          trackingPanel.querySelector('[data-tracking-product]').textContent = productName(product, meta);
+          trackingPanel.querySelector('[data-tracking-sku]').textContent = meta ? 'SKU: ' + meta.sku : '';
+          trackingPanel.querySelector('[data-tracking-quantity]').textContent = (quantity.value || '—') + ' ' + (meta ? meta.base_unit : '');
+          var status = trackingPanel.querySelector('[data-tracking-status]');
+          status.textContent = meta && meta.serialized
+            ? count + ' of ' + needed + ' serials entered' + (!uniqueSerials ? ' · Remove duplicates' : '')
+            : meta && meta.expiry && expiry && !expiry.value ? 'Expiry required before receiving.' : '';
+          status.classList.toggle('is-complete', Boolean(meta && meta.serialized && serialsComplete));
+        }
+        var detail = line.querySelector('[data-open-line-details]');
+        if (detail) {
+          detail.textContent = meta && meta.serialized ? 'Serials ' + count + '/' + needed :
+            meta && meta.expiry ? (expiry && expiry.value ? 'Expiry set' : 'Expiry required') : batch && batch.value ? 'Batch set' : '—';
+          detail.setAttribute('aria-label', 'Tracking details for line ' + (activeLines().indexOf(line) + 1) + ': ' + (detail.textContent === '—' ? 'Add batch reference' : detail.textContent));
+          if (line.dataset.lineInvalid === 'true') {
+            var hiddenError = line.querySelector('[data-line-tracking] [role="alert"], [data-line-serials] [role="alert"], [data-line-expiry] [role="alert"]') ||
+              (selectedLine === line ? trackingFields.querySelector('[role="alert"]') : null);
+            if (hiddenError) detail.textContent = 'Check details';
+          }
+          detail.classList.toggle('is-incomplete', incomplete || detail.textContent === 'Check details');
+          detail.classList.toggle('is-complete', Boolean(meta && meta.serialized && serialsComplete));
+        }
         syncDuplicateWarnings();
+        syncSummary();
+      }
+
+      function syncSummary() {
+        var allLines = activeLines();
+        allLines.forEach(function (line, index) {
+          line.querySelector('[data-line-number]').textContent = String(index + 1);
+          var details = line.querySelector('[data-open-line-details]');
+          details.setAttribute('aria-label', 'Tracking details for line ' + (index + 1) + ': ' +
+            (details.textContent === '—' ? 'Add batch reference' : details.textContent));
+        });
+        if (selectedLine) trackingPanel.querySelector('[data-tracking-title]').textContent =
+          'Line ' + (allLines.indexOf(selectedLine) + 1) + ' · Tracking details';
+        var lines = allLines.filter(function (line) { var product = line.querySelector('select[name$="-product"]'); return product && product.value; });
+        var count = document.querySelector('[data-purchase-line-count]');
+        var estimated = document.querySelector('[data-purchase-estimated-total]');
+        if (count) count.textContent = String(lines.length);
+        if (estimated) estimated.textContent = tzsDisplayFormatter.format(lines.reduce(function (sum, line) {
+          return sum + number(fieldFor(line, 'quantity').value) * number(fieldFor(line, 'unit_cost').value);
+        }, 0));
       }
 
       function bindLine(line) {
         var product = line.querySelector("select[name$='-product']");
         enhanceProductSelect(product, line);
         if (product) product.addEventListener("change", function () { syncLine(line); });
+        var details = line.querySelector('[data-open-line-details]');
+        if (details) details.addEventListener('click', function () { openLineDetails(line); });
         line.querySelectorAll("input[name$='-quantity'], input[name$='-unit_cost']").forEach(function (input) {
           input.addEventListener("input", function () { syncLine(line); });
+        });
+        line.querySelectorAll('[name$="-batch_reference"], [name$="-expiry_date"], [name$="-serial_numbers"]').forEach(function (input) {
+          input.addEventListener('input', function () { syncLine(line); });
         });
         var remove = line.querySelector("[data-remove-line]");
         if (remove) {
           remove.addEventListener("click", function () {
+            if (selectedLine === line) closeLineDetails();
             var deletion = line.querySelector("input[name$='-DELETE']");
             if (deletion) deletion.checked = true;
             line.querySelectorAll("input, select, textarea").forEach(function (field) {
-              if (field !== deletion) field.disabled = true;
+              if (field !== deletion && field.type !== 'hidden') field.disabled = true;
             });
             line.classList.add("hidden");
             syncDuplicateWarnings();
+            syncSummary();
+          });
+        }
+        var existingDeletion = line.querySelector("input[name$='-DELETE']");
+        if (existingDeletion && existingDeletion.checked) {
+          line.classList.add('hidden');
+          line.querySelectorAll('input, select, textarea').forEach(function (field) {
+            if (field !== existingDeletion && field.type !== 'hidden') field.disabled = true;
           });
         }
         syncLine(line);
@@ -380,6 +513,7 @@
           var select = line.querySelector("select[name$='-product']");
           select.replaceChildren(new Option("Select a product", ""), new Option(result.text, String(result.id), true, true));
           productMeta[String(result.id)] = {
+            name: result.name || result.text,
             sku: result.sku || "",
             base_unit: result.unit || "Unit",
             serialized: Boolean(result.serialized),
@@ -393,6 +527,15 @@
       }
 
       formset.querySelectorAll("[data-purchase-line]").forEach(bindLine);
+      var firstInvalid = formset.querySelector('[data-line-invalid="true"]');
+      if (firstInvalid) {
+        var trackingError = firstInvalid.querySelector('[data-line-tracking] [role="alert"], [data-line-serials] [role="alert"], [data-line-expiry] [role="alert"]');
+        if (trackingError) openLineDetails(firstInvalid);
+        firstInvalid.scrollIntoView({ block: 'center' });
+      }
+      window.addEventListener('resize', function () {
+        placeTrackingPanel();
+      });
       if (addButton && totalForms && template) {
         addButton.addEventListener("click", function () {
           var line = appendLine(null);
@@ -497,115 +640,6 @@
               createClose.focus();
             }
           });
-        });
-      }
-
-      var pasteDialog = document.querySelector("[data-paste-rows-dialog]");
-      var openPaste = document.querySelector("[data-open-paste-rows]");
-      if (pasteDialog && openPaste && purchaseForm) {
-        var pasteUrl = purchaseForm.dataset.purchaseRowsPreviewUrl;
-        var pasteInput = pasteDialog.querySelector("[data-paste-rows-input]");
-        var pasteError = pasteDialog.querySelector("[data-paste-rows-error]");
-        var previewPaste = pasteDialog.querySelector("[data-preview-paste-rows]");
-        var addPasted = pasteDialog.querySelector("[data-add-pasted-rows]");
-        var pastePreview = pasteDialog.querySelector("[data-paste-rows-preview]");
-        var pasteResults = pasteDialog.querySelector("[data-paste-rows-results]");
-        var pasteSummary = pasteDialog.querySelector("[data-paste-rows-summary]");
-        var previewedRows = [];
-        var pasteRevision = 0;
-
-        function pasteMessage(message) {
-          pasteError.textContent = message || "";
-          pasteError.classList.toggle("hidden", !message);
-        }
-        function closePaste() {
-          pasteDialog.classList.add("hidden");
-          pasteDialog.classList.remove("flex");
-          document.body.classList.remove("overflow-hidden");
-          openPaste.focus();
-        }
-        openPaste.addEventListener("click", function () {
-          pasteMessage("");
-          pasteDialog.classList.remove("hidden");
-          pasteDialog.classList.add("flex");
-          document.body.classList.add("overflow-hidden");
-          pasteInput.focus();
-        });
-        pasteInput.addEventListener("input", function () {
-          pasteRevision += 1;
-          previewedRows = [];
-          pastePreview.classList.add("hidden");
-          pasteSummary.textContent = "";
-          addPasted.disabled = true;
-          pasteMessage("");
-        });
-        pasteDialog.querySelectorAll("[data-close-paste-rows], [data-cancel-paste-rows]").forEach(function (button) {
-          button.addEventListener("click", closePaste);
-        });
-        pasteDialog.addEventListener("click", function (event) { if (event.target === pasteDialog) closePaste(); });
-        pasteDialog.addEventListener("keydown", function (event) {
-          if (event.key === "Escape") { closePaste(); return; }
-          if (event.key !== "Tab") return;
-          var focusable = Array.prototype.filter.call(
-            pasteDialog.querySelectorAll("button:not([disabled]), textarea:not([disabled])"),
-            function (element) { return element.offsetParent !== null; }
-          );
-          if (!focusable.length) return;
-          var first = focusable[0];
-          var last = focusable[focusable.length - 1];
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-        });
-        previewPaste.addEventListener("click", function () {
-          pasteMessage("");
-          pasteSummary.textContent = "";
-          previewPaste.disabled = true;
-          var requestedRevision = pasteRevision;
-          var requestedText = pasteInput.value;
-          var csrf = purchaseForm.querySelector("input[name='csrfmiddlewaretoken']");
-          fetch(pasteUrl, {
-            method: "POST",
-            headers: { "X-CSRFToken": csrf.value, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-            body: new URLSearchParams({ rows: requestedText }).toString()
-          }).then(function (response) {
-            return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
-          }).then(function (result) {
-            if (requestedRevision !== pasteRevision || pasteInput.value !== requestedText) return;
-            if (!result.ok) { pasteMessage(result.payload.error || "Check the pasted rows."); return; }
-            previewedRows = result.payload.rows || [];
-            pasteResults.replaceChildren();
-            previewedRows.forEach(function (row) {
-              var tr = document.createElement("tr");
-              tr.className = row.valid ? "border-t border-slate-200" : "border-t border-rose-200 bg-rose-50";
-              [row.row, row.product ? row.product.name + " · " + row.product.sku : "—", row.quantity || "—", row.unit_cost || "—", row.valid ? "Ready" : row.errors.join(" ")].forEach(function (value) {
-                var td = document.createElement("td"); td.className = "p-2 align-top"; td.textContent = value; tr.appendChild(td);
-              });
-              pasteResults.appendChild(tr);
-            });
-            pasteSummary.textContent = result.payload.summary.valid + " of " + result.payload.summary.total + " rows ready";
-            pastePreview.classList.remove("hidden");
-            addPasted.disabled = result.payload.summary.valid === 0;
-          }).catch(function () { pasteMessage("Rows could not be previewed. Check the connection."); })
-            .finally(function () { previewPaste.disabled = false; });
-        });
-        addPasted.addEventListener("click", function () {
-          var firstLine = null;
-          previewedRows.filter(function (row) { return row.valid; }).forEach(function (row) {
-            var line = appendLine(row.product);
-            if (!firstLine) firstLine = line;
-            line.querySelector("input[name$='-quantity']").value = row.quantity;
-            line.querySelector("input[name$='-unit_cost']").value = row.unit_cost;
-            line.querySelector("input[name$='-batch_reference']").value = row.batch_reference;
-            line.querySelector("input[name$='-expiry_date']").value = row.expiry_date;
-            line.querySelector("textarea[name$='-serial_numbers']").value = row.serial_numbers;
-            syncLine(line);
-          });
-          closePaste();
-          if (firstLine) firstLine.querySelector("input[name$='-quantity']").focus();
-          previewedRows = [];
-          pasteInput.value = "";
-          pastePreview.classList.add("hidden");
-          addPasted.disabled = true;
         });
       }
 
@@ -1149,3 +1183,219 @@
     }
   });
 })();
+/* Purchase import review: browser state is advisory; save revalidates the batch. */
+(function () {
+  "use strict";
+  function ready() {
+    var form = document.querySelector(".purchase-workspace-form");
+    var dialog = document.querySelector("[data-paste-rows-dialog]");
+    if (!form || !dialog) return;
+    var open = form.querySelector("[data-open-paste-rows]");
+    var hidden = form.querySelector("[data-import-rows]");
+    var applied = form.querySelector("[data-import-applied]");
+    var appliedText = form.querySelector("[data-import-applied-text]");
+    var input = dialog.querySelector("[data-paste-rows-input]");
+    var file = dialog.querySelector("[data-import-file]");
+    var error = dialog.querySelector("[data-paste-rows-error]");
+    var preview = dialog.querySelector("[data-paste-rows-preview]");
+    var results = dialog.querySelector("[data-paste-rows-results]");
+    var summary = dialog.querySelector("[data-paste-rows-summary]");
+    var filter = dialog.querySelector("[data-import-filter]");
+    var apply = dialog.querySelector("[data-add-pasted-rows]");
+    var rows = [];
+    var fields = ["sku", "product_name", "quantity", "unit_cost", "category", "unit", "selling_price",
+      "brand", "model_number", "serialized", "track_expiry", "batch_reference", "expiry_date",
+      "serial_numbers", "staging_reference"];
+    var csrf = form.querySelector("input[name=csrfmiddlewaretoken]").value;
+    var searchUrl = form.dataset.productSearchUrl;
+    function message(value) {
+      error.textContent = value || "";
+      error.classList.toggle("hidden", !value);
+    }
+    function show() { dialog.classList.remove("hidden"); dialog.classList.add("flex"); document.body.classList.add("overflow-hidden"); input.focus(); }
+    function close() { dialog.classList.add("hidden"); dialog.classList.remove("flex"); document.body.classList.remove("overflow-hidden"); open.focus(); }
+    function compact(row) {
+      var value = {};
+      fields.forEach(function (key) { value[key] = String(row[key] || ""); });
+      value.resolution = row.resolution || "";
+      value.product_id = row.product_id || "";
+      value.expected_sku = row.expected_sku || "";
+      value.expected_serialized = row.expected_serialized;
+      value.expected_expiry = row.expected_expiry;
+      value.expected_unit_id = row.expected_unit_id || "";
+      value.excluded = Boolean(row.excluded);
+      return value;
+    }
+    function element(tag, className, value) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      if (value !== undefined) node.textContent = value;
+      return node;
+    }
+    function textField(row, key, label, width) {
+      var wrap = element("label", "block mb-1 text-[11px] font-semibold text-slate-700", label);
+      var choice = key === "serialized" || key === "track_expiry";
+      var control = element(choice ? "select" : key === "serial_numbers" ? "textarea" : "input", "mt-1 block rounded border border-slate-300 p-1.5 text-xs focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30");
+      control.setAttribute("aria-label", "Row " + row.row + " " + label);
+      control.style.width = width || "10rem";
+      if (control.tagName === "INPUT") control.type = key === "expiry_date" ? "date" : "text";
+      if (choice) {
+        [["No", "No"], ["Yes", "Yes"]].forEach(function (part) {
+          var option = element("option", "", part[1]); option.value = part[0]; control.appendChild(option);
+        });
+        if (!row[key]) row[key] = "No";
+      }
+      control.value = row[key] || "";
+      control.addEventListener("input", function () { row[key] = control.value; row.valid = false; apply.disabled = true; });
+      wrap.appendChild(control);
+      return wrap;
+    }
+    function cell(tr) { var td = element("td", "p-2 align-top"); tr.appendChild(td); return td; }
+    function selectResolution(row, td) {
+      var select = element("select", "block w-full rounded border border-slate-300 p-1.5 text-xs");
+      [["", "Choose resolution"], ["existing", "Use existing"], ["new", "Create new"]].forEach(function (choice) {
+        var option = element("option", "", choice[1]); option.value = choice[0];
+        if (choice[0] === "new" && form.dataset.canCreateImportProduct !== "true") option.disabled = true;
+        select.appendChild(option);
+      });
+      select.value = row.resolution || (row.product ? "existing" : "");
+      row.resolution = select.value;
+      select.setAttribute("aria-label", "Row " + row.row + " resolution");
+      select.addEventListener("change", function () { row.resolution = select.value; row.valid = false; apply.disabled = true; });
+      td.appendChild(select);
+      var search = element("input", "mt-2 w-full rounded border border-slate-300 p-1.5 text-xs");
+      search.type = "search"; search.placeholder = "Search catalog";
+      search.setAttribute("aria-label", "Row " + row.row + " search existing products");
+      td.appendChild(search);
+      var matches = element("select", "mt-1 w-full rounded border border-slate-300 p-1.5 text-xs");
+      matches.setAttribute("aria-label", "Row " + row.row + " select existing product");
+      var selected = element("option", "", row.product ? row.product.name + " · " + row.product.sku : "Select search result");
+      selected.value = row.product_id || ""; matches.appendChild(selected); td.appendChild(matches);
+      (row.suggestions || []).forEach(function (product) {
+        var option = element("option", "", "Suggested: " + product.name + " · " + product.sku);
+        option.value = product.id; option.dataset.product = JSON.stringify(product);
+        matches.appendChild(option);
+      });
+      var timer;
+      search.addEventListener("input", function () {
+        clearTimeout(timer);
+        if (search.value.trim().length < 2) return;
+        timer = setTimeout(function () {
+          fetch(searchUrl + "?q=" + encodeURIComponent(search.value.trim()), { credentials: "same-origin" })
+            .then(function (response) { return response.json(); }).then(function (data) {
+              matches.replaceChildren(element("option", "", "Select search result"));
+              (data.results || []).forEach(function (product) {
+                var option = element("option", "", product.name + " · " + product.sku);
+                option.value = product.id;
+                option.dataset.product = JSON.stringify(product);
+                matches.appendChild(option);
+              });
+            }).catch(function () { message("Product search failed. Try again."); });
+        }, 250);
+      });
+      matches.addEventListener("change", function () {
+        row.product_id = matches.value;
+        row.product = matches.selectedOptions[0].dataset.product ? JSON.parse(matches.selectedOptions[0].dataset.product) : null;
+        row.expected_sku = row.product ? row.product.sku : "";
+        row.expected_serialized = row.product ? row.product.serialized : null;
+        row.expected_expiry = row.product ? row.product.expiry : null;
+        row.expected_unit_id = row.product ? row.product.unit_id : "";
+        row.resolution = "existing"; select.value = "existing";
+        row.valid = false; apply.disabled = true;
+      });
+    }
+    function render() {
+      results.replaceChildren();
+      var counts = { matched: 0, new: 0, attention: 0, excluded: 0 };
+      rows.forEach(function (row) {
+        if (row.excluded) counts.excluded++;
+        else if (row.status === "matched") counts.matched++;
+        else if (row.status === "new") counts.new++;
+        else counts.attention++;
+        if (filter.value === "attention" && (row.excluded || (row.status !== "invalid" && row.status !== "unresolved"))) return;
+        if (filter.value === "new" && (row.excluded || row.resolution !== "new")) return;
+        var tr = element("tr", "border-t border-slate-200 " + (row.errors && row.errors.length ? "bg-rose-50" : ""));
+        var td = cell(tr);
+        var selected = element("input"); selected.type = "checkbox"; selected.checked = Boolean(row.bulk_selected);
+        selected.setAttribute("aria-label", "Select new product row " + row.row + " for bulk category and unit");
+        selected.addEventListener("change", function () { row.bulk_selected = selected.checked; }); td.appendChild(selected);
+        var excluded = element("input"); excluded.type = "checkbox"; excluded.checked = Boolean(row.excluded);
+        excluded.setAttribute("aria-label", "Exclude row " + row.row);
+        excluded.addEventListener("change", function () { row.excluded = excluded.checked; row.valid = false; apply.disabled = true; });
+        td.appendChild(element("br")); td.appendChild(excluded); td.appendChild(element("span", "ml-1", "Exclude"));
+        td = cell(tr); td.appendChild(element("strong", "block mb-1", "Row " + row.row)); selectResolution(row, td);
+        td = cell(tr); td.appendChild(textField(row, "sku", "SKU", "10rem")); td.appendChild(textField(row, "product_name", "Product name", "14rem"));
+        td = cell(tr); td.appendChild(textField(row, "quantity", "Quantity", "7rem")); td.appendChild(textField(row, "unit_cost", "Unit cost", "8rem"));
+        td = cell(tr); ["category", "unit", "selling_price"].forEach(function (key) { td.appendChild(textField(row, key, key.replace("_", " "), "10rem")); });
+        td = cell(tr); ["brand", "model_number", "serialized", "track_expiry", "staging_reference"].forEach(function (key) { td.appendChild(textField(row, key, key.replace("_", " "), "10rem")); });
+        td = cell(tr); ["batch_reference", "expiry_date", "serial_numbers"].forEach(function (key) { td.appendChild(textField(row, key, key.replace("_", " "), "10rem")); });
+        td = cell(tr); td.appendChild(element("strong", "block", row.status || "unresolved"));
+        (row.errors || []).forEach(function (reason) { td.appendChild(element("p", "mt-1 text-rose-800", reason)); });
+        results.appendChild(tr);
+      });
+      summary.textContent = rows.length + " total · " + counts.matched + " matched · " + counts.new + " new · " + counts.attention + " need attention · " + counts.excluded + " excluded";
+      preview.classList.toggle("hidden", !rows.length);
+      apply.disabled = !rows.length || rows.some(function (row) { return !row.excluded && !row.valid; });
+    }
+    function post(data) {
+      return fetch(form.dataset.purchaseRowsPreviewUrl, { method: "POST", credentials: "same-origin",
+        headers: { "X-CSRFToken": csrf }, body: data }).then(function (response) {
+        return response.json().then(function (payload) { if (!response.ok) throw Error(payload.error || "Check the rows."); return payload; });
+      });
+    }
+    function accept(payload) { rows = payload.rows || []; render(); message(""); }
+    open.addEventListener("click", show);
+    dialog.querySelectorAll("[data-close-paste-rows], [data-cancel-paste-rows]").forEach(function (button) { button.addEventListener("click", close); });
+    dialog.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") { close(); return; }
+      if (event.key !== "Tab") return;
+      var controls = Array.prototype.filter.call(dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]"), function (node) { return node.offsetParent !== null; });
+      if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls[controls.length - 1].focus(); }
+      else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) { event.preventDefault(); controls[0].focus(); }
+    });
+    dialog.querySelector("[data-preview-paste-rows]").addEventListener("click", function () {
+      var data = new FormData();
+      if (file.files.length) data.append("file", file.files[0]);
+      else data.append("rows", input.value);
+      post(data).then(accept).catch(function (exc) { message(exc.message); });
+    });
+    dialog.querySelector("[data-review-import]").addEventListener("click", function () {
+      var data = new FormData(); data.append("review_rows", JSON.stringify(rows.map(compact)));
+      post(data).then(accept).catch(function (exc) { message(exc.message); });
+    });
+    filter.addEventListener("change", render);
+    dialog.querySelector("[data-apply-bulk-fields]").addEventListener("click", function () {
+      var category = dialog.querySelector("[data-bulk-category]").value;
+      var unit = dialog.querySelector("[data-bulk-unit]").value;
+      rows.forEach(function (row) {
+        if (row.bulk_selected && row.resolution === "new" && !row.excluded) {
+          if (category) row.category = category;
+          if (unit) row.unit = unit;
+          row.valid = false;
+        }
+      });
+      render();
+    });
+    apply.addEventListener("click", function () {
+      if (apply.disabled) return;
+      var manual = Array.prototype.filter.call(form.querySelectorAll("[data-purchase-formset] [data-purchase-line]"), function (line) { return !line.querySelector("input[name$='-DELETE']:checked"); }).length;
+      if (manual + rows.filter(function (row) { return !row.excluded; }).length > 250) { message("The workspace supports at most 250 total rows."); return; }
+      hidden.value = JSON.stringify(rows.map(compact));
+      appliedText.textContent = rows.filter(function (row) { return !row.excluded; }).length + " import rows applied to this workspace. Save the draft to create approved products and purchase lines. Stock remains unchanged until receiving review.";
+      applied.classList.remove("hidden");
+      close();
+      form.querySelector("button[value=save_review]").focus();
+    });
+    form.querySelector("[data-clear-import]").addEventListener("click", function () {
+      hidden.value = "";
+      applied.classList.add("hidden");
+      open.focus();
+    });
+    if (hidden.value) {
+      try { rows = JSON.parse(hidden.value); rows.forEach(function (row, i) { row.row = i + 1; row.valid = false; row.status = row.excluded ? "excluded" : "unresolved"; row.errors = []; }); render(); appliedText.textContent = "Applied import rows are preserved. Open Import / paste rows to review after the validation error."; applied.classList.remove("hidden"); }
+      catch (exc) { message("Saved import rows could not be restored. Preview the input again."); }
+    }
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready);
+  else ready();
+}());

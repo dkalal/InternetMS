@@ -1,11 +1,13 @@
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from openpyxl import load_workbook
 
 from products.models import Product, ProductCategory, UnitOfMeasure
 from users.models import Organization, UserAccessProfile
@@ -284,3 +286,89 @@ class PurchasePasteRowsTests(TestCase):
         self.assertContains(response, 'data-open-paste-rows')
         self.assertContains(response, 'data-purchase-rows-preview-url')
         self.assertNotContains(response, 'PASTE-RTR')
+
+    def test_template_download_is_authorized_and_non_mutating(self):
+        url = reverse('inventory:purchase_rows_template')
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.client.login(username='paste-admin', password='pass')
+        before = (Purchase.objects.count(), PurchaseLine.objects.count(), StockMovement.objects.count(), InventoryBalance.objects.count())
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        self.assertIn('purchase_rows_template.xlsx', response['Content-Disposition'])
+        self.assertEqual(before, (Purchase.objects.count(), PurchaseLine.objects.count(), StockMovement.objects.count(), InventoryBalance.objects.count()))
+        self.assertEqual(self.client.post(url).status_code, 405)
+        staff = User.objects.create_user(username='template-staff', password='pass')
+        UserAccessProfile.objects.create(user=staff, tenant=self.tenant, role=UserAccessProfile.Role.TENANT_STAFF)
+        self.client.login(username='template-staff', password='pass')
+        self.assertEqual(self.client.get(url).status_code, 403)
+
+    def test_template_columns_formats_and_examples_match_preview_contract(self):
+        self.client.login(username='paste-admin', password='pass')
+        workbook = load_workbook(BytesIO(self.client.get(reverse('inventory:purchase_rows_template')).content))
+        self.assertEqual(workbook.sheetnames, ['Purchase rows', 'Instructions'])
+        sheet = workbook['Purchase rows']
+        self.assertEqual([sheet.cell(1, index).value for index in range(1, 16)], [
+            'sku', 'product_name', 'quantity', 'unit_cost', 'category', 'unit',
+            'selling_price', 'brand', 'model_number', 'serialized', 'track_expiry',
+            'batch_reference', 'expiry_date', 'serial_numbers', 'staging_reference',
+        ])
+        self.assertEqual(sheet.freeze_panes, 'A2')
+        self.assertTrue(all(sheet.cell(2, index).value is None for index in range(1, 16)))
+        self.assertEqual([sheet.cell(2, index).number_format for index in (1, 14, 15)], ['@'] * 3)
+        self.assertEqual(sheet['C2'].number_format, '0.######')
+        self.assertEqual(sheet['M2'].number_format, 'yyyy-mm-dd')
+        self.assertIn('instructions', workbook['Instructions']['A1'].value.lower())
+
+    def test_only_exact_known_header_is_skipped(self):
+        self.client.login(username='paste-admin', password='pass')
+        exact = 'SKU\tQuantity\tUnit cost\tBatch reference\tExpiry\tSerial numbers\nPASTE-RTR\t1\t1'
+        self.assertEqual(self.preview(exact).json()['summary'], {'total': 1, 'valid': 1})
+        unknown = 'SKU\t1\t2\nPASTE-RTR\t1\t1'
+        response = self.preview(unknown).json()
+        self.assertEqual(response['summary'], {'total': 2, 'valid': 1})
+        self.assertFalse(response['rows'][0]['valid'])
+
+    def test_filled_template_previews_and_saves_only_valid_rows(self):
+        self.client.login(username='paste-admin', password='pass')
+        expiry_product = Product.objects.create(
+            organization=self.tenant, tenant=self.tenant, name='Expiry item', sku='PASTE-EXP',
+            catalog_category=self.product.catalog_category, sales_unit=self.product.sales_unit,
+            quantity=Decimal('0'), stock=0, buying_price=Decimal('5'), selling_price=Decimal('10'),
+            track_stock=True, track_expiry=True,
+        )
+        # Legacy six-column rows remain accepted independently of the new template.
+        sheet = load_workbook(BytesIO(self.client.get(reverse('inventory:purchase_rows_template')).content))['Purchase rows']
+        sheet.delete_cols(2, 14)
+        for row_index, row in enumerate((
+            ('PASTE-RTR', '2.5', '10.123456', '00123', '', ''),
+            ('PASTE-RAD', '2', '30', '', '', '0001,0002'),
+            ('PASTE-EXP', '1', '5', 'B-001', '2027-12-31', ''),
+            ('UNKNOWN', '1', '5', '', '', ''),
+            ('PASTE-RTR', 'bad', '5', '', '', ''),
+        ), start=2):
+            for column_index, value in enumerate(row, start=1):
+                sheet.cell(row_index, column_index, value)
+        pasted = '\n'.join('\t'.join(str(cell.value or '') for cell in row) for row in sheet.iter_rows(min_row=2, max_row=6))
+        preview = self.preview(pasted).json()
+        self.assertEqual(preview['summary'], {'total': 5, 'valid': 3})
+        valid = [row for row in preview['rows'] if row['valid']]
+        payload = {
+            'action': 'save_continue', 'supplier': self.supplier.pk,
+            'reference_number': 'TEMPLATE-FLOW-1', 'auto_generated_reference': '',
+            'purchase_date': date.today().isoformat(), 'notes': '',
+            'lines-TOTAL_FORMS': '3', 'lines-INITIAL_FORMS': '0',
+            'lines-MIN_NUM_FORMS': '0', 'lines-MAX_NUM_FORMS': '1000',
+        }
+        for index, row in enumerate(valid):
+            for field in ('quantity', 'unit_cost', 'batch_reference', 'expiry_date', 'serial_numbers'):
+                payload[f'lines-{index}-{field}'] = row[field]
+            payload[f'lines-{index}-product'] = row['product']['id']
+        response = self.client.post(reverse('inventory:purchase_create'), payload)
+        purchase = Purchase.objects.get(reference_number='TEMPLATE-FLOW-1')
+        self.assertRedirects(response, reverse('inventory:purchase_edit', args=[purchase.pk]))
+        self.assertEqual(purchase.lines.count(), 3)
+        self.assertEqual(purchase.lines.get(product=expiry_product).expiry_date, date(2027, 12, 31))
+        self.assertEqual(purchase.lines.get(product=self.serialized).serial_numbers, '0001\n0002')
+        self.assertEqual(purchase.lines.get(product=self.product).batch_reference, '00123')
+        self.assertFalse(StockMovement.objects.exists())

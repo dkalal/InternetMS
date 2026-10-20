@@ -6,6 +6,8 @@
     <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:movement_list' %}" {% if request.resolver_match.url_name == "movement_list" %}aria-current="page"{% endif %}>Movements</a>
     {% if INVENTORY_CAN_VIEW_PURCHASES %}
       <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:purchase_list' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Purchases</a>
+    {% elif INVENTORY_CAN_CREATE_PURCHASES %}
+      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:purchase_create' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>New purchase</a>
     {% endif %}
     {% if INVENTORY_CAN_MANAGE_SUPPLIERS %}
       <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:supplier_list' %}" {% if "supplier" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Suppliers</a>

@@ -108,6 +108,7 @@ class Purchase(TenantModel):
     def __str__(self):
         return self.reference_number
 
+
     def save(self, *args, **kwargs):
         self._sync_tenant()
         if self.supplier_id and self.supplier.tenant_id != self.tenant_id:
@@ -116,6 +117,25 @@ class Purchase(TenantModel):
             previous = type(self).objects.unscoped().filter(pk=self.pk).only('status').first()
             if previous and previous.status == self.Status.CONFIRMED and not getattr(self, '_service_update', False):
                 raise ValidationError('Confirmed purchases are immutable.')
+        super().save(*args, **kwargs)
+
+
+class PurchaseImportSubmission(TenantModel):
+    """Durable receipt for an applied workspace batch and its exact save request."""
+
+    token = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+    purchase = models.ForeignKey(Purchase, on_delete=models.PROTECT, related_name='import_submissions')
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tenant', 'token'], name='uniq_purchase_import_tenant_token')]
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        if self.purchase_id and self.purchase.tenant_id != self.tenant_id:
+            raise ValidationError('Import submission purchase must belong to the same tenant.')
         super().save(*args, **kwargs)
 
 
