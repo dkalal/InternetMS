@@ -1,22 +1,42 @@
-<nav class="mb-6 overflow-x-auto border-b border-slate-200" aria-label="Inventory sections">
-  <div class="flex min-w-max gap-1 pb-2">
-    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>Overview</a>
-    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'product-list' %}" {% if "product-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Catalog</a>
-    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:stock_list' %}" {% if request.resolver_match.url_name == "stock_list" %}aria-current="page"{% endif %}>Stock</a>
-    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:movement_list' %}" {% if request.resolver_match.url_name == "movement_list" %}aria-current="page"{% endif %}>Movements</a>
-    {% if INVENTORY_CAN_VIEW_PURCHASES %}
-      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:purchase_list' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Purchases</a>
-    {% elif INVENTORY_CAN_CREATE_PURCHASES %}
-      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:purchase_create' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>New purchase</a>
-    {% endif %}
-    {% if INVENTORY_CAN_MANAGE_SUPPLIERS %}
-      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:supplier_list' %}" {% if "supplier" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Suppliers</a>
-    {% endif %}
-    <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:cart_list' %}" {% if "cart" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Selling</a>
-    {% if INVENTORY_CAN_VIEW_COSTS %}
-      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:reports' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Reports</a>
-    {% else %}
-      <a class="jims-module-link rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" href="{% url 'inventory:report' 'sales' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Reports</a>
-    {% endif %}
+<nav class="jims-module-nav" aria-label="Inventory sections">
+  <div class="jims-module-nav__scroller" role="region" tabindex="0" aria-label="Inventory section links. Scroll horizontally to see more.">
+    <div class="jims-module-nav__track">
+      <a class="jims-module-link" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg><span>Overview</span>
+      </a>
+      <a class="jims-module-link" href="{% url 'product-list' %}" {% if "product-" in request.resolver_match.url_name or "category_" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 2.3L6.3 8.5 12 11.7l5.7-3.2L12 5.3Zm-6 5v5l5 2.8v-5l-5-2.8Zm7 7.8 5-2.8v-5l-5 2.8v5Z"/></svg><span>Catalog</span>
+      </a>
+      <a class="jims-module-link" href="{% url 'inventory:stock_list' %}" {% if "stock_" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5 12 2l8 3.5v13L12 22l-8-3.5v-13Zm2 .8v3.1l5 2.2V8.5L6 6.3Zm7 2.2v3.1l5-2.2V6.3l-5 2.2Zm-7 3.1v5.6l5 2.2v-5.6l-5-2.2Zm7 7.8 5-2.2v-5.6l-5 2.2v5.6Z"/></svg><span>Stock</span>
+      </a>
+      <a class="jims-module-link" href="{% url 'inventory:movement_list' %}" {% if request.resolver_match.url_name == "movement_list" %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7.4 6H18l-2.3-2.3 1.4-1.4L21.8 7l-4.7 4.7-1.4-1.4L18 8H7.4a3.4 3.4 0 0 0 0 6.8H9v2H7.4A5.4 5.4 0 0 1 7.4 6Zm9.2 12H6l2.3 2.3-1.4 1.4L2.2 17l4.7-4.7 1.4 1.4L6 16h10.6a3.4 3.4 0 0 0 0-6.8H15v-2h1.6a5.4 5.4 0 0 1 0 10.8Z"/></svg><span>Movements</span>
+      </a>
+      {% if INVENTORY_CAN_VIEW_PURCHASES %}
+        <a class="jims-module-link" href="{% url 'inventory:purchase_list' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4H5L3 7v2h2l2-3h10l2 3h2V7l-2-3H7Zm-2 7v9h14v-9h-2v7H7v-7H5Zm4 0h6v2H9v-2Z"/></svg><span>Purchases</span>
+        </a>
+      {% elif INVENTORY_CAN_CREATE_PURCHASES %}
+        <a class="jims-module-link" href="{% url 'inventory:purchase_create' %}" {% if "purchase" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4H5L3 7v2h2l2-3h10l2 3h2V7l-2-3H7Zm4 7v3H8v2h3v3h2v-3h3v-2h-3v-3h-2Z"/></svg><span>New purchase</span>
+        </a>
+      {% endif %}
+      {% if INVENTORY_CAN_MANAGE_SUPPLIERS %}
+        <a class="jims-module-link" href="{% url 'inventory:supplier_list' %}" {% if "supplier" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 20V8l6-4 6 4v3h6v9h-2v-7h-4v7h-2V9L9 6.3 5 9v11H3Zm4-8h4v2H7v-2Zm0 4h4v2H7v-2Z"/></svg><span>Suppliers</span>
+        </a>
+      {% endif %}
+      <a class="jims-module-link" href="{% url 'inventory:cart_list' %}" {% if "cart" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2.4l1.8 9.2A2.2 2.2 0 0 0 9.4 15H18a2 2 0 0 0 1.9-1.4L22 7H7l-.2-1H3V4Zm5.1 5h11.2l-1.2 4H9L8.1 9ZM10 17.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm10 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg><span>Selling</span>
+      </a>
+      {% if INVENTORY_CAN_VIEW_COSTS %}
+        <a class="jims-module-link" href="{% url 'inventory:reports' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+      {% else %}
+        <a class="jims-module-link" href="{% url 'inventory:report' 'sales' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+      {% endif %}
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20V4h2v14h15v2H4Zm4-4v-5h3v5H8Zm5 0V7h3v9h-3Zm5 0V3h3v13h-3Z"/></svg><span>Reports</span>
+        </a>
+    </div>
   </div>
 </nav>
