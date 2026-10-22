@@ -124,6 +124,8 @@ class PurchaseProductSearchTests(TestCase):
         self.assertEqual([row['id'] for row in payload['results']], [self.product.pk])
         self.assertNotContains(response, 'PRIVATE-RTR-1')
         self.assertEqual(payload['results'][0]['unit'], 'pc')
+        self.assertEqual(payload['results'][0]['brand'], self.product.brand)
+        self.assertEqual(payload['results'][0]['model_number'], self.product.model_number)
         self.assertTrue(payload['results'][0]['serialized'])
         self.assertFalse(payload['results'][0]['expiry'])
 

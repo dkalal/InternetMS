@@ -167,13 +167,12 @@ class PurchasePasteRowsTests(TestCase):
         self.assertTrue(row['valid'], row['errors'])
         self.assertEqual(row['product']['id'], self.product.pk)
 
-    def test_space_separated_batch_and_expiry_and_incomplete_rows(self):
+    def test_unambiguous_space_rows_and_missing_delimiters(self):
         self.client.login(username='paste-admin', password='pass')
         rows = self.preview('\n'.join((
             'PASTE-RTR 10 250000 BATCH 2026-09-09',
             'PASTE-RTR 1 250000',
             'UNKNOWN-SKU 3 2500000',
-            'PASTE-RTR',
         ))).json()['rows']
         self.assertTrue(rows[0]['valid'], rows[0]['errors'])
         self.assertEqual(rows[0]['batch_reference'], 'BATCH')
@@ -181,16 +180,15 @@ class PurchasePasteRowsTests(TestCase):
         self.assertTrue(rows[1]['valid'], rows[1]['errors'])
         self.assertFalse(rows[2]['valid'])
         self.assertIn('No active stock product', rows[2]['errors'][0])
-        self.assertFalse(rows[3]['valid'])
-        self.assertEqual(rows[3]['product']['id'], self.product.pk)
-        self.assertIn('Quantity is required.', rows[3]['errors'])
-        self.assertIn('Unit cost is required.', rows[3]['errors'])
+        response = self.preview('PASTE-RTR')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('spreadsheet columns', response.json()['error'])
 
     def test_more_than_six_space_separated_columns_are_rejected(self):
         self.client.login(username='paste-admin', password='pass')
-        row = self.preview('PASTE-RTR 1 50 BATCH 2026-09-09 A B').json()['rows'][0]
-        self.assertFalse(row['valid'])
-        self.assertIn('Use no more than six columns.', row['errors'])
+        response = self.preview('PASTE-RTR 1 50 BATCH 2026-09-09 A B')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('spreadsheet columns', response.json()['error'])
 
     def test_unknown_inactive_service_and_untracked_skus_are_rejected(self):
         self.client.login(username='paste-admin', password='pass')
@@ -220,9 +218,11 @@ class PurchasePasteRowsTests(TestCase):
             'PASTE-RTR\t1\t50.0000001',
             'PASTE-RAD\t1.5\t50\t\t\tA,B',
             'PASTE-RAD\t2\t50\t\t\tA,a',
-            'PASTE-RTR\t1\t50\t\t\t\tunexpected',
         ))).json()['rows']
         self.assertTrue(all(not row['valid'] for row in rows))
+        extra = self.preview('PASTE-RTR\t1\t50\t\t\t\tunexpected')
+        self.assertEqual(extra.status_code, 400)
+        self.assertIn('received 7', extra.json()['error'])
 
     def test_malformed_quoted_input_is_rejected_cleanly(self):
         self.client.login(username='paste-admin', password='pass')
@@ -345,7 +345,7 @@ class PurchasePasteRowsTests(TestCase):
             ('PASTE-RAD', '2', '30', '', '', '0001,0002'),
             ('PASTE-EXP', '1', '5', 'B-001', '2027-12-31', ''),
             ('UNKNOWN', '1', '5', '', '', ''),
-            ('PASTE-RTR', 'bad', '5', '', '', ''),
+            ('PASTE-RTR', '0', '5', '', '', ''),
         ), start=2):
             for column_index, value in enumerate(row, start=1):
                 sheet.cell(row_index, column_index, value)

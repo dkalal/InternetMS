@@ -53,6 +53,89 @@ class MixedPurchaseImportTests(TestCase):
              'resolution': 'new', 'staging_reference': 'radio-1'},
         ]
 
+    def test_custom_column_inspection_preview_and_save_use_existing_boundaries(self):
+        from .tests_purchase_column_mapping import SAMPLE_TSV, EXPLICIT_MAPPING
+        url = reverse('inventory:purchase_rows_preview')
+        inspection = self.client.post(url, {'rows': SAMPLE_TSV, 'operation': 'inspect_columns'})
+        self.assertEqual(inspection.status_code, 200)
+        self.assertEqual(inspection.json()['column_mapping']['row_count'], 13)
+        failed = self.client.post(url, {'rows': SAMPLE_TSV, 'format': 'mixed'})
+        self.assertEqual(failed.status_code, 400)
+        self.assertEqual(failed.json()['code'], 'column_mapping_required')
+        self.assertEqual(failed.json()['column_mapping']['column_count'], 7)
+        preview = self.client.post(url, {'rows': SAMPLE_TSV, 'column_mapping': json.dumps(EXPLICIT_MAPPING),
+                                        'has_header': 'false'})
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()['format_label'], 'Custom column mapping')
+        self.assertEqual(len(preview.json()['rows']), 13)
+        self.assertEqual(preview.json()['rows'][0]['product_name'], 'TP-Link TL-SG1024')
+        self.assertFalse(Purchase.objects.exists())
+        self.assertFalse(PurchaseLine.objects.exists())
+        self.assertEqual(Product.objects.count(), 1)
+        self.assertFalse(StockMovement.objects.exists())
+        # An explicit test mapping for an existing product, with an ignored source column.
+        existing = self.client.post(url, {'rows': 'Router\t2\t12.345678\t000123\tignore',
+                                         'column_mapping': json.dumps(['product_name', 'quantity', 'unit_cost', 'sku', '__ignore__']),
+                                         'has_header': 'false'}).json()
+        self.assertEqual(existing['ignored_columns'], 1)
+        row = existing['rows'][0]
+        self.assertEqual(row['product_id'], self.product.pk)
+        self.assertEqual(self.client.post(reverse('inventory:purchase_create'), self.payload([row])).status_code, 302)
+        self.assertEqual(Purchase.objects.get().total_cost, Decimal('24.69'))
+        self.assertFalse(StockMovement.objects.exists())
+
+    def test_custom_mapping_rejects_crafted_schema_without_writes(self):
+        url = reverse('inventory:purchase_rows_preview')
+        for supplied in ('null', '{}', '["sku", "tenant_id", "unit_cost"]', '{not json', 'X' * 2001):
+            with self.subTest(supplied=supplied[:30]):
+                response = self.client.post(url, {'rows': '000123\t1\t10', 'column_mapping': supplied, 'has_header': 'false'})
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.post(url, {'rows': '000123\t1\t10', 'operation': 'save_products'}).status_code, 400)
+        self.assertEqual(self.client.post(url, {'rows': '000123\t1\t10', 'operation': 'inspect_columns', 'has_header': 'maybe'}).status_code, 400)
+        self.assertFalse(Purchase.objects.exists())
+        self.assertEqual(Product.objects.count(), 1)
+
+    def test_column_inspection_enforces_purchase_permission_csrf_and_methods(self):
+        from django.test import Client
+        url = reverse('inventory:purchase_rows_preview')
+        self.assertEqual(self.client.get(url, {'operation': 'inspect_columns'}).status_code, 405)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user)
+        self.assertEqual(csrf_client.post(url, {'rows': '000123\t1\t10', 'operation': 'inspect_columns'}).status_code, 403)
+        buyer = get_user_model().objects.create_user(username='mapping-no-grants', password='pass')
+        UserAccessProfile.objects.create(user=buyer, tenant=self.tenant, role=UserAccessProfile.Role.TENANT_STAFF)
+        self.client.force_login(buyer)
+        self.assertEqual(self.client.post(url, {'rows': '000123\t1\t10', 'operation': 'inspect_columns'}).status_code, 403)
+
+    def test_mapped_catalog_selection_is_still_tenant_scoped(self):
+        other = Organization.objects.create(name='Mapping Other Tenant', slug='mapping-other')
+        unit = UnitOfMeasure.objects.create(organization=other, tenant=other, name='Piece')
+        category = ProductCategory.objects.create(organization=other, tenant=other, name='Devices', default_unit=unit)
+        Product.objects.create(organization=other, tenant=other, name='Private device', sku='FOREIGN-SKU',
+                               catalog_category=category, sales_unit=unit, quantity=Decimal('0'),
+                               buying_price=Decimal('0'), selling_price=Decimal('20'))
+        url = reverse('inventory:purchase_rows_preview')
+        response = self.client.post(url, {'rows': 'Private device\t1\t10\tFOREIGN-SKU',
+                                        'column_mapping': json.dumps(['product_name', 'quantity', 'unit_cost', 'sku']),
+                                        'has_header': 'false'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()['rows'][0]['product'])
+        self.assertFalse(response.json()['rows'][0]['valid'])
+
+    def test_two_hundred_mapped_rows_have_bounded_queries(self):
+        url = reverse('inventory:purchase_rows_preview')
+        mapping = json.dumps(['product_name', 'quantity', 'unit_cost', 'sku'])
+        with CaptureQueriesContext(connection) as small:
+            self.client.post(url, {'rows': 'Router\t1\t10\t000123', 'column_mapping': mapping, 'has_header': 'false'})
+        with CaptureQueriesContext(connection) as large:
+            response = self.client.post(url, {'rows': '\n'.join('Router\t1\t10\t000123' for _ in range(200)),
+                                              'column_mapping': mapping, 'has_header': 'false'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['review_summary']['matched'], 200)
+        self.assertLessEqual(len(large), len(small) + 1)
+        self.assertFalse(Purchase.objects.exists())
+        self.assertEqual(Product.objects.count(), 1)
+
     def test_mixed_preview_and_atomic_save_are_stock_neutral(self):
         text = ('sku\tproduct_name\tquantity\tunit_cost\tcategory\tunit\tselling_price\tbrand\tmodel_number\tserialized\ttrack_expiry\tbatch_reference\texpiry_date\tserial_numbers\tstaging_reference\n'
                 '000123\tRouter\t2\t12.345678\n'
@@ -210,6 +293,29 @@ class MixedPurchaseImportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['summary']['new'], 200)
         self.assertLess(len(queries), 20)
+
+    def test_source_rows_survive_review_and_excluded_serials_do_not_conflict(self):
+        rows = [dict(self.rows()[1], row=17, excluded=True),
+                dict(self.rows()[1], row=21, staging_reference='other-radio')]
+        preview = self.client.post(reverse('inventory:purchase_rows_preview'),
+                                   {'review_rows': json.dumps(rows)}).json()['rows']
+        self.assertEqual([row['row'] for row in preview], [17, 21])
+        self.assertTrue(preview[1]['valid'], preview[1]['errors'])
+
+    def test_reordered_headers_blank_sku_and_formatted_prices_can_save(self):
+        text = ('Product name\tSKU\tUnit cost\tQuantity\tCategory\tUnit\tSelling price\n'
+                'New radio\t\t1,250.123456\t2\tDevices\tPiece\t2,500.00')
+        preview = self.client.post(reverse('inventory:purchase_rows_preview'), {'rows': text})
+        self.assertEqual(preview.status_code, 200)
+        row = preview.json()['rows'][0]
+        self.assertEqual(row['quantity'], '2')
+        row['resolution'] = 'new'
+        reviewed = self.client.post(reverse('inventory:purchase_rows_preview'),
+                                    {'review_rows': json.dumps([row])}).json()['rows']
+        self.assertTrue(reviewed[0]['valid'], reviewed[0]['errors'])
+        self.assertEqual(self.client.post(reverse('inventory:purchase_create'), self.payload(reviewed)).status_code, 302)
+        self.assertEqual(Purchase.objects.get().total_cost, Decimal('2500.25'))
+        self.assertEqual(Product.objects.get(name='New radio').selling_price, Decimal('2500.00'))
 
     def test_cross_tenant_selected_product_is_rejected_without_disclosure(self):
         other = Organization.objects.create(name='Other Mixed', slug='other-mixed')

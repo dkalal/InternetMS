@@ -70,7 +70,10 @@ from .models import (
 )
 from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService, audit, money
-from .purchase_import import HEADERS as MIXED_HEADERS, ImportInputError, parse_input, submitted_rows, validate_rows
+from .purchase_import import (
+    HEADERS as MIXED_HEADERS, ImportColumnMappingRequired, ImportInputError,
+    inspect_input, parse_input, submitted_rows, validate_rows,
+)
 from .purchase_batch import apply_purchase_batch
 
 
@@ -441,6 +444,9 @@ def purchase_rows_template_bytes():
     rows.title = 'Purchase rows'
     rows.append(MIXED_HEADERS)
     rows.freeze_panes = 'A2'
+    # Compatibility metadata remains in the workbook, outside the ordinary UI.
+    rows.column_dimensions['O'].hidden = True
+    workbook.properties.version = '2'
     widths = (24, 32, 16, 18, 28, 18, 18, 24, 24, 16, 16, 24, 18, 42, 24)
     for index, width in enumerate(widths, start=1):
         letter = rows.cell(1, index).column_letter
@@ -459,17 +465,17 @@ def purchase_rows_template_bytes():
     instructions.column_dimensions['A'].width = 105
     lines = [
         'Purchase rows template — instructions',
-        'Version 2: Purchase rows sheet has one header and blank data rows. Instructions/examples on this sheet are never imported.',
+        'Purchase rows sheet has one header and blank data rows. Instructions/examples on this sheet are never imported.',
         'Existing example: enter an active stock SKU; other product attributes are taken from the catalog.',
         'New example: leave SKU blank, enter product name, category, unit, selling price and tracking choices.',
         'Unknown supplied SKU requires explicit Create new or an existing-product selection.',
-        'Rows sharing a staging reference can create one proposed product only after review.',
+        'Choose Use existing or Create new explicitly for items without a known SKU.',
         'Quantity and unit cost use that product’s selected sales/stock unit.',
-        'Use plain numbers without currency symbols or thousands separators. Quantity and unit cost support six decimals; selling price supports two.',
-        'Format SKU, serial numbers and staging reference as text to preserve leading zeros.',
+        'Use numbers such as 1250.50 or 1,250.50 without currency symbols. Quantity and unit cost support six decimals; selling price supports two.',
+        'Format SKU and serial numbers as text to preserve leading zeros.',
         'Use YYYY-MM-DD for expiry. Enter comma-separated serial numbers in one cell.',
         'Serialized products need one unique serial for each whole unit. Other tracking fields follow purchase validation.',
-        f'Paste at most {PURCHASE_PASTE_MAX_ROWS} rows. Include the header for version-2 rows; six-column legacy rows may omit it.',
+        f'Paste at most {PURCHASE_PASTE_MAX_ROWS} rows. Include headers for mixed products; six-column legacy rows may omit them.',
         'Previewing does not save a purchase or change stock.',
         '',
         'ILLUSTRATIVE EXAMPLES — these are not purchase rows',
@@ -524,6 +530,8 @@ def purchase_product_search(request):
                 'sku': product.sku,
                 'unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
                 'unit_id': product.sales_unit_id,
+                'brand': product.brand,
+                'model_number': product.model_number,
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
             }
@@ -539,9 +547,38 @@ def purchase_rows_preview(request):
     """Shared XLSX/TSV preview. No products, purchases or stock are written."""
     organization = _scope(request, PermissionCode.PURCHASES_CREATE)
     try:
+        operation = request.POST.get('operation', 'preview')
+        if operation not in ('preview', 'inspect_columns'):
+            raise ImportInputError('Choose a supported purchase import action.')
+        header_choice = request.POST.get('has_header')
+        if header_choice is not None and header_choice not in ('true', 'false'):
+            raise ImportInputError('Confirm whether the first row contains column headings.')
+        has_header = None if header_choice is None else header_choice == 'true'
+        if operation == 'inspect_columns':
+            if 'review_rows' in request.POST:
+                raise ImportInputError('Choose columns from the original spreadsheet input.')
+            return JsonResponse({'column_mapping': inspect_input(
+                text=request.POST.get('rows', ''), upload=request.FILES.get('file'), has_header=has_header,
+            )})
+        column_mapping = None
+        if 'column_mapping' in request.POST:
+            encoded_mapping = request.POST['column_mapping']
+            if len(encoded_mapping) > 2000:
+                raise ImportInputError('Column mapping is too large. Choose columns again.')
+            try:
+                column_mapping = json.loads(encoded_mapping)
+            except (ValueError, TypeError) as exc:
+                raise ImportInputError('Column mapping is invalid. Choose columns again.') from exc
+            if not isinstance(column_mapping, list):
+                raise ImportInputError('Column mapping must be a list of field selections.')
         rows = (submitted_rows(request.POST['review_rows']) if 'review_rows' in request.POST
-                else parse_input(text=request.POST.get('rows', ''), upload=request.FILES.get('file')))
+                else parse_input(text=request.POST.get('rows', ''), upload=request.FILES.get('file'),
+                                 input_format=request.POST.get('format', 'auto'),
+                                 column_mapping=column_mapping, has_header=has_header))
         results = validate_rows(rows, organization=organization)
+    except ImportColumnMappingRequired as exc:
+        return JsonResponse({'error': str(exc), 'code': 'column_mapping_required',
+                             'column_mapping': exc.structure}, status=400)
     except ImportInputError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
     counts = {status: sum(row['status'] == status for row in results)
@@ -556,7 +593,10 @@ def purchase_rows_preview(request):
     )
     return JsonResponse({'rows': results, 'summary': (
         {'total': detailed_summary['total'], 'valid': detailed_summary['valid']} if legacy else detailed_summary
-    ), 'review_summary': detailed_summary})
+    ), 'review_summary': detailed_summary,
+        'format_label': ('Custom column mapping' if column_mapping is not None else
+                         'Mixed product columns' if any('product_name' in row for row in rows) else 'Legacy SKU columns'),
+        'ignored_columns': column_mapping.count('__ignore__') if column_mapping is not None else 0})
 
 
 @login_required
@@ -689,7 +729,7 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
         'category_quick_create_url': reverse('inventory:purchase_category_quick_create'),
         'product_quick_create_url': reverse('inventory:purchase_product_quick_create'),
-        'quick_product_categories': ProductCategory.objects.filter(tenant=organization, is_active=True),
+        'quick_product_categories': ProductCategory.objects.filter(tenant=organization, is_active=True).prefetch_related('allowed_units'),
         'quick_product_units': UnitOfMeasure.objects.filter(tenant=organization, is_active=True).order_by('name'),
         'can_create_import_product': has_tenant_permission(
             request.user, organization, PermissionCode.PRODUCTS_CREATE, membership=request.membership

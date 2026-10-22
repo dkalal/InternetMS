@@ -5,6 +5,7 @@ This module never writes business records. The save boundary re-runs validation.
 
 import csv
 import json
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
@@ -20,6 +21,7 @@ from products.models import Product, ProductCategory, UnitOfMeasure
 MAX_ROWS = 200
 MAX_TEXT = 100_000
 MAX_FILE = 250_000
+MAX_SOURCE_ROWS = 10_000
 HEADERS = (
     'sku', 'product_name', 'quantity', 'unit_cost', 'category', 'unit',
     'selling_price', 'brand', 'model_number', 'serialized', 'track_expiry',
@@ -39,6 +41,12 @@ class ImportInputError(ValueError):
     pass
 
 
+class ImportColumnMappingRequired(ImportInputError):
+    def __init__(self, message, structure):
+        super().__init__(message)
+        self.structure = structure
+
+
 def _as_text(value):
     if value is None:
         return ''
@@ -47,69 +55,224 @@ def _as_text(value):
     return str(value).strip()
 
 
-def parse_input(*, text='', upload=None):
+HEADER_ALIASES = {
+    'product': 'product_name', 'name': 'product_name', 'qty': 'quantity',
+    'cost': 'unit_cost', 'purchase_price': 'unit_cost', 'price': 'unit_cost',
+    'batch': 'batch_reference', 'expiry': 'expiry_date', 'serials': 'serial_numbers',
+    'model': 'model_number', 'sales_unit': 'unit', 'is_serialized': 'serialized',
+}
+STRUCTURE_HELP = ('We could not identify the spreadsheet columns. Copy the selected cells '
+                  'directly from Excel or upload the template.')
+FIELD_LABELS = {
+    'sku': 'SKU', 'product_name': 'Product name', 'quantity': 'Quantity',
+    'unit_cost': 'Unit cost (TZS)', 'category': 'Category', 'unit': 'Sales / stock unit',
+    'selling_price': 'Selling price (TZS)', 'brand': 'Brand', 'model_number': 'Model',
+    'serialized': 'Track serial numbers', 'track_expiry': 'Track expiry dates',
+    'batch_reference': 'Batch reference', 'expiry_date': 'Expiry date',
+    'serial_numbers': 'Serial numbers', 'staging_reference': 'Shared product reference',
+}
+
+
+def _header(value):
+    key = re.sub(r'[\s-]+', '_', value.strip().lower().lstrip('\ufeff'))
+    return HEADER_ALIASES.get(key, key)
+
+
+def _numeric_text(value):
+    """Only English grouped thousands with a decimal dot are unambiguous here."""
+    if re.fullmatch(r'[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?', value):
+        return value.replace(',', '')
+    return value
+
+
+def _read_input(*, text='', upload=None):
+    """Read cells once, retaining empty columns and physical source positions."""
     if upload:
         if upload.size > MAX_FILE:
             raise ImportInputError('XLSX file exceeds 250 KB.')
         if not upload.name.lower().endswith('.xlsx'):
             raise ImportInputError('Upload an .xlsx template. Macro-enabled files are not accepted.')
+        book = None
         try:
             book = load_workbook(BytesIO(upload.read()), read_only=True, data_only=False)
             if 'Purchase rows' not in book.sheetnames:
                 raise ImportInputError('The workbook needs a Purchase rows sheet.')
             sheet = book['Purchase rows']
-            if sheet.max_column > len(HEADERS) or sheet.max_row > MAX_ROWS + 10:
-                raise ImportInputError('The workbook exceeds the supported column or row limit.')
+            if sheet.max_column > len(HEADERS) or sheet.max_row > MAX_SOURCE_ROWS:
+                raise ImportInputError('The worksheet supports at most 15 columns and 10,000 source rows, including blank rows.')
             raw = []
-            for cells in sheet.iter_rows(values_only=True):
+            for number, cells in enumerate(sheet.iter_rows(values_only=True), 1):
                 row = [_as_text(cell) for cell in cells]
                 if any(row):
-                    raw.append(row)
-            book.close()
+                    raw.append((number, row))
+                    if len(raw) > MAX_ROWS + 1:
+                        raise ImportInputError('The workbook exceeds 200 non-empty purchase rows.')
         except ImportInputError:
             raise
         except Exception as exc:
             raise ImportInputError('The XLSX file could not be read.') from exc
+        finally:
+            if book is not None:
+                book.close()
     else:
         if len(text) > MAX_TEXT:
             raise ImportInputError('Pasted text exceeds 100,000 characters.')
         try:
-            raw = [row for row in csv.reader(StringIO(text), delimiter='\t', strict=True)
-                   if any(cell.strip() for cell in row)]
+            reader = csv.reader(StringIO(text, newline=''), delimiter='\t', strict=True)
+            raw = []
+            start = 1
+            for cells in reader:
+                if any(cell.strip() for cell in cells):
+                    raw.append((start, cells))
+                start = reader.line_num + 1
         except csv.Error as exc:
             raise ImportInputError('Check spreadsheet quoting in the pasted rows.') from exc
     if not raw:
         raise ImportInputError('Enter at least one purchase row.')
-    first = tuple(cell.strip().lower().replace(' ', '_') for cell in raw[0])
-    if first == HEADERS:
+    return raw
+
+
+def _has_header(raw):
+    return sum(_header(cell) in HEADERS for cell in raw[0][1]) >= 2
+
+
+def _describe_columns(raw, *, has_header=None):
+    if has_header is not None and not isinstance(has_header, bool):
+        raise ImportInputError('Specify whether the first row contains column headings.')
+    has_header = _has_header(raw) if has_header is None else has_header
+    data = raw[1:] if has_header else raw
+    if not 1 <= len(data) <= MAX_ROWS:
+        raise ImportInputError(f'Enter between 1 and {MAX_ROWS} non-empty purchase rows.')
+    width = max(len(cells) for _, cells in raw)
+    if not 3 <= width <= len(HEADERS):
+        raise ImportInputError(STRUCTURE_HELP + ' Expected 3 to 15 tab-separated columns.')
+    headers = [_header(cell) for cell in raw[0][1]] if has_header else []
+    columns = []
+    for index in range(width):
+        heading = headers[index] if index < len(headers) else ''
+        examples = []
+        for _, cells in data[:20]:
+            value = cells[index] if index < len(cells) else ''
+            value = _as_text(value)[:100] or '(blank)'
+            if value not in examples:
+                examples.append(value)
+            if len(examples) == 3:
+                break
+        columns.append({
+            'source_column': index + 1,
+            'heading': (_as_text(raw[0][1][index])[:100] if has_header and index < len(raw[0][1]) else ''),
+            'examples': examples,
+            # Suggest by known header only. Never infer financial fields from values.
+            'field': heading if heading in HEADERS and headers.count(heading) == 1 else '',
+        })
+    return {'row_count': len(data), 'column_count': width, 'has_header': has_header,
+            'columns': columns, 'fields': [{'value': key, 'label': FIELD_LABELS[key]} for key in HEADERS]}
+
+
+def inspect_input(*, text='', upload=None, has_header=None):
+    """Bounded read-only structure inspection, shared by XLSX and TSV."""
+    return _describe_columns(_read_input(text=text, upload=upload), has_header=has_header)
+
+
+def _mapping_required(message, raw, *, has_header=None):
+    return ImportColumnMappingRequired(message, _describe_columns(raw, has_header=has_header))
+
+
+def _validated_mapping(mapping, raw, *, has_header):
+    width = max(len(cells) for _, cells in raw)
+    if not isinstance(has_header, bool):
+        raise ImportInputError('Confirm whether the first row contains column headings.')
+    if (not isinstance(mapping, list) or not 3 <= len(mapping) <= len(HEADERS)
+            or not all(isinstance(key, str) for key in mapping)):
+        raise ImportInputError('Column mapping must contain 3 to 15 field selections.')
+    if len(mapping) != width:
+        raise ImportInputError(f'Column mapping expects {width} selections; received {len(mapping)}. Choose columns again.')
+    seen = set()
+    for position, key in enumerate(mapping, 1):
+        if key == '__ignore__':
+            continue
+        if key not in HEADERS:
+            raise ImportInputError(f'Column {position}: choose a purchase field or explicitly select Do not import.')
+        if key in seen:
+            raise ImportInputError(f'{FIELD_LABELS[key]} is assigned more than once. Choose a different field for column {position}.')
+        seen.add(key)
+    if not {'quantity', 'unit_cost'}.issubset(seen) or not {'sku', 'product_name'}.intersection(seen):
+        raise ImportInputError('Map Quantity, Unit cost, and SKU or Product name before review.')
+    return tuple(mapping)
+
+
+def parse_input(*, text='', upload=None, input_format='auto', column_mapping=None, has_header=None):
+    if input_format not in ('auto', 'mixed', 'legacy'):
+        raise ImportInputError('Choose a supported spreadsheet format.')
+    raw = _read_input(text=text, upload=upload)
+    source_raw = raw
+    first = tuple(_header(cell) for cell in raw[0][1])
+    # A header is recognizable by several names, not by one SKU coincidentally named SKU.
+    is_header = _has_header(raw)
+    if column_mapping is not None:
+        keys = _validated_mapping(column_mapping, raw, has_header=has_header)
+        raw = raw[1:] if has_header else raw
+    elif is_header:
+        if len(first) != len(set(first)):
+            raise _mapping_required('Duplicate or ambiguous column headers. Use each column name once.', raw)
+        unknown = [key for key in first if key not in HEADERS]
+        if unknown:
+            raise _mapping_required('Unknown column headers: ' + ', '.join(unknown) + '. Choose columns or use the template headers.', raw)
+        if not {'quantity', 'unit_cost'}.issubset(first) or not {'sku', 'product_name'}.intersection(first):
+            raise _mapping_required('Headers need Quantity, Unit cost, and SKU or Product name.', raw)
+        keys = first
+        raw = raw[1:]
+    elif upload:
+        raise ImportInputError('The Purchase rows sheet needs recognized column headers. Choose columns or download the template.')
+    elif input_format == 'mixed':
         keys = HEADERS
-        raw = raw[1:]
-    elif first in (LEGACY_HEADERS,
-                   ('sku', 'quantity', 'unit_cost', 'batch_reference', 'expiry', 'serial_numbers'),
-                   ('sku', 'quantity', 'unit_cost', 'batch', 'expiry', 'serials')):
-        keys = LEGACY_HEADERS
-        raw = raw[1:]
-    elif len(raw[0]) <= 6:
+    elif input_format == 'legacy':
         keys = LEGACY_HEADERS
     else:
-        raise ImportInputError('Use the version 2 header for mixed products or six legacy columns.')
+        # Headerless legacy is safe only when the first two numeric columns fit.
+        probe = raw[0][1]
+        if len(probe) > 6:
+            raise _mapping_required(f'Row {raw[0][0]}: expected at most 6 legacy columns, received {len(probe)}. '
+                                    'Choose columns to identify this spreadsheet layout.', raw)
+        if len(probe) == 1:
+            probe = probe[0].split()
+        if 3 <= len(probe) <= 6 and all(_looks_numeric(v) or v.startswith('=') for v in probe[1:3]):
+            keys = LEGACY_HEADERS
+        else:
+            raise ImportInputError(STRUCTURE_HELP + ' For headerless rows, select the Mixed or Legacy format.')
     if not raw or len(raw) > MAX_ROWS:
         raise ImportInputError(f'Enter between 1 and {MAX_ROWS} non-empty purchase rows.')
     result = []
-    for index, cells in enumerate(raw, 1):
+    for index, cells in raw:
+        if len(cells) == 1 and keys != LEGACY_HEADERS:
+            raise ImportInputError(f'Row {index}: ' + STRUCTURE_HELP)
         if len(cells) == 1 and keys == LEGACY_HEADERS:
-            # Space input remains supported only for simple SKU, quantity, cost.
+            # Compatibility: only an unambiguous SKU + numeric quantity/cost,
+            # optionally followed by single-token batch/date/serial values.
             parts = cells[0].split()
-            if 2 <= len(parts) <= 6:
+            if 3 <= len(parts) <= 6 and all(_looks_numeric(v) or v.startswith('=') for v in parts[1:3]):
                 cells = parts
-            elif len(parts) > 6:
-                cells = parts
-        row = {key: _as_text(cells[pos]) if pos < len(cells) else '' for pos, key in enumerate(keys)}
+            else:
+                raise ImportInputError(f'Row {index}: ' + STRUCTURE_HELP)
+        if len(cells) > len(keys):
+            raise ImportInputError(f'Row {index}: expected at most {len(keys)} columns, received {len(cells)}. ' + STRUCTURE_HELP)
+        row = {key: _as_text(cells[pos]) if pos < len(cells) else ''
+               for pos, key in enumerate(keys) if key != '__ignore__'}
+        for key in ('quantity', 'unit_cost', 'selling_price'):
+            if key in row:
+                row[key] = _numeric_text(row[key])
+        for key in ('quantity', 'unit_cost'):
+            value = row.get(key, '')
+            if value and not _looks_numeric(value) and not value.startswith('='):
+                reason = (f'Row {index}, {key.replace("_", " ")}: expected a number. '
+                          f'Source column {keys.index(key) + 1} is mapped to {FIELD_LABELS[key]}. '
+                          'Choose columns if this differs from your layout; '
+                          'use 1250.50 or 1,250.50, without currency symbols.')
+                if column_mapping is None:
+                    raise _mapping_required(reason, source_raw)
+                raise ImportInputError(reason)
         row['row'] = index
         row['input_errors'] = []
-        if len(cells) > len(keys):
-            row['input_errors'].append('Use no more than six columns.' if keys == LEGACY_HEADERS
-                                       else f'Use no more than {len(keys)} columns.')
         for key, max_length in LENGTHS.items():
             if len(row.get(key, '')) > max_length:
                 row['input_errors'].append(f'{key.replace("_", " ").title()} is too long.')
@@ -120,6 +283,14 @@ def parse_input(*, text='', upload=None):
     return result
 
 
+def _looks_numeric(value):
+    try:
+        Decimal(_numeric_text(value))
+        return True
+    except (InvalidOperation, ValueError):
+        return False
+
+
 def _decimal(value, key, errors):
     digits, places, positive = DECIMAL_FIELDS[key]
     label = key.replace('_', ' ').capitalize()
@@ -127,7 +298,7 @@ def _decimal(value, key, errors):
         errors.append(f'{label} is required.')
         return None
     try:
-        number = Decimal(value)
+        number = Decimal(_numeric_text(value))
         if not number.is_finite() or number < 0 or (positive and number <= 0):
             raise InvalidOperation
         DecimalValidator(digits, places)(number)
@@ -181,7 +352,10 @@ def validate_rows(rows, *, organization, for_save=False):
     results = []
     for number, supplied in enumerate(rows, 1):
         row = {key: _as_text(supplied.get(key, '')) for key in HEADERS}
-        row['row'] = number
+        for key in DECIMAL_FIELDS:
+            row[key] = _numeric_text(row[key])
+        source_row = supplied.get('row', number)
+        row['row'] = source_row if isinstance(source_row, int) and 0 < source_row <= MAX_TEXT else number
         errors = list(supplied.get('input_errors', []))
         for key, length in LENGTHS.items():
             if len(row[key]) > length:
@@ -247,7 +421,7 @@ def validate_rows(rows, *, organization, for_save=False):
             reference = row['staging_reference'] or f'row-{number}'
             definition = tuple(row.get(k) for k in ('sku', 'product_name', 'category', 'unit', 'selling_price', 'brand', 'model_number', 'serialized', 'track_expiry'))
             if reference in definitions and definitions[reference] != definition:
-                errors.append('Rows sharing a staging reference have conflicting product definitions.')
+                errors.append('Rows sharing the same proposed product have conflicting product definitions.')
             definitions[reference] = definition
             row['staging_reference'] = reference
             row['category_id'] = category.pk if category else None
@@ -260,7 +434,9 @@ def validate_rows(rows, *, organization, for_save=False):
         if product:
             status = 'matched'
             row['product'] = {'id': product.pk, 'name': product.name, 'sku': product.sku,
+                              'brand': product.brand, 'model_number': product.model_number,
                               'text': str(product), 'unit': product.sales_unit.label if product.sales_unit_id else product.measure_unit,
+                              'unit_id': product.sales_unit_id,
                               'serialized': product.is_serialized, 'expiry': product.track_expiry}
             row['product_id'] = product.pk
             row['expected_sku'] = product.sku
@@ -272,6 +448,7 @@ def validate_rows(rows, *, organization, for_save=False):
             row['product_id'] = selected.pk if selected else None
         row['suggestions'] = [
             {'id': candidate.pk, 'sku': candidate.sku, 'name': candidate.name,
+             'brand': candidate.brand, 'model_number': candidate.model_number,
              'unit': candidate.sales_unit.label if candidate.sales_unit_id else candidate.measure_unit,
              'unit_id': candidate.sales_unit_id, 'serialized': candidate.is_serialized,
              'expiry': candidate.track_expiry}
@@ -288,7 +465,7 @@ def validate_rows(rows, *, organization, for_save=False):
             except ValueError:
                 errors.append('Expiry date must use YYYY-MM-DD.')
         serials = [s.strip() for s in row['serial_numbers'].replace('|', ',').replace('\n', ',').split(',') if s.strip()]
-        for serial in serials:
+        for serial in ([] if excluded else serials):
             normalized = serial.upper()
             if normalized in seen_serials:
                 errors.append(f'Serial {serial} occurs in another row.')
@@ -304,8 +481,8 @@ def validate_rows(rows, *, organization, for_save=False):
         if not excluded and status == 'unresolved' and not errors:
             errors.append('Choose an existing product or Create new.') if for_save else None
         row['serial_numbers'] = '\n'.join(serials)
-        row['quantity'] = str(quantity) if quantity is not None else row['quantity']
-        row['unit_cost'] = str(cost) if cost is not None else row['unit_cost']
+        row['quantity'] = format(quantity, 'f') if quantity is not None else row['quantity']
+        row['unit_cost'] = format(cost, 'f') if cost is not None else row['unit_cost']
         row['excluded'] = excluded
         row['status'] = 'excluded' if excluded else ('unresolved' if status == 'unresolved' and len(errors) == 1
                                                     else 'invalid' if errors else status)

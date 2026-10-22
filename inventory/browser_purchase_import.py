@@ -1,0 +1,335 @@
+"""Optional real-browser regression checks using synthetic data and a test database.
+
+Install playwright in the development environment, then run:
+python manage.py test inventory.browser_purchase_import --keepdb
+Uses installed Microsoft Edge; set PURCHASE_IMPORT_BROWSER_CHANNEL to another
+Playwright channel if required. Screenshots go to .backups/purchase-import/.
+"""
+import os
+import json
+from pathlib import Path
+
+from django.conf import settings
+from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from django.test import override_settings
+from playwright.sync_api import sync_playwright, expect
+
+from .models import Purchase, StockMovement
+from . import tests_purchase_mixed_import as fixtures
+from products.models import Product
+
+
+@override_settings(DEBUG=True, SECURE_SSL_REDIRECT=False, SESSION_COOKIE_SECURE=False,
+                   CSRF_COOKIE_SECURE=False, ALLOWED_HOSTS=['localhost', 'testserver'])
+class PurchaseImportBrowserChecks(StaticLiveServerTestCase):
+    def setUp(self):
+        fixtures.MixedPurchaseImportTests.setUp(self)
+
+    def test_category_selection_prefills_active_allowed_unit_in_editor_and_bulk(self):
+        from products.models import ProductCategory, UnitOfMeasure
+        metre = UnitOfMeasure.objects.create(organization=self.tenant, tenant=self.tenant, name='Metre', symbol='m')
+        self.category.allowed_units.add(metre)
+        cabling = ProductCategory.objects.create(organization=self.tenant, tenant=self.tenant,
+                                                 name='Cabling', default_unit=metre)
+        inactive = UnitOfMeasure.objects.create(organization=self.tenant, tenant=self.tenant, name='Retired unit')
+        fallback = ProductCategory.objects.create(organization=self.tenant, tenant=self.tenant,
+                                                  name='Legacy category', default_unit=inactive)
+        fallback.allowed_units.add(self.unit)
+        inactive.is_active = False
+        inactive.save()
+        ambiguous = ProductCategory.objects.create(organization=self.tenant, tenant=self.tenant,
+                                                   name='No configured default', default_unit=self.unit)
+        ambiguous.allowed_units.add(metre)
+        ProductCategory.objects.filter(pk=ambiguous.pk).update(default_unit=None)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.getenv('PURCHASE_IMPORT_BROWSER_CHANNEL', 'msedge'), headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': self.client.session.session_key,
+                                 'url': self.live_server_url}])
+            page = context.new_page()
+            page.goto(self.live_server_url + '/inventory/purchases/new/')
+            page.locator('.purchase-more summary').click()
+            page.locator('[data-open-paste-rows]').click()
+            page.get_by_role('tab', name='Paste from spreadsheet').click()
+            page.locator('[data-paste-rows-input]').fill(
+                'sku\tproduct_name\tquantity\tunit_cost\tselling_price\n'
+                '\tFuture cable\t2\t10\t30\n\tFuture connector\t1\t10\t40\n'
+                '000123\tRouter\t1\t10\t100')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-filter="all"] span')).to_have_text('3')
+            page.locator('[data-import-results] .import-row-open').nth(0).click()
+            page.get_by_role('button', name='Create new', exact=True).click()
+            page.locator('[data-field="category"]').select_option('Devices')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Piece')
+            expect(page.locator('[data-field="category"]')).to_be_focused()
+            page.locator('[data-field="category"]').select_option('Cabling')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Metre')
+            page.locator('[data-field="category"]').select_option('Devices')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Piece')
+            # A deliberate alternative allowed unit survives editor redraws.
+            page.locator('[data-field="unit"]').select_option('Metre')
+            page.locator('[data-field="serialized"]').select_option('Yes')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Metre')
+            page.locator('[data-field="serialized"]').select_option('No')
+            page.get_by_role('button', name='Save item', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('1')
+            page.locator('[data-import-results] .import-row-open').nth(1).click()
+            page.get_by_role('button', name='Create new', exact=True).click()
+            page.locator('[data-field="category"]').select_option('Legacy category')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Piece')
+            expect(page.locator('[data-field="unit"] option[value="Retired unit"]')).to_have_count(0)
+            page.locator('[data-field="category"]').select_option('No configured default')
+            expect(page.locator('[data-field="unit"]')).to_have_value('')
+            page.locator('[data-field="category"]').select_option('Devices')
+            expect(page.locator('[data-field="unit"]')).to_have_value('Piece')
+            page.get_by_role('button', name='Save item', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('2')
+            page.get_by_role('checkbox', name='Select visible items', exact=True).check()
+            page.locator('[data-bulk-category]').select_option('Cabling')
+            expect(page.locator('[data-bulk-unit]')).to_have_value('Metre')
+            page.get_by_role('button', name='Apply to new', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('2')
+            page.get_by_role('button', name='Continue to summary', exact=True).click()
+            page.get_by_role('button', name='Add 3 items to purchase', exact=True).click()
+            rows = json.loads(page.locator('[data-import-rows]').input_value())
+            self.assertEqual([(r['category'], r['unit']) for r in rows[:2]], [('Cabling', 'Metre')] * 2)
+            self.assertEqual(rows[2]['product_id'], self.product.pk)
+            self.assertEqual(rows[2]['expected_unit_id'], self.unit.pk)
+            browser.close()
+        self.assertFalse(Purchase.objects.exists())
+        self.assertFalse(StockMovement.objects.exists())
+        self.assertEqual(Product.objects.count(), 1)
+
+    def test_seven_column_source_mapping_desktop_mobile_and_application(self):
+        from .tests_purchase_column_mapping import SAMPLE_TSV, EXPLICIT_MAPPING
+        output = Path(settings.BASE_DIR) / '.backups' / 'purchase-import'
+        output.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.getenv('PURCHASE_IMPORT_BROWSER_CHANNEL', 'msedge'), headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': self.client.session.session_key,
+                                 'url': self.live_server_url}])
+            page = context.new_page()
+            errors = []
+            page.on('pageerror', lambda exc: errors.append(str(exc)))
+            page.goto(self.live_server_url + '/inventory/purchases/new/')
+            page.locator('.purchase-more summary').click()
+            page.locator('[data-open-paste-rows]').click()
+            page.get_by_role('tab', name='Paste from spreadsheet').click()
+            source = page.locator('[data-paste-rows-input]')
+            source.fill(SAMPLE_TSV)
+            page.locator('[data-import-format]').select_option('mixed')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-error]')).to_contain_text('Row 1, unit cost')
+            expect(page.locator('[data-import-column-mapping]')).to_be_visible()
+            expect(page.locator('[data-import-mapping-description]')).to_contain_text('13 rows detected across 7 columns')
+            expect(source).to_have_value(SAMPLE_TSV)
+            expect(page.locator('[data-import-map-column]')).to_have_count(7)
+            self.assertTrue(all(value == '' for value in page.locator('[data-import-map-column]').evaluate_all('(nodes) => nodes.map(n => n.value)')))
+            expect(page.locator('[data-import-primary]')).to_be_disabled()
+            page.screenshot(path=str(output / 'column-mapping-desktop.png'))
+            page.set_viewport_size({'width': 390, 'height': 844})
+            footer = page.locator('.import-footer').bounding_box()
+            self.assertLessEqual(footer['y'] + footer['height'], 845)
+            self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+            page.screenshot(path=str(output / 'column-mapping-mobile.png'))
+            # Header selection is explicit and reversible; no first record disappears by inference.
+            page.locator('[data-import-has-header]').check()
+            expect(page.locator('[data-import-mapping-description]')).to_contain_text('12 rows detected')
+            page.locator('[data-import-has-header]').uncheck()
+            expect(page.locator('[data-import-mapping-description]')).to_contain_text('13 rows detected')
+            page.set_viewport_size({'width': 1440, 'height': 1000})
+            for index, field in enumerate(EXPLICIT_MAPPING):
+                page.locator('[data-import-map-column="' + str(index) + '"]').select_option(field)
+            # Deliberately assigning two cost columns is blocked before preview.
+            page.locator('[data-import-map-column="2"]').select_option('unit_cost')
+            expect(page.locator('[data-import-primary]')).to_be_disabled()
+            page.locator('[data-import-map-column="2"]').select_option('selling_price')
+            page.get_by_role('button', name='Review mapped items', exact=True).click()
+            expect(page.locator('[data-import-filter="all"] span')).to_have_text('13')
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('13')
+            first = page.locator('[data-import-results] tr').first
+            expect(first).to_contain_text('TP-Link TL-SG1024')
+            expect(first.locator('td').nth(2)).to_have_text('6')
+            expect(first.locator('td').nth(3)).to_have_text('7')
+            # Ignoring a column requires an explicit choice and remains visible after row edits.
+            page.get_by_role('button', name='Replace data', exact=False).click()
+            page.locator('[data-import-map-column="6"]').select_option('__ignore__')
+            page.get_by_role('button', name='Review mapped items', exact=True).click()
+            expect(page.locator('[data-import-source-info]')).to_contain_text('1 source columns not imported')
+            first = page.locator('[data-import-results] tr').first
+            first.locator('.import-row-open').click()
+            page.get_by_role('button', name='Create new', exact=True).click()
+            page.locator('[data-field="category"]').select_option('Devices')
+            page.locator('[data-field="unit"]').select_option('Piece')
+            expect(page.locator('[data-field="selling_price"]')).to_have_value('400')
+            page.get_by_role('button', name='Save item', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('1')
+            expect(page.locator('[data-import-source-info]')).to_contain_text('1 source columns not imported')
+            page.get_by_role('checkbox', name='Select visible items', exact=True).check()
+            page.get_by_role('checkbox', name='Select source row 1', exact=True).uncheck()
+            page.get_by_role('button', name='Exclude selected', exact=True).click()
+            expect(page.locator('[data-import-filter="excluded"] span')).to_have_text('12')
+            page.get_by_role('button', name='Continue to summary', exact=True).click()
+            expect(page.locator('[data-import-final-summary]')).to_contain_text('42.00')
+            page.get_by_role('button', name='Add 1 items to purchase', exact=True).click()
+            batch = json.loads(page.locator('[data-import-rows]').input_value())
+            self.assertEqual(len(batch), 13)
+            self.assertEqual(sum(not row['excluded'] for row in batch), 1)
+            self.assertEqual(batch[0]['product_name'], 'TP-Link TL-SG1024')
+            self.assertEqual(batch[0]['sku'], '')
+            # Source replacement resets mapping and row decisions together.
+            page.locator('[data-open-paste-rows]').click()
+            page.get_by_role('button', name='Replace data', exact=False).click()
+            source.fill('000123\t1\t10')
+            expect(page.locator('[data-import-column-mapping]')).not_to_be_visible()
+            page.locator('[data-import-format]').select_option('auto')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-filter="matched"] span')).to_have_text('1')
+            # A failed header toggle must never leave a valid old mapping active.
+            page.get_by_role('button', name='Replace data', exact=False).click()
+            source.fill('sku\tquantity\tunit_cost\n' + '\n'.join('000123\t1\t10' for _ in range(200)))
+            page.get_by_role('button', name='Choose columns', exact=True).first.click()
+            expect(page.locator('[data-import-mapping-description]')).to_contain_text('200 rows detected')
+            page.locator('[data-import-has-header]').uncheck()
+            expect(page.locator('[data-import-error]')).to_contain_text('200 non-empty')
+            expect(page.locator('[data-import-primary]')).to_be_disabled()
+            page.locator('[data-import-has-header]').check()
+            expect(page.locator('[data-import-primary]')).to_be_enabled()
+            self.assertEqual(errors, [])
+            browser.close()
+        self.assertEqual(Product.objects.count(), 1)
+        self.assertFalse(Purchase.objects.exists())
+        self.assertFalse(StockMovement.objects.exists())
+
+    def test_desktop_mobile_resolution_and_keyboard(self):
+        output = Path(settings.BASE_DIR) / '.backups' / 'purchase-import'
+        output.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.getenv('PURCHASE_IMPORT_BROWSER_CHANNEL', 'msedge'), headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': self.client.session.session_key,
+                                 'url': self.live_server_url}])
+            page = context.new_page()
+            errors = []
+            page.on('pageerror', lambda exc: errors.append(str(exc)))
+            page.goto(self.live_server_url + '/inventory/purchases/new/')
+            page.locator('.purchase-more summary').click()
+            page.locator('[data-open-paste-rows]').click()
+            dialog = page.get_by_role('dialog', name='Import purchase items')
+            expect(dialog).to_be_visible()
+            page.get_by_role('tab', name='Paste from spreadsheet').click()
+            source = page.locator('[data-paste-rows-input]')
+            source.fill('Dell Latitude 5420 2 650000 TP-Link Archer C6 10 85000')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-error]')).to_contain_text('spreadsheet columns')
+            expect(source).to_have_value('Dell Latitude 5420 2 650000 TP-Link Archer C6 10 85000')
+            source.fill('SKU\tProduct name\tQuantity\tUnit cost\tCategory\tUnit\tSelling price\n'
+                        '000123\tRouter\t2\t12.345678\n'
+                        '\tNew radio\t1\t10\tDevices\tPiece\t30\n'
+                        'UNKNOWN\tRouter\t1\t20')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-filter="all"] span')).to_have_text('3')
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('2')
+            expect(page.locator('[data-import-primary]')).to_be_disabled()
+            page.locator('[data-import-filter="attention"]').click()
+            expect(page.locator('[data-import-results] tr')).to_have_count(2)
+            page.get_by_role('button', name='New radio', exact=False).first.click()
+            page.get_by_role('button', name='Create new', exact=True).click()
+            page.get_by_role('button', name='Save item', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('1')
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('1')
+            # Unknown supplied SKU requires explicit search-result confirmation.
+            page.locator('[data-import-results] .import-row-open').click()
+            page.get_by_role('searchbox', name='Search for a product', exact=True).fill('Router')
+            page.locator('.import-choice input').check()
+            page.get_by_role('button', name='Confirm match', exact=True).click()
+            expect(page.locator('[data-import-filter="matched"] span')).to_have_text('2')
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('0')
+            page.locator('[data-import-filter="all"]').click()
+            page.locator('[data-import-results] .import-row-open').first.click()
+            page.locator('[data-import-editor] details summary').click()
+            page.locator('[data-import-editor] [data-field="quantity"]').fill('3')
+            expect(page.locator('[data-import-primary]')).to_be_disabled()
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('1')
+            page.locator('[data-import-editor] [data-field="quantity"]').fill('2')
+            page.get_by_role('button', name='Save item', exact=True).click()
+            expect(page.locator('[data-import-filter="attention"] span')).to_have_text('0')
+            page.screenshot(path=str(output / 'desktop.png'), full_page=True)
+            # Select only the new row; bulk changes must leave matched rows alone.
+            page.get_by_role('checkbox', name='Select source row 3', exact=True).check()
+            page.locator('[data-bulk-category]').select_option('Devices')
+            page.locator('[data-bulk-unit]').select_option('Piece')
+            page.get_by_role('button', name='Apply to new', exact=True).click()
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('1')
+            page.get_by_role('button', name='Clear selection', exact=True).click()
+            # Mobile opens the row editor as a separate view, with no viewport overflow.
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.get_by_role('button', name='Back to items', exact=False).click()
+            page.locator('[data-import-results] .import-row-open').first.click()
+            expect(page.locator('.import-list')).not_to_be_visible()
+            expect(page.get_by_role('button', name='Back to items', exact=False)).to_be_visible()
+            footer_bounds = page.locator('.import-footer').bounding_box()
+            self.assertLessEqual(footer_bounds['y'] + footer_bounds['height'], 845, footer_bounds)
+            self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+            page.screenshot(path=str(output / 'mobile-editor.png'))
+            page.get_by_role('button', name='Back to items', exact=False).click()
+            expect(page.locator('.import-list')).to_be_visible()
+            page.screenshot(path=str(output / 'mobile-list.png'))
+            self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+            page.get_by_role('button', name='Continue to summary', exact=True).click()
+            expect(page.locator('[data-import-final-summary]')).to_contain_text('54.69')
+            page.get_by_role('button', name='Add 3 items to purchase', exact=True).click()
+            expect(dialog).not_to_be_visible()
+            batch = json.loads(page.locator('[data-import-rows]').input_value())
+            self.assertEqual(batch[0]['category'], '')
+            self.assertEqual(batch[1]['category'], 'Devices')
+            # Closing retains edits; focus returns to the invoking control.
+            page.locator('[data-open-paste-rows]').click()
+            page.locator('[data-import-primary]').focus()
+            page.keyboard.press('Tab')
+            expect(page.locator('[data-import-close]')).to_be_focused()
+            page.locator('[data-import-close]').focus()
+            page.keyboard.press('Shift+Tab')
+            self.assertTrue(page.evaluate('document.querySelector("[data-paste-rows-dialog]").contains(document.activeElement)'))
+            page.keyboard.press('Escape')
+            expect(page.locator('[data-open-paste-rows]')).to_be_focused()
+            page.locator('[data-open-paste-rows]').click()
+            page.locator('[data-import-filter="all"]').focus()
+            page.keyboard.press('ArrowRight')
+            expect(page.locator('[data-import-filter="matched"]')).to_have_attribute('aria-selected', 'true')
+            page.get_by_role('button', name='Replace data', exact=False).click()
+            source.fill('000123\t1\t0.005\n000123\t1\t0.005')
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-filter="all"] span')).to_have_text('2')
+            expect(page.locator('[data-import-filter="new"] span')).to_have_text('0')
+            page.get_by_role('button', name='Continue to summary', exact=True).click()
+            expect(page.locator('[data-import-final-summary]')).to_contain_text('0.00')
+            page.get_by_role('button', name='Back', exact=True).click()
+            # Exclusion changes the filter counts and included-line summary.
+            page.get_by_role('checkbox', name='Select source row 1', exact=True).check()
+            page.get_by_role('button', name='Exclude selected', exact=True).click()
+            expect(page.locator('[data-import-filter="excluded"] span')).to_have_text('1')
+            page.locator('[data-import-filter="excluded"]').click()
+            expect(page.locator('[data-import-results] tr')).to_have_count(1)
+            page.locator('[data-import-results] .import-row-open').click()
+            page.get_by_role('button', name='Include this item', exact=True).click()
+            expect(page.locator('[data-import-filter="excluded"] span')).to_have_text('0')
+            page.get_by_role('button', name='Back to items', exact=False).click()
+            page.get_by_role('button', name='Replace data', exact=False).click()
+            source.fill('\n'.join('000123\t1\t10' for _ in range(200)))
+            page.get_by_role('button', name='Review items', exact=True).click()
+            expect(page.locator('[data-import-filter="all"] span')).to_have_text('200')
+            expect(page.locator('[data-import-results] tr')).to_have_count(20)
+            page.set_viewport_size({'width': 1440, 'height': 1000})
+            page.screenshot(path=str(output / 'desktop-200.png'), full_page=True)
+            page.get_by_role('button', name='Next page', exact=True).click()
+            expect(page.locator('[data-import-page-label]')).to_have_text('Showing 21–40 of 200')
+            page.get_by_role('button', name='Continue to summary', exact=True).click()
+            page.get_by_role('button', name='Add 200 items to purchase', exact=True).click()
+            self.assertLess(len(page.locator('[data-import-rows]').input_value()), 100001)
+            self.assertEqual(errors, [])
+            browser.close()
+        self.assertEqual(Product.objects.count(), 1)
+        self.assertFalse(Purchase.objects.exists())
+        self.assertFalse(StockMovement.objects.exists())

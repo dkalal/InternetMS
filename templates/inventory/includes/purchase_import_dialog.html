@@ -1,0 +1,62 @@
+<div class="purchase-import hidden" data-paste-rows-dialog role="dialog" aria-modal="true" aria-labelledby="purchase-import-title" aria-describedby="purchase-import-description">
+  <div class="purchase-import-shell">
+    <header class="purchase-import-header">
+      <div><h2 id="purchase-import-title">Import purchase items</h2><p id="purchase-import-description">Match existing products and prepare new items in one place.</p></div>
+      <button type="button" class="jims-btn jims-btn-quiet import-close" data-import-close aria-label="Close import">&#10005;</button>
+    </header>
+    <ol class="import-steps" aria-label="Import progress">
+      <li data-import-step="1"><span>1</span> Add data</li><li data-import-step="2"><span>2</span> Review items</li><li data-import-step="3"><span>3</span> Add to purchase</li>
+    </ol>
+    <div class="import-message hidden" data-import-error role="alert" tabindex="-1"></div>
+    <div class="import-content">
+      <section data-import-page="1" aria-label="Add data" class="import-source">
+        <div class="import-methods" role="tablist" aria-label="Data input method">
+          <button type="button" role="tab" aria-selected="true" aria-controls="import-upload" id="import-upload-tab" data-import-method="upload">Upload file</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="import-paste" id="import-paste-tab" data-import-method="paste" tabindex="-1">Paste from spreadsheet</button>
+        </div>
+        <div id="import-upload" role="tabpanel" aria-labelledby="import-upload-tab" class="import-upload">
+          <span class="import-file-icon" aria-hidden="true">X</span><h3>Upload your purchase spreadsheet</h3>
+          <p>Use the .xlsx template. Up to 200 items, 250 KB.</p>
+          <label class="import-file-label">Choose file<input type="file" accept=".xlsx" data-import-file></label>
+          <p data-import-filename role="status">No file selected</p><button type="button" class="import-link hidden" data-import-remove-file>Remove file</button>
+        </div>
+        <div id="import-paste" role="tabpanel" aria-labelledby="import-paste-tab" class="hidden">
+          <label for="purchase-paste-input">Copy selected cells directly from Excel or Google Sheets, including headers.</label>
+          <textarea id="purchase-paste-input" rows="8" maxlength="100000" spellcheck="false" data-paste-rows-input placeholder="Paste your selected spreadsheet cells here"></textarea>
+          <div class="import-source-options"><label for="import-format">Column layout <select id="import-format" data-import-format><option value="auto">Detect from headers / legacy rows</option><option value="custom">Choose my spreadsheet columns</option><option value="mixed">Template order: SKU, name, quantity, unit cost…</option><option value="legacy">Legacy: SKU, quantity, cost, batch, expiry, serials</option></select></label><span>Up to 200 items · 100,000 characters</span></div>
+          <p class="import-layout-help">Using your own column order or no headers? Choose columns before reviewing. Numeric values alone cannot identify buying and selling prices.</p>
+          <details><summary>Show example and format help</summary><p>Include Product name, SKU, Quantity and Unit cost headers. Leave SKU blank when you need to choose or create a product. Preserve tabs and empty cells. Use numbers such as 1250.50 or 1,250.50; dates use YYYY-MM-DD. Comma decimal separators and CSV files are not supported.</p><pre>SKU&#9;Product name&#9;Quantity&#9;Unit cost
+000123&#9;Example device&#9;2&#9;1250.50
+&#9;Example new item&#9;1&#9;900.00</pre></details>
+        </div>
+        <div class="import-source-actions"><a href="{% url 'inventory:purchase_rows_template' %}" class="import-link">↓ Download template</a><button type="button" class="import-link" data-import-choose-columns>Choose columns</button></div>
+        <section class="hidden import-column-mapping" data-import-column-mapping aria-labelledby="import-mapping-title">
+          <h3 id="import-mapping-title" tabindex="-1">Choose your spreadsheet columns</h3>
+          <p data-import-mapping-description role="status"></p>
+          <p>Assign each source column to a purchase field, or explicitly choose Do not import. Quantity and unit cost are required, together with SKU or product name.</p>
+          <label class="import-header-choice"><input type="checkbox" data-import-has-header> First row contains column headings</label>
+          <div data-import-mapping-columns></div>
+          <p data-import-mapping-status role="status" aria-live="polite"></p>
+          <button type="button" class="import-link" data-import-reset-mapping>Reset column choices</button>
+        </section>
+      </section>
+      <section data-import-page="2" class="hidden import-review" aria-label="Review items">
+        <div class="import-source-strip"><span class="import-file-icon" aria-hidden="true">X</span><div><strong data-import-source-name>Pasted spreadsheet</strong><p data-import-source-info></p></div><button type="button" class="import-link" data-import-replace>↻ Replace data</button><a href="{% url 'inventory:purchase_rows_template' %}" class="import-link import-download">↓ Download template</a></div>
+        <div class="import-filters" role="tablist" aria-label="Filter items">
+          <button type="button" role="tab" data-import-filter="all" aria-selected="true">All <span>0</span></button>
+          <button type="button" role="tab" data-import-filter="matched" aria-selected="false" tabindex="-1">Matched <span>0</span></button>
+          <button type="button" role="tab" data-import-filter="new" aria-selected="false" tabindex="-1">New <span>0</span></button>
+          <button type="button" role="tab" data-import-filter="attention" aria-selected="false" tabindex="-1">Needs attention <span>0</span></button>
+          <button type="button" role="tab" data-import-filter="excluded" aria-selected="false" tabindex="-1">Excluded <span>0</span></button>
+        </div>
+        <div class="import-bulk hidden" data-import-bulk><strong data-import-selected-count></strong><label>Category<select data-bulk-category><option value="">Select category</option>{% for category in quick_product_categories %}<option value="{{ category.name }}" data-default-unit="{{ category.default_unit_id|default_if_none:'' }}" data-units="{% for unit in category.allowed_units.all %}{{ unit.pk }},{% endfor %}">{{ category.name }}</option>{% endfor %}</select></label><label>Unit<select data-bulk-unit><option value="">Select unit</option>{% for unit in quick_product_units %}<option value="{{ unit.name }}" data-id="{{ unit.pk }}">{{ unit.name }}</option>{% endfor %}</select></label><button type="button" class="import-link" data-import-bulk-apply>Apply to new</button><button type="button" class="import-link" data-import-exclude>Exclude selected</button><button type="button" class="import-link" data-import-clear-selection>Clear selection</button></div>
+        <div class="import-review-columns" data-import-columns>
+          <div class="import-list"><p data-import-list-description></p><div class="import-table-scroll"><table><thead><tr><th><input type="checkbox" data-import-select-page aria-label="Select visible items"></th><th>Product</th><th class="import-number">Quantity</th><th class="import-number">Unit cost (TZS)</th><th>Status</th><th><span class="sr-only">Details</span></th></tr></thead><tbody data-import-results></tbody></table></div><nav class="import-pagination" aria-label="Import items pages"><span data-import-page-label></span><button type="button" class="jims-btn jims-btn-quiet" data-import-previous aria-label="Previous page">‹</button><button type="button" class="jims-btn jims-btn-quiet" data-import-next aria-label="Next page">›</button></nav></div>
+          <aside class="import-editor" data-import-editor aria-label="Resolve item"><p>Select an item to review its details.</p></aside>
+        </div>
+      </section>
+      <section data-import-page="3" class="hidden import-final" aria-label="Add to purchase"><h3>Ready to add to your purchase</h3><p>New products will be created when you save the purchase draft.</p><dl data-import-final-summary></dl><p class="import-stock-note">ⓘ No stock changes at this stage. Receive stock through the purchase review.</p></section>
+    </div>
+    <footer class="import-footer"><div><strong data-import-summary role="status" aria-live="polite"></strong><p data-import-hint>Choose a file or paste spreadsheet cells to begin.</p></div><div class="import-footer-actions"><button type="button" class="jims-btn jims-btn-secondary" data-import-back>Cancel</button><button type="button" class="jims-btn jims-btn-primary" data-import-primary>Review items</button></div></footer>
+  </div>
+</div>
