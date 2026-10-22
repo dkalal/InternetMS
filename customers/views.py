@@ -957,6 +957,16 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
             elif document.document_type == BillingDocument.DocumentType.CREDIT_NOTE and document.corrected_invoice_id:
                 action = "Voided credit against" if document.status == BillingDocument.Status.VOID else "Credit applied against"
                 document.timeline_reference = f"{action} {document.corrected_invoice.number}"
+        context['can_view_balance_summary'] = has_tenant_permission(
+            self.request.user, organization, PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW,
+            membership=self.request.membership,
+        )
+        if context['can_view_balance_summary']:
+            from billing.services import BillingService
+            context['customer_balance_summary'] = BillingService.customer_balance_summary(
+                user=self.request.user, organization=organization, customer=customer,
+                membership=self.request.membership,
+            )
         context['billing_documents'] = billing_documents
         context['billing_document_count'] = allowed_documents.count()
         context['associated_assets'] = list(

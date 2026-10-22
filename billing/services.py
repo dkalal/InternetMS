@@ -337,6 +337,47 @@ class BillingService:
         }
 
     @classmethod
+    def customer_balance_summary(cls, *, user, organization, customer, membership=None):
+        """Authorized read-only receivables; no document access or mutation grant."""
+        from users.permissions import PermissionCode, has_tenant_permission
+
+        cls._require_same_tenant(organization, customer)
+        if membership is not None and membership.user_id != getattr(user, "pk", None):
+            raise PermissionDenied("Membership does not belong to this user.")
+        for code in (PermissionCode.CUSTOMERS_VIEW, PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW):
+            if not has_tenant_permission(user, organization, code, membership=membership):
+                raise PermissionDenied("Customer balance summary access is required.")
+        today = timezone.localdate()
+        invoices = list(BillingDocument.objects.filter(
+            organization=organization, tenant=organization, customer=customer,
+            is_walk_in_sale=False, document_type=BillingDocument.DocumentType.INVOICE,
+            status__in=[BillingDocument.Status.SENT, BillingDocument.Status.ISSUED,
+                        BillingDocument.Status.PARTIALLY_PAID, BillingDocument.Status.APPROVED],
+        ).values("id", "total", "currency", "due_date"))
+        ids = [invoice["id"] for invoice in invoices]
+        paid = dict(BillingDocument.objects.filter(
+            organization=organization, tenant=organization,
+            document_type=BillingDocument.DocumentType.RECEIPT, invoice_id__in=ids,
+        ).values("invoice_id").annotate(amount=Sum("total")).values_list("invoice_id", "amount"))
+        credits = dict(BillingDocument.objects.filter(
+            organization=organization, tenant=organization,
+            document_type=BillingDocument.DocumentType.CREDIT_NOTE,
+            status=BillingDocument.Status.ISSUED, corrected_invoice_id__in=ids,
+        ).values("corrected_invoice_id").annotate(amount=Sum("total")).values_list("corrected_invoice_id", "amount"))
+        totals = {}
+        for invoice in invoices:
+            key = invoice["id"]
+            credited = max(-(credits.get(key) or Decimal("0")), Decimal("0"))
+            balance = max(invoice["total"] - (paid.get(key) or Decimal("0")) - credited, Decimal("0")).quantize(Decimal("0.01"))
+            row = totals.setdefault(invoice["currency"], {
+                "currency": invoice["currency"], "outstanding": Decimal("0.00"), "overdue": Decimal("0.00"),
+            })
+            row["outstanding"] += balance
+            if invoice["due_date"] and invoice["due_date"] < today:
+                row["overdue"] += balance
+        return {"as_of": today, "currencies": [totals[key] for key in sorted(totals)]}
+
+    @classmethod
     def customer_open_invoice_balance(
         cls,
         *,

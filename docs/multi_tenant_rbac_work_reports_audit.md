@@ -59,6 +59,12 @@ Membership-level grants are restricted to the approved non-financial delegable s
 
 ## Implementation phases and principal files
 
+### Approved customer balance-summary exception
+
+`customers.balance_summary.view` is an explicit, optional Admin/Manager-delegated read-only capability. Sales does not inherit it. Together with `customers.view`, it exposes the complete open balance and overdue balance for each customer the user can access in the active tenant, grouped by invoice currency. It is independent of document ownership: OWN/ASSIGNED document scopes do not limit this aggregate. The Team & Access label explicitly discloses all accessible customers. The grant does not expose invoice details, reports, costs or margins, and does not authorize payments. Ordinary invoice ownership/payment checks remain unchanged. Grant/revoke uses the existing audited access workflow; no data backfill or schema migration is needed.
+
+The billing service calculates balances from issued/open invoices, allocated receipts and issued credits with zero flooring, excluding drafts, cancelled/superseded and walk-in invoices. Due dates before the displayed as-of date are overdue; missing due dates are not overdue. Carry-forward disclosure snapshots are not added. Customer detail labels inaccessible document lists accurately and offers Accounts follow-up when the optional grant is absent.
+
 1. Preserve and verify existing tenancy/RBAC: `users/models.py`, `users/middleware.py`, `users/permissions.py`, app views/services/admin modules, and existing migrations.
 2. Add Work Reports domain: `work_reports/models.py`, `policies.py`, `services.py`, `forms.py`, `views.py`, `urls.py`, `admin.py`, and migration `0001`.
 3. Add permission-aware UI: `templates/work_reports/*`, `templates/includes/app_sidebar.html`, Team & Access role copy, and approval-count context.

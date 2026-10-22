@@ -12,6 +12,7 @@ from .models import TenantMembership, TenantPermissionGrant
 class PermissionCode:
     # Stable public action codes.
     CUSTOMERS_VIEW = "customers.view"
+    CUSTOMERS_BALANCE_SUMMARY_VIEW = "customers.balance_summary.view"
     CUSTOMERS_CREATE = "customers.create"
     CUSTOMERS_UPDATE = "customers.update"
     CUSTOMERS_ARCHIVE = "customers.archive"
@@ -159,6 +160,7 @@ WORK_REPORT_MANAGEMENT_PERMISSIONS = frozenset({
 })
 
 TENANT_OPERATION_PERMISSIONS = frozenset({
+    PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW,
     PermissionCode.CUSTOMERS_VIEW, PermissionCode.CUSTOMERS_CREATE, PermissionCode.CUSTOMERS_UPDATE,
     PermissionCode.CUSTOMERS_ARCHIVE,
     PermissionCode.PACKAGES_VIEW, PermissionCode.PACKAGES_CREATE, PermissionCode.PACKAGES_UPDATE,
@@ -179,6 +181,7 @@ TENANT_OPERATION_PERMISSIONS = frozenset({
 }) | MANAGER_FINANCE_PERMISSIONS | WORK_REPORT_MANAGEMENT_PERMISSIONS
 
 DELEGABLE_PERMISSIONS = frozenset({
+    PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW,
     PermissionCode.CUSTOMERS_VIEW, PermissionCode.CUSTOMERS_CREATE, PermissionCode.CUSTOMERS_UPDATE,
     PermissionCode.PACKAGES_VIEW, PermissionCode.PRODUCTS_VIEW, PermissionCode.INVENTORY_VIEW,
     PermissionCode.PURCHASES_CREATE,

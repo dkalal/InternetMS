@@ -55,6 +55,7 @@ TEAM_PERMISSION_GROUPS = (
         (PermissionCode.CUSTOMERS_VIEW, "View customers"),
         (PermissionCode.CUSTOMERS_CREATE, "Create customers"),
         (PermissionCode.CUSTOMERS_UPDATE, "Edit customers"),
+        (PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW, "View customer balance summaries (read only; all accessible customers)"),
     )),
     ("Packages & services", "Service catalogue access", (
         (PermissionCode.PACKAGES_VIEW, "View packages and services"),
@@ -125,7 +126,7 @@ def _member_effective_summary(member, effective):
     if member.base_role == TenantMembership.BaseRole.ADMIN_MANAGER:
         return "Can run workspace operations, approvals, reports, and team access. Financial controls remain policy-protected."
     if member.base_role == TenantMembership.BaseRole.SALES:
-        return "Can manage customers and assigned quotations, invoices, permitted payments, and receipts. Cannot view purchases, costs, profit, receivables, tenant-wide sales, or other users’ financial records."
+        return "Can manage customers and assigned quotations, invoices, permitted payments, and receipts. Customer balance summaries require an explicit additional grant. Cannot view purchases, costs, profit, receivables reports, tenant-wide sales, or other users’ financial documents."
     if effective:
         return "Has only the additional operational permissions selected below. Financial visibility and platform access remain restricted."
     return "No operational access is configured. Financial visibility and platform access remain restricted."
