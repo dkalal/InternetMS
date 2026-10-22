@@ -74,6 +74,7 @@ from .purchase_import import (
     HEADERS as MIXED_HEADERS, ImportColumnMappingRequired, ImportInputError,
     inspect_input, parse_input, submitted_rows, validate_rows,
 )
+from .cart_lifecycle import business_linked, cart_access, visible_carts, stale
 from .purchase_batch import apply_purchase_batch
 
 
@@ -1150,32 +1151,86 @@ def stock_adjust(request):
 @login_required
 def cart_list(request):
     organization = _scope(request, PermissionCode.CART_MANAGE)
-    carts = Cart.objects.filter(tenant=organization).select_related(
-        'customer', 'created_by', 'quotation', 'invoice'
-    ).annotate(item_count=Count('lines')).prefetch_related(
-        Prefetch('lines', queryset=CartLine.objects.filter(tenant=organization).select_related('product'), to_attr='list_lines')
+    base = visible_carts(organization=organization, actor=request.user, membership=request.membership)
+    now = timezone.now()
+    cutoff = now - timedelta(days=7)
+    counts = base.aggregate(
+        active=Count('pk', filter=Q(status=Cart.Status.DRAFT)),
+        stale=Count('pk', filter=Q(status=Cart.Status.DRAFT, updated_at__lte=cutoff)),
+        converted=Count('pk', filter=Q(status=Cart.Status.CONVERTED)),
+        abandoned=Count('pk', filter=Q(status=Cart.Status.ABANDONED)),
+        all=Count('pk'),
     )
-    status = request.GET.get('status', '').strip()
-    query = request.GET.get('q', '').strip()
-    if status in Cart.Status.values:
-        carts = carts.filter(status=status)
+    tab = request.GET.get('tab', request.GET.get('status', 'active')).strip() or 'active'
+    if tab == 'draft':
+        tab = 'active'
+    if tab not in counts:
+        tab = 'active'
+    tabs = [(value, label, counts[value]) for value, label in (
+        ('active', 'Active'), ('stale', 'Stale drafts'), ('converted', 'Converted'),
+        ('abandoned', 'Abandoned'), ('all', 'All history'),
+    )]
+    carts = base
+    if tab in {'active', 'stale'}:
+        carts = carts.filter(status=Cart.Status.DRAFT)
+        if tab == 'stale':
+            carts = carts.filter(updated_at__lte=cutoff)
+    elif tab != 'all':
+        carts = carts.filter(status=tab)
+    query = request.GET.get('q', '').strip()[:200]
     if query:
-        cart_search = Q(customer__name__icontains=query) | Q(walk_in_name__icontains=query)
-        if query.isdigit():
-            cart_search |= Q(pk=int(query))
-        carts = carts.filter(cart_search)
-    carts = list(carts)
-    for cart in carts:
+        search = (Q(customer__name__icontains=query) | Q(walk_in_name__icontains=query)
+                  | Q(quotation__number__icontains=query) | Q(invoice__number__icontains=query))
+        number = query.lstrip('#')
+        if number.isascii() and number.isdigit() and len(number) <= 18:
+            search |= Q(pk=int(number))
+        carts = carts.filter(search)
+    # Options come only from the same authorized base queryset as rows/counts.
+    owners = base.order_by('created_by_id').values('created_by_id', 'created_by__username').distinct()
+    owner = request.GET.get('owner', '')
+    if owner.isascii() and owner.isdigit() and len(owner) <= 18:
+        carts = carts.filter(created_by_id=int(owner))
+    dates = {}
+    filter_errors = []
+    for key in ('from', 'to'):
+        raw = request.GET.get(key, '')
+        dates[key] = raw
+        if raw:
+            try:
+                parsed = date.fromisoformat(raw)
+                from datetime import datetime, time
+                boundary = timezone.make_aware(datetime.combine(parsed, time.min))
+                if key == 'from':
+                    carts = carts.filter(updated_at__gte=boundary)
+                else:
+                    carts = carts.filter(updated_at__lt=boundary + timedelta(days=1))
+            except (ValueError, OverflowError):
+                filter_errors.append('Enter a valid last activity date (YYYY-MM-DD).')
+                carts = carts.none()
+    carts = carts.select_related('customer', 'created_by', 'quotation', 'invoice').annotate(
+        item_count=Count('lines'),
+        has_business_sale=Exists(InventorySale.objects.unscoped().filter(cart_id=OuterRef('pk'))),
+    ).prefetch_related(Prefetch('lines', queryset=CartLine.objects.filter(tenant=organization).select_related('product'), to_attr='list_lines'))
+    page = Paginator(carts.order_by('-updated_at', '-pk'), 25).get_page(request.GET.get('page'))
+    for cart in page.object_list:
+        cart.is_stale = stale(cart, now=now)
+        cart.needs_review = cart.status == Cart.Status.DRAFT and (cart.quotation_id or cart.invoice_id or cart.converted_at or cart.has_business_sale)
         try:
             _, _, cart.display_total = BillingService.compute_totals(
-                tax_rate=cart.tax_rate,
-                line_items=cart.list_lines,
-                discount_amount=cart.discount_amount,
+                tax_rate=cart.tax_rate, line_items=cart.list_lines, discount_amount=cart.discount_amount,
             )
         except BillingServiceError:
             cart.display_total = None
+    params = request.GET.copy()
+    params.pop('page', None)
+    tab_params = params.copy()
+    tab_params.pop('tab', None)
+    tab_params.pop('status', None)
     return render(request, 'inventory/cart_list.html', {
-        'carts': carts, 'statuses': Cart.Status.choices, 'status': status, 'query': query,
+        'carts': page.object_list, 'page_obj': page, 'tabs': tabs, 'tab': tab,
+        'query': query, 'owner': owner, 'owners': owners, 'dates': dates,
+        'filter_errors': filter_errors, 'filter_query': params.urlencode(),
+        'tab_query': tab_params.urlencode(),
     })
 
 
@@ -1185,32 +1240,13 @@ def cart_create(request):
     if request.method != 'POST':
         raise Http404
 
-    # A sale must start as an editable draft, but a navigation request must
-    # never create one. Reuse only the operator's untouched draft so a double
-    # click or refresh cannot leave duplicate empty carts behind.
-    with transaction.atomic():
-        cart = Cart.objects.select_for_update(of=('self',)).filter(
-            tenant=organization,
-            created_by=request.user,
-            status=Cart.Status.DRAFT,
-            customer__isnull=True,
-            walk_in_name='',
-            shipping_address='',
-            discount_amount=Decimal('0.00'),
-            tax_rate=Decimal('0.00'),
-            notes='',
-            lines__isnull=True,
-        ).order_by('-updated_at', '-id').first()
-        if cart is None:
-            cart = Cart.objects.create(
-                organization=organization, tenant=organization, created_by=request.user,
-            )
-            audit(organization=organization, actor=request.user, action='inventory.cart.created', obj=cart)
+    cart = CartService.start(organization=organization, actor=request.user, membership=request.membership)
     return redirect('inventory:cart_detail', pk=cart.pk)
 
 
 @login_required
 @ensure_csrf_cookie
+@cart_access
 def cart_detail(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     cart = get_object_or_404(Cart.objects.filter(tenant=organization).select_related('customer', 'quotation', 'invoice'), pk=pk)
@@ -1286,6 +1322,8 @@ def cart_detail(request, pk):
         )
     return render(request, 'inventory/cart_detail.html', {
         'cart': cart, 'cart_form': cart_form, **workspace,
+        'is_stale': stale(cart),
+        'can_restore': cart.status == Cart.Status.ABANDONED and not cart.converted_at and not business_linked(cart) and has_tenant_permission(request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=request.membership),
         'can_apply_line_discount': has_tenant_permission(
             request.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=request.membership,
         ),
@@ -1296,6 +1334,7 @@ def cart_detail(request, pk):
 
 
 @login_required
+@cart_access
 def cart_line_form(request, cart_pk, line_pk=None):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
@@ -1349,6 +1388,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
 
 @login_required
 @require_POST
+@cart_access
 def cart_line_discount(request, cart_pk, line_pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     require_permission(request, PermissionCode.CART_DISCOUNT_APPLY)
@@ -1384,6 +1424,7 @@ def cart_line_discount(request, cart_pk, line_pk):
 
 
 @login_required
+@cart_access
 def cart_line_adjust(request, cart_pk):
     """Fast POS quantity controls for standard, non-serialized catalog items."""
     organization = _scope(request, PermissionCode.CART_MANAGE)
@@ -1463,6 +1504,7 @@ def cart_line_adjust(request, cart_pk):
 
 
 @login_required
+@cart_access
 def cart_line_delete(request, cart_pk, line_pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
@@ -1515,6 +1557,7 @@ def cart_line_delete(request, cart_pk, line_pk):
 
 
 @login_required
+@cart_access
 def cart_abandon(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
@@ -1525,6 +1568,8 @@ def cart_abandon(request, pk):
             organization=organization,
             cart_id=pk,
             actor=request.user,
+            reason=request.POST.get('reason', ''),
+            membership=request.membership,
         )
     except InventoryError as exc:
         messages.error(request, str(exc))
@@ -1537,6 +1582,7 @@ def cart_abandon(request, pk):
 
 
 @login_required
+@cart_access
 def cart_convert(request, pk, target):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
@@ -1551,7 +1597,7 @@ def cart_convert(request, pk, target):
             # Modern checkout buttons belong to the details form, so the exact
             # customer and financial values the user confirms arrive here. Keep
             # accepting legacy CSRF-only posts for backward compatibility.
-            if 'discount_amount' in request.POST:
+            if cart.status == Cart.Status.DRAFT and 'discount_amount' in request.POST:
                 cart_form = CartForm(
                     request.POST,
                     instance=cart,
@@ -1561,13 +1607,14 @@ def cart_convert(request, pk, target):
                 if not cart_form.is_valid():
                     raise InventoryError('Sale was not converted. ' + _form_error_summary(cart_form))
                 cart_form.save()
+                CartService.validate_restored(cart=cart)
                 CartService.refresh_cart_prices(cart=cart)
                 _cart_workspace(cart)
                 CartService.validate_discount_authority(
                     cart=cart, actor=request.user, membership=request.membership,
                 )
             document = CartService.convert(
-                organization=organization, cart_id=pk, target=target, actor=request.user,
+                organization=organization, cart_id=pk, target=target, actor=request.user, membership=request.membership,
             )
         messages.success(request, f'Cart converted to {target} {document.number}.')
         if target == BillingDocument.DocumentType.INVOICE and has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership):
@@ -1576,6 +1623,19 @@ def cart_convert(request, pk, target):
     except (InventoryError, BillingServiceError) as exc:
         messages.error(request, str(exc))
         return redirect('inventory:cart_detail', pk=pk)
+
+
+@login_required
+@require_POST
+@cart_access
+def cart_restore(request, pk):
+    organization = _scope(request, PermissionCode.CART_MANAGE)
+    try:
+        CartService.restore(organization=organization, cart_id=pk, actor=request.user, membership=request.membership)
+        messages.success(request, 'Cart restored. Review current product eligibility, prices, stock and serials before conversion; saved quantities and prices were preserved.')
+    except InventoryError as exc:
+        messages.error(request, str(exc))
+    return redirect('inventory:cart_detail', pk=pk)
 
 
 REPORT_NAMES = {

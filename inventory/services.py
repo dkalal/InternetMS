@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import PermissionDenied
@@ -471,6 +471,70 @@ class InventoryService:
 
 class CartService:
     @classmethod
+    @transaction.atomic
+    def start(cls, *, organization, actor, membership=None):
+        from django.contrib.auth import get_user_model
+        from .cart_lifecycle import genuinely_empty, visible_carts
+        from users.permissions import PermissionCode, has_tenant_permission
+        if not has_tenant_permission(actor, organization, PermissionCode.SALES_DOCUMENTS_CREATE, membership=membership):
+            raise PermissionDenied('Cannot start a sale.')
+        # A stable row exists even when there are no carts yet. Locking only an
+        # empty queryset cannot serialize simultaneous first requests.
+        # NO KEY UPDATE allows concurrent foreign-key references to the actor
+        # (for example checkout), while still serializing Start sale requests.
+        get_user_model().objects.select_for_update(no_key=True).get(pk=actor.pk)
+        candidates = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update(of=('self',)).filter(
+            created_by=actor, status=Cart.Status.DRAFT,
+            updated_at__gt=timezone.now() - timedelta(hours=24),
+            customer__isnull=True, quotation__isnull=True, invoice__isnull=True,
+            lines__isnull=True,
+        ).order_by('-updated_at', '-pk')
+        for cart in candidates:
+            if genuinely_empty(cart):
+                return cart
+        cart = Cart.objects.create(organization=organization, tenant=organization, created_by=actor)
+        audit(organization=organization, actor=actor, action='inventory.cart.created', obj=cart)
+        return cart
+
+    @classmethod
+    @transaction.atomic
+    def restore(cls, *, organization, cart_id, actor, membership=None):
+        from .cart_lifecycle import business_linked, visible_carts
+        from users.permissions import PermissionCode, has_tenant_permission
+        if not has_tenant_permission(actor, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=membership):
+            raise PermissionDenied('Only authorized sales managers can restore carts.')
+        cart = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update().filter(pk=cart_id).first()
+        if cart is None:
+            raise PermissionDenied('Cart unavailable.')
+        if cart.status != Cart.Status.ABANDONED or business_linked(cart) or cart.converted_at:
+            raise InventoryError('Only abandoned carts without business links can be restored.')
+        cart.status = Cart.Status.DRAFT
+        cart.restored_at = timezone.now()
+        cart.restored_by = actor
+        cart.save(update_fields=['status', 'restored_at', 'restored_by', 'updated_at'])
+        audit(organization=organization, actor=actor, action='inventory.cart.restored', obj=cart,
+              old_value={'status': Cart.Status.ABANDONED}, new_value={'status': cart.status},
+              metadata={'stock_changed': False})
+        return cart
+
+    @classmethod
+    def validate_restored(cls, *, cart):
+        if not cart.restored_at:
+            return
+        for line in cart.lines.select_related('product', 'product__inventory_balance').prefetch_related('serial_selections__stock_unit'):
+            product = line.product
+            if not product.is_active or product.tenant_id != cart.tenant_id:
+                raise InventoryError(f'Item #{line.pk} is unavailable. Remove or replace it before conversion.')
+            price, _ = cls.line_pricing(product=product, quantity=line.quantity, customer=cart.customer,
+                                       sale_pricing_category=cart.sale_pricing_category)
+            if money(line.unit_price) != price:
+                raise InventoryError(f'Pricing for {product.name} has changed. Edit and review the item before conversion.')
+            if product.track_stock and product.item_type == Product.ItemType.PHYSICAL and line.quantity > product.available_stock:
+                raise InventoryError(f'Availability for {product.name} has changed. Review its quantity before conversion.')
+            if product.is_serialized and any(selection.stock_unit.status != StockUnit.Status.AVAILABLE for selection in line.serial_selections.all()):
+                raise InventoryError(f'Serial availability for {product.name} has changed. Review serial selections before conversion.')
+
+    @classmethod
     def set_line_discount(cls, *, organization, cart_id, line_id, discount_amount, actor, membership=None):
         """Apply one draft-line discount under the same checkout and grant rules."""
         from products.pricing import BelowCostError, validate_net_unit_price
@@ -484,6 +548,9 @@ class CartService:
             ).first()
             if cart is None:
                 raise InventoryError('This draft sale is unavailable.')
+            from .cart_lifecycle import visible_carts
+            if not visible_carts(organization=organization, actor=actor, membership=membership).filter(pk=cart.pk).exists():
+                raise PermissionDenied('Cart unavailable.')
             line = CartLine.objects.select_for_update().select_related('product').filter(
                 tenant=organization, cart=cart, pk=line_id,
             ).first()
@@ -590,30 +657,37 @@ class CartService:
 
     @classmethod
     @transaction.atomic
-    def abandon(cls, *, organization, cart_id: int, actor) -> tuple[Cart, bool]:
+    def abandon(cls, *, organization, cart_id: int, actor, reason="", membership=None) -> tuple[Cart, bool]:
         """Soft-discard an editable sale without mutating stock or financial records."""
         cart = Cart.objects.unscoped().select_for_update().filter(pk=cart_id).first()
         if cart is None:
             raise InventoryError('Sale not found.')
         if cart.tenant_id != organization.id:
             raise PermissionDenied('Cross-tenant cart access denied.')
+        from .cart_lifecycle import visible_carts, business_linked
+        if not visible_carts(organization=organization, actor=actor, membership=membership).filter(pk=cart.pk).exists():
+            raise PermissionDenied('Cart unavailable.')
         if cart.status == Cart.Status.ABANDONED:
             return cart, False
-        if cart.status != Cart.Status.DRAFT or cart.invoice_id or cart.quotation_id:
+        if cart.status != Cart.Status.DRAFT or business_linked(cart) or cart.converted_at:
             raise InventoryError('Only an unconverted draft sale can be discarded.')
 
         line_count = cart.lines.count()
         subtotal = money(cart.subtotal)
         old_value = {'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal)}
         cart.status = Cart.Status.ABANDONED
-        cart.save(update_fields=['status', 'updated_at'])
+        cart.abandoned_at = timezone.now()
+        cart.abandoned_by = actor
+        cart.abandonment_reason = reason.strip()[:500]
+        cart.save(update_fields=['status', 'abandoned_at', 'abandoned_by', 'abandonment_reason'])
         audit(
             organization=organization,
             actor=actor,
             action='inventory.cart.abandoned',
             obj=cart,
             old_value=old_value,
-            new_value={'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal)},
+            new_value={'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal),
+                       'reason': cart.abandonment_reason, 'abandoned_at': cart.abandoned_at.isoformat()},
             metadata={'stock_changed': False, 'financial_document_created': False},
         )
         return cart, True
@@ -640,22 +714,31 @@ class CartService:
 
     @classmethod
     @transaction.atomic
-    def convert(cls, *, organization, cart_id: int, target: str, actor):
+    def convert(cls, *, organization, cart_id: int, target: str, actor, membership=None):
         from billing.services import BillingService, LineItemInput
 
         cart = Cart.objects.unscoped().select_for_update().filter(pk=cart_id, tenant=organization).first()
         if cart is None:
             raise PermissionDenied('Cart is not available in the active tenant.')
+        from users.permissions import PermissionCode, has_tenant_permission
+        # This domain service retains its existing trusted-caller contract; HTTP
+        # callers require canonical permissions before entering the service.
+        if cart.created_by_id != actor.pk and not has_tenant_permission(actor, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=membership):
+            raise PermissionDenied('Cart unavailable.')
         if cart.status != Cart.Status.DRAFT:
             if target == BillingDocument.DocumentType.INVOICE and cart.invoice_id:
                 return cart.invoice
             if target == BillingDocument.DocumentType.QUOTATION and cart.quotation_id:
                 return cart.quotation
             raise InventoryError('Only draft carts can be converted.')
+        from .cart_lifecycle import business_linked
+        if business_linked(cart) or cart.converted_at:
+            raise InventoryError('This draft has unexpected business links. Ask a manager to review it.')
         if target not in {BillingDocument.DocumentType.QUOTATION, BillingDocument.DocumentType.INVOICE}:
             raise InventoryError('Cart can only become a quotation or invoice.')
         if cart.customer_id and cart.shipping_address.strip():
             raise InventoryError('A walk-in shipping address cannot be used with a registered customer.')
+        cls.validate_restored(cart=cart)
         lines = list(cart.lines.select_related('product').prefetch_related('serial_selections__stock_unit').order_by('id'))
         if not lines:
             raise InventoryError('Add at least one cart item before conversion.')
@@ -689,7 +772,7 @@ class CartService:
             )
         # This execution-time gate catches stale drafts, revoked/reduced grants,
         # and any write path that did not pass through the browser forms.
-        cls.validate_discount_authority(cart=cart, actor=actor)
+        cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
         document = BillingService.create_document(
             organization=organization,
             created_by=actor,

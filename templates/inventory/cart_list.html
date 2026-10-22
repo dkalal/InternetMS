@@ -11,26 +11,31 @@
     <form method="post" action="{% url 'inventory:cart_create' %}">{% csrf_token %}<button class="jims-btn jims-btn-primary" type="submit">Start sale</button></form>
   </header>
 
-  <form method="get" class="jims-panel grid gap-3 p-4 sm:grid-cols-[1fr_12rem_auto_auto] sm:items-end">
-    <div><label class="block text-sm font-medium text-slate-700" for="cart-search">Search</label><input id="cart-search" name="q" value="{{ query }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Cart number or customer"></div>
-    <div><label class="block text-sm font-medium text-slate-700" for="cart-status">Status</label><select id="cart-status" name="status" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All statuses</option>{% for value,label in statuses %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-    <button class="jims-btn jims-btn-secondary">Apply</button>
-    {% if query or status %}<a class="jims-btn jims-btn-quiet" href="{% url 'inventory:cart_list' %}">Clear</a>{% endif %}
+  <nav class="flex flex-wrap gap-2" aria-label="Cart history">
+    {% for value,label,count in tabs %}<a class="jims-btn {% if tab == value %}jims-btn-primary{% else %}jims-btn-secondary{% endif %}" href="?{{ tab_query }}&tab={{ value }}" {% if tab == value %}aria-current="page"{% endif %}>{{ label }} ({{ count }})</a>{% endfor %}
+  </nav>
+  <p class="text-sm text-slate-600">Active includes all drafts. Stale drafts are the subset with no meaningful activity for at least 7 days. Viewing a cart does not count as activity.</p>
+  <form method="get" class="jims-panel flex flex-wrap items-end gap-3 p-4">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <div class="flex-1"><label class="block text-sm font-medium" for="cart-search">Search</label><input id="cart-search" name="q" value="{{ query }}" class="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3" placeholder="Cart ID, customer or document number"></div>
+    <div><label class="block text-sm font-medium" for="cart-owner">Created by</label><select id="cart-owner" name="owner" class="mt-1 min-h-10 rounded-lg border border-slate-300 px-3"><option value="">All accessible owners</option>{% for person in owners %}<option value="{{ person.created_by_id }}" {% if owner == person.created_by_id|stringformat:'s' %}selected{% endif %}>{{ person.created_by__username }}</option>{% endfor %}</select></div>
+    <div><label class="block text-sm font-medium" for="cart-from">Last activity from</label><input type="date" id="cart-from" name="from" value="{{ dates.from }}" class="mt-1 min-h-10 rounded-lg border border-slate-300 px-3"></div>
+    <div><label class="block text-sm font-medium" for="cart-to">Last activity through</label><input type="date" id="cart-to" name="to" value="{{ dates.to }}" class="mt-1 min-h-10 rounded-lg border border-slate-300 px-3"></div>
+    <button class="jims-btn jims-btn-secondary">Apply</button><a class="jims-btn jims-btn-quiet" href="?tab={{ tab }}">Clear filters</a>
+    {% for error in filter_errors %}<p role="alert" class="text-sm text-rose-700">{{ error }}</p>{% endfor %}
   </form>
 
   {% if carts %}
-    <div class="jims-list-scroll grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {% for cart in carts %}
-        <a class="jims-panel group p-3 transition hover:border-brand-300 hover:shadow-md" href="{% url 'inventory:cart_detail' cart.pk %}">
-          <div class="flex items-start justify-between gap-3"><div><div class="font-semibold text-slate-950 group-hover:text-brand-700">Cart #{{ cart.pk }}</div><div class="mt-1 text-sm text-slate-600">{{ cart.customer.name|default:cart.walk_in_name|default:"Walk-in Customer" }}</div></div>{% include "components/status_badge.html" with value=cart.status label=cart.get_status_display %}</div>
-          <div class="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-slate-100 pt-3"><div><div class="text-xs text-slate-500">Items</div><div class="font-semibold">{{ cart.item_count }}</div></div><div><div class="text-xs text-slate-500">Total</div><div class="font-semibold">{% if cart.display_total is not None %}TZS {{ cart.display_total|money_display }}{% else %}Review total{% endif %}</div></div><div class="text-right"><div class="text-xs text-slate-500">Updated</div><div class="text-sm font-medium">{{ cart.updated_at|date:"d M, H:i" }}</div></div></div>
-        </a>
-      {% endfor %}
+    <div class="jims-panel overflow-x-auto hidden md:block">
+      <table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600"><tr><th class="p-3">Cart / customer</th><th class="p-3">Items</th><th class="p-3">Status</th><th class="p-3">Owner</th><th class="p-3">Last activity</th><th class="p-3">Document</th><th class="p-3">Total</th><th class="p-3">Action</th></tr></thead>
+      <tbody>{% for cart in carts %}<tr class="border-t border-slate-100"><td class="p-3"><strong>#{{ cart.pk }}</strong><div>{{ cart.customer.name|default:cart.walk_in_name|default:"Walk-in Customer" }}</div></td><td class="p-3">{{ cart.item_count }}</td><td class="p-3">{{ cart.get_status_display }}{% if cart.needs_review %}<span class="block text-rose-700">Linked draft: review</span>{% endif %}{% if cart.is_stale %}<span class="block text-amber-800">Stale draft</span>{% endif %}</td><td class="p-3">{{ cart.created_by.username }}</td><td class="p-3">{{ cart.updated_at|date:"d M Y, H:i" }}</td><td class="p-3">{% include 'inventory/includes/cart_document_links.html' %}</td><td class="p-3">{% if cart.display_total is not None %}TZS {{ cart.display_total|money_display }}{% else %}Review total{% endif %}</td><td class="p-3"><a class="jims-btn jims-btn-quiet" href="{% url 'inventory:cart_detail' cart.pk %}">{% if cart.status == 'draft' %}Continue{% else %}View{% endif %}</a></td></tr>{% endfor %}</tbody></table>
     </div>
+    <div class="grid gap-3 md:hidden">{% for cart in carts %}<article class="jims-panel p-4"><div class="flex justify-between gap-3"><a class="font-semibold text-brand-700" href="{% url 'inventory:cart_detail' cart.pk %}">Cart #{{ cart.pk }}</a><span>{{ cart.get_status_display }}{% if cart.needs_review %}<span class="block text-rose-700">Linked draft: review</span>{% endif %}{% if cart.is_stale %} &middot; Stale draft{% endif %}</span></div><p>{{ cart.customer.name|default:cart.walk_in_name|default:"Walk-in Customer" }}</p><p class="mt-2 text-sm text-slate-600">{{ cart.item_count }} items &middot; {{ cart.created_by.username }}<br>Last activity {{ cart.updated_at|date:"d M Y, H:i" }}</p><div class="mt-2">{% include 'inventory/includes/cart_document_links.html' %}</div><a class="jims-btn jims-btn-quiet mt-2" href="{% url 'inventory:cart_detail' cart.pk %}">{% if cart.status == 'draft' %}Continue sale{% else %}View history{% endif %}</a></article>{% endfor %}</div>
   {% else %}
     <div class="jims-panel">
       <div class="px-5 py-12 text-center"><h2 class="text-sm font-semibold text-slate-900">No carts found</h2><p class="mx-auto mt-1 max-w-md text-sm text-slate-600">Clear the filters or use Start sale above to begin a new customer or walk-in sale.</p></div>
     </div>
   {% endif %}
+  {% if page_obj.paginator.num_pages > 1 %}<nav class="flex items-center justify-between gap-3" aria-label="Cart pages">{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?{{ filter_query }}&page={{ page_obj.previous_page_number }}">Previous</a>{% endif %}<span class="text-sm">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?{{ filter_query }}&page={{ page_obj.next_page_number }}">Next</a>{% endif %}</nav>{% endif %}
 </div>
 {% endblock %}

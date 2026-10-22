@@ -139,3 +139,5 @@ Deployment note:
 
 - In Docker, `localhost` inside a container refers to that same container, not the other service
 - Use the compose service name or network alias when the consumer runs in a different container
+
+Cart activity, scoped active/history lists, restoration, and maintenance follow [the cart lifecycle contract](cart_lifecycle.md). Cleanup is explicit maintenance with dry-run by default, never an HTTP list side effect.

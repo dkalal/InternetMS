@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 
 from users.tenant_models import TenantScopedManager
@@ -355,6 +355,11 @@ class Cart(TenantModel):
     invoice = models.OneToOneField('billing.BillingDocument', on_delete=models.PROTECT, null=True, blank=True, related_name='source_inventory_cart_invoice')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='inventory_carts')
     converted_at = models.DateTimeField(null=True, blank=True)
+    abandoned_at = models.DateTimeField(null=True, blank=True)
+    abandoned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='abandoned_inventory_carts')
+    abandonment_reason = models.CharField(max_length=500, blank=True, default='')
+    restored_at = models.DateTimeField(null=True, blank=True)
+    restored_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='restored_inventory_carts')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     objects = TenantScopedManager()
@@ -392,11 +397,21 @@ class CartLine(models.Model):
         return max((self.quantity * self.unit_price - self.discount_amount).quantize(Decimal('0.01')), Decimal('0.00'))
 
     def save(self, *args, **kwargs):
-        if self.cart_id:
-            self.tenant_id = self.cart.tenant_id
-        if self.product_id and self.product.tenant_id != self.tenant_id:
-            raise ValidationError('Cart line product belongs to another tenant.')
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft cart items can be changed.')
+            self.tenant_id = cart.tenant_id
+            if self.product_id and self.product.tenant_id != self.tenant_id:
+                raise ValidationError('Cart line product belongs to another tenant.')
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft cart items can be removed.')
+            return super().delete(*args, **kwargs)
 
 
 class CartSerialSelection(models.Model):
@@ -409,11 +424,21 @@ class CartSerialSelection(models.Model):
         constraints = [models.UniqueConstraint(fields=['cart_line', 'stock_unit'], name='uniq_cart_line_serial')]
 
     def save(self, *args, **kwargs):
-        if self.cart_line_id:
-            self.tenant_id = self.cart_line.cart.tenant_id
-        if self.stock_unit_id and self.tenant_id != self.stock_unit.tenant_id:
-            raise ValidationError('Serial unit belongs to another tenant.')
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_line.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft serial selections can be changed.')
+            self.tenant_id = cart.tenant_id
+            if self.stock_unit_id and (self.stock_unit.tenant_id != self.tenant_id or self.stock_unit.product_id != self.cart_line.product_id):
+                raise ValidationError('Serial unit does not belong to the cart product and tenant.')
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_line.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft serial selections can be removed.')
+            return super().delete(*args, **kwargs)
 
 
 class InventorySale(TenantModel):

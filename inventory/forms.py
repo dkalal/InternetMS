@@ -421,6 +421,12 @@ class CartForm(TenantFormMixin, forms.ModelForm):
             'notes': 'Internal staff note. Record handover details, the receiving person and phone number here. This note is excluded from customer printouts.',
         }
 
+    def save(self, commit=True):
+        # A POST of unchanged details is not meaningful activity.
+        if self.instance.pk and not self.has_changed():
+            return self.instance
+        return super().save(commit=commit)
+
     def __init__(self, *args, organization=None, membership=None, **kwargs):
         self.membership = membership
         super().__init__(*args, organization=organization, **kwargs)

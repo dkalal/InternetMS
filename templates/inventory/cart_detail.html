@@ -12,11 +12,15 @@
     </div>
     {% if cart.status == "draft" %}
       <form method="post" action="{% url 'inventory:cart_abandon' cart.pk %}" data-confirm="This will close the draft and remove it from active sales. The audit record will remain, and inventory will not change." data-confirm-title="Discard sale #{{ cart.pk }}?" data-confirm-action="Discard draft" data-confirm-tone="danger" data-submit-lock>
+        <details class="mb-2 text-sm"><summary class="cursor-pointer text-slate-600">Optional reason</summary><label class="sr-only" for="abandon-reason">Reason for abandoning this draft</label><input id="abandon-reason" name="reason" maxlength="500" class="mt-2 min-h-10 rounded-lg border border-slate-300 px-3" placeholder="Why close this draft?"></details>
         {% csrf_token %}<button type="submit" class="jims-btn jims-btn-danger" data-loading-label="Discarding...">Discard sale</button>
       </form>
     {% endif %}
   </header>
 
+  {% if is_stale %}<p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Stale draft: no meaningful activity for at least 7 days.</p>{% endif %}
+  {% if cart.status != 'draft' %}<div class="jims-panel p-4"><p>{{ cart.get_status_display }}: read-only history.</p>{% include 'inventory/includes/cart_document_links.html' %}{% if cart.status == 'abandoned' and can_restore %}<form method="post" action="{% url 'inventory:cart_restore' cart.pk %}">{% csrf_token %}<button class="jims-btn jims-btn-secondary mt-2">Restore as draft</button></form>{% endif %}</div>{% endif %}
+  {% if cart.restored_at and cart.status == 'draft' %}<p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Restored draft. Review product eligibility, current pricing, availability and serial selections before conversion. Saved items and prices have been preserved.</p>{% endif %}
   {% if cart.status == "draft" %}
     <div class="pos-mobile-tabs grid grid-cols-2 gap-2" role="tablist" aria-label="Point of sale panels">
       <button type="button" class="jims-btn {% if cart_form.errors %}jims-btn-secondary{% else %}jims-btn-primary{% endif %}" data-cart-tab="catalog" role="tab" aria-controls="pos-catalog-panel" aria-selected="{% if cart_form.errors %}false{% else %}true{% endif %}">Products</button>
