@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -121,6 +121,23 @@ class InventoryService:
             return purchase
         if purchase.status != Purchase.Status.DRAFT:
             raise InventoryError('Only draft purchases can be confirmed.')
+
+        from .purchase_batch import apply_purchase_batch
+        from .purchase_import import ImportInputError
+        from users.permissions import membership_for
+        proposals = list(purchase.product_proposals.select_for_update().filter(tenant=organization))
+        if proposals:
+            # Serialize tenant SKU allocation and revalidation with other imports.
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            try:
+                apply_purchase_batch(
+                    purchase=purchase, rows=[row for proposal in proposals for row in proposal.rows],
+                    organization=organization, actor=actor,
+                    membership=membership_for(actor, organization), receiving=True,
+                )
+            except (ImportInputError, ValidationError) as exc:
+                raise InventoryError(f'Proposed products need review before receiving: {exc}') from exc
+            purchase.product_proposals.filter(tenant=organization).delete()
 
         lines = list(purchase.lines.select_related('product').order_by('product_id', 'id'))
         if not lines:

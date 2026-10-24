@@ -621,6 +621,16 @@ class InventoryAcceptanceTests(TestCase):
         self.assertContains(response, f'data-pos-product-card="{self.product.pk}"')
         self.assertContains(response, f'data-product-id="{self.product.pk}"')
 
+    def test_pos_catalog_keeps_registered_out_of_stock_products_visible(self):
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_detail', args=[cart.pk])
+        response = self.client.get(url)
+        self.assertIn(self.product.pk, [p.pk for p in response.context['catalog']])
+        self.receive(quantity=2)
+        response = self.client.get(url)
+        self.assertIn(self.product.pk, [p.pk for p in response.context['catalog']])
+
     def test_start_sale_opens_an_editable_pos_draft_immediately(self):
         self.client.login(username='inventory-admin', password='pass')
         response = self.client.post(reverse('inventory:cart_create'))

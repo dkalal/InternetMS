@@ -120,6 +120,20 @@ class Purchase(TenantModel):
         super().save(*args, **kwargs)
 
 
+class PurchaseProductProposal(TenantModel):
+    """Validated purchase input, deliberately outside the registered catalog."""
+    purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='product_proposals')
+    rows = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        if self.purchase.tenant_id != self.tenant_id or self.purchase.status != Purchase.Status.DRAFT:
+            raise ValidationError('Proposals require a draft purchase in the same tenant.')
+        super().save(*args, **kwargs)
+
+
 class PurchaseImportSubmission(TenantModel):
     """Durable receipt for an applied workspace batch and its exact save request."""
 

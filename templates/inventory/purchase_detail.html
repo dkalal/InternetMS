@@ -72,7 +72,7 @@
         <tbody>
           {% for line in purchase_lines %}
             <tr>
-              <td><div class="font-semibold text-slate-950">{{ line.product.name }}</div><div class="mt-1 text-xs text-slate-500">{{ line.product.sku }}{% if line.product.is_serialized %} · Serialized{% endif %}</div></td>
+              <td><div class="font-semibold text-slate-950">{{ line.product.name }}{% if line.is_proposal %} <span class="text-xs text-amber-800">Proposed — created on receiving</span>{% endif %}</div><div class="mt-1 text-xs text-slate-500">{{ line.product.sku }}{% if line.product.is_serialized %} · Serialized{% endif %}</div></td>
               <td class="text-right">{{ line.quantity|quantity_display }} {{ line.product.get_measure_unit_display }}</td>
               {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right">{{ line.unit_cost|floatformat:"-2g" }} / {{ line.product.get_measure_unit_display }}</td><td class="text-right font-semibold">{{ line.line_total|floatformat:"-2g" }}</td>{% endif %}
               <td>{{ line.batch_reference|default:"—" }}</td>

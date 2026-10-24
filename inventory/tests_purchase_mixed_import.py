@@ -146,8 +146,9 @@ class MixedPurchaseImportTests(TestCase):
         response = self.client.post(reverse('inventory:purchase_create'), self.payload(self.rows()))
         self.assertEqual(response.status_code, 302)
         purchase = Purchase.objects.get(reference_number='MIXED-1')
-        self.assertEqual(purchase.lines.count(), 2)
-        self.assertEqual(Product.objects.count(), 2)
+        self.assertEqual(purchase.lines.count(), 1)
+        self.assertEqual(len(purchase.product_proposals.get().rows), 1)
+        self.assertEqual(Product.objects.count(), 1)
         self.assertEqual(purchase.total_cost, Decimal('34.69'))
         self.assertFalse(StockMovement.objects.exists())
 
@@ -159,8 +160,8 @@ class MixedPurchaseImportTests(TestCase):
         self.assertEqual(first.status_code, 302)
         self.assertEqual(second.status_code, 302)
         self.assertEqual(Purchase.objects.count(), 1)
-        self.assertEqual(Product.objects.count(), 2)
-        self.assertEqual(PurchaseLine.objects.count(), 2)
+        self.assertEqual(Product.objects.count(), 1)
+        self.assertEqual(PurchaseLine.objects.count(), 1)
         self.assertEqual(PurchaseImportSubmission.objects.count(), 1)
         changed = dict(payload)
         changed['notes'] = 'different'
@@ -225,7 +226,7 @@ class MixedPurchaseImportTests(TestCase):
         self.assertContains(response, 'occurs in another row')
         self.assertFalse(Purchase.objects.exists())
 
-    def test_failure_after_first_product_creation_rolls_back_everything(self):
+    def test_duplicate_proposal_names_roll_back_draft_without_catalog_writes(self):
         rows = self.rows()
         second_new = dict(rows[1], staging_reference='radio-2', serial_numbers='00002')
         rows.append(second_new)
@@ -239,7 +240,8 @@ class MixedPurchaseImportTests(TestCase):
         rows = self.rows()
         rows[1]['sku'] = '000999'
         self.assertEqual(self.client.post(reverse('inventory:purchase_create'), self.payload(rows)).status_code, 302)
-        self.assertEqual(Product.objects.get(name='New radio').sku, '000999')
+        self.assertFalse(Product.objects.filter(name='New radio').exists())
+        self.assertEqual(Purchase.objects.get().product_proposals.get().rows[0]['sku'], '000999')
         other = dict(rows[1], product_name='Another radio', staging_reference='radio-2',
                      serial_numbers='00002')
         review = self.client.post(reverse('inventory:purchase_rows_preview'),
@@ -315,7 +317,8 @@ class MixedPurchaseImportTests(TestCase):
         self.assertTrue(reviewed[0]['valid'], reviewed[0]['errors'])
         self.assertEqual(self.client.post(reverse('inventory:purchase_create'), self.payload(reviewed)).status_code, 302)
         self.assertEqual(Purchase.objects.get().total_cost, Decimal('2500.25'))
-        self.assertEqual(Product.objects.get(name='New radio').selling_price, Decimal('2500.00'))
+        self.assertFalse(Product.objects.filter(name='New radio').exists())
+        self.assertEqual(Decimal(Purchase.objects.get().product_proposals.get().rows[0]['selling_price']), Decimal('2500.00'))
 
     def test_cross_tenant_selected_product_is_rejected_without_disclosure(self):
         other = Organization.objects.create(name='Other Mixed', slug='other-mixed')
@@ -359,5 +362,6 @@ class MixedPurchaseImportTests(TestCase):
         edit_url = reverse('inventory:purchase_edit', args=[purchase.pk])
         self.assertEqual(self.client.post(edit_url, payload).status_code, 302)
         self.assertEqual(self.client.post(edit_url, payload).status_code, 302)
-        self.assertEqual(purchase.lines.count(), 2)
-        self.assertEqual(Product.objects.count(), 2)
+        self.assertEqual(purchase.lines.count(), 1)
+        self.assertEqual(purchase.product_proposals.count(), 1)
+        self.assertEqual(Product.objects.count(), 1)

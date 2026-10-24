@@ -1,6 +1,7 @@
 """Atomic purchase-workspace batch application."""
 
 from decimal import Decimal
+from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.core.validators import DecimalValidator
@@ -13,12 +14,41 @@ from products.models import Product
 from users.permissions import PermissionCode, has_tenant_permission
 
 from .forms import QuickPurchaseProductForm
-from .models import PurchaseLine, StockUnit
-from .purchase_import import ImportInputError, validate_rows
+from .models import PurchaseLine, StockUnit, PurchaseProductProposal
+from .purchase_import import HEADERS, ImportInputError, validate_rows
 from .services import audit
 
 
-def apply_purchase_batch(*, purchase, rows, organization, actor, membership):
+def proposal_rows(purchase):
+    if not purchase.pk:
+        return []
+    return [row for proposal in purchase.product_proposals.filter(tenant_id=purchase.tenant_id)
+            for row in proposal.rows]
+
+
+def proposal_lines(purchase):
+    """Transient review objects; never persist catalog or stock during display."""
+    from types import SimpleNamespace
+    references = {}
+    lines = []
+    for row in proposal_rows(purchase):
+        reference = row['staging_reference']
+        key = references.setdefault(reference, -(len(references) + 1))
+        product = Product(name=row['product_name'], sku=row['sku'] or 'Allocated on receiving',
+                          measure_unit=row['unit'], quantity=Decimal('0'),
+                          selling_price=Decimal(row['selling_price']), buying_price=Decimal('0'),
+                          is_serialized=row.get('serialized_value', False),
+                          track_expiry=row.get('track_expiry_value', False))
+        quantity, unit_cost = Decimal(row['quantity']), Decimal(row['unit_cost'])
+        lines.append(SimpleNamespace(product=product, product_id=key, quantity=quantity,
+            unit_cost=unit_cost, line_total=(quantity * unit_cost).quantize(Decimal('0.01')),
+            batch_reference=row['batch_reference'], expiry_date=(
+                date.fromisoformat(row['expiry_date']) if row['expiry_date'] else None),
+            serial_numbers=row['serial_numbers'], is_proposal=True))
+    return lines
+
+
+def apply_purchase_batch(*, purchase, rows, organization, actor, membership, receiving=False):
     """Called inside the purchase save transaction after formset persistence."""
     if membership is None or membership.user_id != actor.pk or membership.tenant_id != organization.pk:
         raise ImportInputError('Active tenant membership is required for this purchase import.')
@@ -29,10 +59,21 @@ def apply_purchase_batch(*, purchase, rows, organization, actor, membership):
         Q(pk__in=ids) | Q(normalized_sku__in=skus)
     ))
     checked = validate_rows(rows, organization=organization, for_save=True)
+    if receiving:
+        for source, current in zip(rows, checked):
+            if any(str(source.get(key)) != str(current.get(key)) for key in ('category_id', 'unit_id')):
+                raise ImportInputError('A proposed category or unit changed. Edit and review the draft before receiving.')
     invalid = [row for row in checked if not row['valid']]
     if invalid:
         raise ImportInputError(f"Import row {invalid[0]['row']}: {' '.join(invalid[0]['errors'])}")
     included = [row for row in checked if not row['excluded']]
+    names = {}
+    for row in included:
+        if row['status'] == 'new':
+            name = row['product_name'].strip().casefold()
+            if name in names and names[name] != row['staging_reference']:
+                raise ImportInputError('An active product with this name already exists in the proposals. Confirm a shared staging reference or use distinct names.')
+            names[name] = row['staging_reference']
     if not included:
         raise ImportInputError('Include at least one import row.')
     if any(row['status'] == 'new' for row in included) and not has_tenant_permission(
@@ -47,6 +88,7 @@ def apply_purchase_batch(*, purchase, rows, organization, actor, membership):
     if any(serial in imported_serials for serial in manual_serials):
         raise ImportInputError('An imported serial number also appears in a manual purchase line.')
     created = {}
+    proposals = []
     for row in included:
         if row['status'] == 'new':
             reference = row['staging_reference']
@@ -60,6 +102,13 @@ def apply_purchase_batch(*, purchase, rows, organization, actor, membership):
                 }, organization=organization, allow_extra_fields=True)
                 if not form.is_valid():
                     raise ImportInputError(f"Import row {row['row']}: {form.errors.as_text()}")
+                if not receiving:
+                    proposals.append({**{key: str(row.get(key, '')) for key in HEADERS},
+                                      'resolution': 'new', 'row': row['row'],
+                                      'category_id': row['category_id'], 'unit_id': row['unit_id'],
+                                      'serialized_value': row['serialized_value'],
+                                      'track_expiry_value': row['track_expiry_value']})
+                    continue
                 product = form.save(commit=False)
                 product = save_purchase_product(product, organization=organization, supplied_sku=row['sku'])
                 audit(organization=organization, actor=actor, action='inventory.product.created_purchase_import',
@@ -77,6 +126,10 @@ def apply_purchase_batch(*, purchase, rows, organization, actor, membership):
         DecimalValidator(16, 6)(line.quantity)
         DecimalValidator(16, 6)(line.unit_cost)
         line.save()
+    if proposals:
+        PurchaseProductProposal.objects.create(
+            organization=organization, tenant=organization, purchase=purchase, rows=proposals,
+        )
     audit(organization=organization, actor=actor, action='inventory.purchase.import_applied', obj=purchase,
           new_value={'rows': len(included), 'new_products': len(created)})
     return len(included)

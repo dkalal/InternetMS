@@ -458,7 +458,7 @@
       // carried for review and all Django management-form entries.
       if (manual + rows.length > 250) { message("The workspace supports at most 250 submitted rows. Reduce the source batch or workspace rows before adding these items."); return; }
       hidden.value = JSON.stringify(rows.map(compact)); hidden.dispatchEvent(new Event("change", { bubbles: true }));
-      appliedText.textContent = included + " imported items added. Save the draft to create approved products and purchase lines. Receive stock through purchase review.";
+      appliedText.textContent = included + " imported items added. Save the draft to preserve proposed products and purchase rows. New products and stock are created only when receiving succeeds.";
       applied.classList.remove("hidden"); close();
       var save = form.querySelector("button[value=save_review]"); if (save) save.focus();
     }

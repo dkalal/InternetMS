@@ -710,12 +710,16 @@ def _purchase_workspace_summary(purchase, formset):
         ]
     elif purchase.pk:
         valid_lines = list(purchase.lines.select_related('product'))
+        from .purchase_batch import proposal_lines
+        valid_lines.extend(proposal_lines(purchase))
     else:
         valid_lines = []
     return len(valid_lines), sum((line.line_total for line in valid_lines), Decimal('0.00'))
 
 
 def _render_purchase_workspace(request, *, organization, purchase, form, formset):
+    from .purchase_batch import proposal_rows
+    staged_rows = proposal_rows(purchase) if request.method != 'POST' else []
     line_count, authoritative_total = _purchase_workspace_summary(purchase, formset)
     return render(request, 'inventory/purchase_form.html', {
         'form': form,
@@ -726,7 +730,7 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
         'product_search_url': reverse('inventory:purchase_product_search'),
         'purchase_rows_preview_url': reverse('inventory:purchase_rows_preview'),
         'import_token': request.POST.get('import_token') or str(uuid.uuid4()),
-        'import_rows': request.POST.get('import_rows', ''),
+        'import_rows': request.POST.get('import_rows', '') if request.method == 'POST' else (json.dumps(staged_rows) if staged_rows else ''),
         'supplier_quick_create_url': reverse('inventory:purchase_supplier_quick_create'),
         'category_quick_create_url': reverse('inventory:purchase_category_quick_create'),
         'product_quick_create_url': reverse('inventory:purchase_product_quick_create'),
@@ -765,10 +769,13 @@ def _save_purchase_draft(*, form, formset, organization, actor, creating,
         purchase.save()
         formset.instance = purchase
         formset.save()
+        # The workspace submits the complete proposal snapshot on edit.
+        purchase.product_proposals.filter(tenant=organization).delete()
         if import_rows:
             apply_purchase_batch(purchase=purchase, rows=import_rows, organization=organization,
                                  actor=actor, membership=membership)
-        total = sum((line.line_total for line in purchase.lines.all()), Decimal('0.00'))
+        from .purchase_batch import proposal_lines
+        total = sum((line.line_total for line in list(purchase.lines.all()) + proposal_lines(purchase)), Decimal('0.00'))
         total = total.quantize(Decimal('0.01'))
         DecimalValidator(14, 2)(total)
         Purchase.objects.filter(tenant=organization, pk=purchase.pk).update(total_cost=total)
@@ -977,6 +984,8 @@ def purchase_detail(request, pk):
     # Lines are the source of truth for a draft receipt. This also renders a
     # correct total for historical drafts that predate draft-total syncing.
     purchase_lines = list(purchase.lines.select_related('product'))
+    from .purchase_batch import proposal_lines
+    purchase_lines.extend(proposal_lines(purchase))
     line_items_total = sum((line.line_total for line in purchase_lines), Decimal('0.00'))
     incoming_by_product = {}
     for line in purchase_lines:
