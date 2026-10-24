@@ -68,6 +68,7 @@ from .models import (
     StockUnit,
     Supplier,
 )
+from .reporting import DATED_REPORTS, ReportFilterForm, report_rows, report_totals
 from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService, audit, money
 from .purchase_import import (
@@ -1661,7 +1662,7 @@ REPORT_DESCRIPTIONS = {
     'stock-valuation': 'Current movement-backed quantity and recorded acquisition value.',
     'purchases': 'Confirmed stock receipts in the selected period.',
     'sales': 'Fully paid inventory sales with stock already deducted.',
-    'gross-profit': 'Operational gross profit: net item revenue less recorded stock cost, not accounting net profit.',
+    'gross-profit': 'Operational gross profit, not accounting net profit. Stock costs are TZS; profit for non-TZS revenue is unavailable without an exchange-rate snapshot.',
     'best-selling': 'Products ranked by units sold in the configured fast-moving period.',
     'fast-moving': 'Products meeting the configured high-sales threshold.',
     'slow-moving': 'Products at or below the configured low-sales threshold.',
@@ -1675,65 +1676,6 @@ REPORT_DESCRIPTIONS = {
 }
 
 
-def _report_rows(organization, report_name):
-    settings_obj, _ = InventorySettings.objects.get_or_create(organization=organization, tenant=organization)
-    if report_name in {'stock-valuation', 'low-stock', 'out-of-stock', 'dead-stock'}:
-        balances = InventoryBalance.objects.filter(tenant=organization).select_related('product')
-        if report_name == 'low-stock':
-            balances = balances.filter(quantity__gt=0, quantity__lte=F('product__reorder_threshold'))
-        elif report_name == 'out-of-stock':
-            balances = balances.filter(quantity=0)
-        elif report_name == 'dead-stock':
-            cutoff = timezone.now() - timedelta(days=settings_obj.dead_stock_days)
-            sold = StockMovement.objects.filter(tenant=organization, movement_type='sale_out', created_at__gte=cutoff).values('product_id')
-            balances = balances.filter(quantity__gt=0).exclude(product_id__in=sold)
-        if report_name == 'stock-valuation':
-            return ['SKU', 'Product', 'Quantity', 'Average cost', 'Value', 'Threshold'], [
-                [b.product.sku, b.product.name, b.quantity, b.average_cost, money(b.quantity * b.average_cost), b.product.reorder_threshold] for b in balances
-            ]
-        return ['SKU', 'Product', 'Quantity', 'Threshold'], [
-            [b.product.sku, b.product.name, b.quantity, b.product.reorder_threshold] for b in balances
-        ]
-    if report_name == 'purchases':
-        lines = PurchaseLine.objects.filter(purchase__tenant=organization, purchase__status=Purchase.Status.CONFIRMED).select_related('purchase__supplier', 'product')
-        return ['Date', 'Reference', 'Supplier', 'SKU', 'Product', 'Quantity', 'Unit cost', 'Total'], [
-            [l.purchase.purchase_date, l.purchase.reference_number, l.purchase.supplier.company_name, l.product.sku, l.product.name, l.quantity, l.unit_cost, l.line_total] for l in lines
-        ]
-    if report_name in {'sales', 'gross-profit'}:
-        lines = InventorySaleLine.objects.filter(sale__tenant=organization, sale__stock_deducted=True).select_related('sale__invoice', 'billing_line__product')
-        if report_name == 'sales':
-            return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue'], [
-                [l.sale.completed_at.date(), l.sale.invoice.number, l.billing_line.product.sku, l.billing_line.product.name, l.billing_line.quantity, l.net_revenue]
-                for l in lines
-            ]
-        return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue', 'Cost', 'Gross profit'], [
-            [l.sale.completed_at.date(), l.sale.invoice.number, l.billing_line.product.sku, l.billing_line.product.name, l.billing_line.quantity, l.net_revenue, l.cost_total, l.gross_profit]
-            for l in lines
-        ]
-    if report_name == 'movements':
-        movements = StockMovement.objects.filter(tenant=organization).select_related('product')
-        return ['Date', 'SKU', 'Product', 'Type', 'Quantity', 'Balance after', 'Unit cost'], [[m.created_at, m.product.sku, m.product.name, m.get_movement_type_display(), m.quantity, m.balance_after, m.unit_cost] for m in movements]
-    if report_name == 'serialized':
-        units = StockUnit.objects.filter(tenant=organization).select_related('product', 'sold_billing_line__document')
-        return ['SKU', 'Product', 'Serial', 'Status', 'Batch', 'Expiry', 'Invoice'], [[u.product.sku, u.product.name, u.serial_number, u.get_status_display(), u.batch_reference, u.expiry_date, u.sold_billing_line.document.number if u.sold_billing_line_id else ''] for u in units]
-    if report_name in {'historical-purchases', 'historical-sales'}:
-        record_type = HistoricalInventoryRecord.RecordType.PURCHASE if report_name == 'historical-purchases' else HistoricalInventoryRecord.RecordType.SALE
-        records = HistoricalInventoryRecord.objects.filter(tenant=organization, record_type=record_type)
-        return ['Date', 'Reference', 'SKU', 'Description', 'Quantity', 'Unit amount', 'Total', 'Notes'], [
-            [r.record_date, r.reference, r.sku, r.description, r.quantity, r.unit_amount, r.total_amount, r.notes] for r in records
-        ]
-    days = settings_obj.fast_moving_days if report_name in {'best-selling', 'fast-moving'} else settings_obj.slow_moving_days
-    cutoff = timezone.now() - timedelta(days=days)
-    totals = (
-        StockMovement.objects.filter(tenant=organization, movement_type='sale_out', created_at__gte=cutoff)
-        .values('product__sku', 'product__name').annotate(raw_units=Sum('quantity')).order_by('raw_units')
-    )
-    rows = [[row['product__sku'], row['product__name'], -row['raw_units'], days] for row in totals]
-    if report_name == 'fast-moving':
-        rows = [row for row in rows if row[2] >= settings_obj.fast_moving_min_units]
-    elif report_name == 'slow-moving':
-        rows = [row for row in rows if row[2] <= settings_obj.slow_moving_max_units]
-    return ['SKU', 'Product', 'Units sold', 'Period days'], rows
 
 
 @login_required
@@ -1742,36 +1684,74 @@ def report(request, report_name='stock-valuation'):
         raise Http404
     sensitive = report_name in COST_REPORT_NAMES
     organization = _scope(request, PermissionCode.COST_REPORT_VIEW if sensitive else PermissionCode.SALES_REPORT_VIEW)
-    headers, rows = _report_rows(organization, report_name)
-    search = request.GET.get('q', '').strip().lower()
-    if search:
-        rows = [row for row in rows if any(search in str(value or '').lower() for value in row)]
-    date_from = request.GET.get('date_from', '').strip()
-    date_to = request.GET.get('date_to', '').strip()
-    if report_name in {'purchases', 'sales', 'gross-profit', 'movements', 'historical-purchases', 'historical-sales'}:
-        if date_from:
-            rows = [row for row in rows if str(row[0])[:10] >= date_from]
-        if date_to:
-            rows = [row for row in rows if str(row[0])[:10] <= date_to]
-    if request.GET.get('export') == 'xlsx':
+    exporting = request.GET.get('export') == 'xlsx'
+    if exporting:
         require_permission(request, PermissionCode.INVENTORY_EXPORT)
-        payload = workbook_bytes(headers, rows, title=REPORT_NAMES[report_name])
-        response = HttpResponse(payload, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    form = ReportFilterForm(request.GET, organization=organization, report_name=report_name)
+    valid = form.is_valid()
+    filters = form.cleaned_data if valid else {}
+    headers, rows = report_rows(organization, report_name, filters) if valid else ([], [])
+    search = filters.get('q', '').casefold()
+    if search:
+        rows = [row for row in rows if any(search in str(value if value is not None else '').casefold() for value in row)]
+    totals = report_totals(report_name, rows) if valid else []
+    summaries = [(label, total) for label, column, total in totals]
+    date_from = request.GET.get('date_from', '') if report_name in DATED_REPORTS else ''
+    date_to = request.GET.get('date_to', '') if report_name in DATED_REPORTS else ''
+    params = request.GET.copy()
+    params.pop('page', None)
+    params.pop('export', None)
+    filter_query = params.urlencode()
+    if exporting and valid:
+        # Excel cannot store timezone-aware datetimes. Export local wall time,
+        # and force text cells to prevent supplier/SKU formula injection.
+        export_rows = [list(row) for row in rows]
+        for label, column, total in totals:
+            total_row = [''] * len(headers)
+            total_row[0] = label
+            total_row[column] = total
+            export_rows.append(total_row)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = REPORT_NAMES[report_name][:31]
+        for row in [headers, *export_rows]:
+            sheet.append([value.replace(tzinfo=None) if hasattr(value, 'tzinfo') and value.tzinfo else value for value in row])
+            for cell in sheet[sheet.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = 's'
+        metadata = workbook.create_sheet('Report context')
+        metadata.append(['Report', REPORT_NAMES[report_name]])
+        metadata.append(['Timezone', timezone.get_current_timezone_name()])
+        for key, value in filters.items():
+            metadata.append([key, str(value) if value is not None else 'All'])
+            for cell in metadata[metadata.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = 's'
+        output = BytesIO()
+        workbook.save(output)
+        response = HttpResponse(output.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = f'attachment; filename="{report_name}.xlsx"'
+        response['Cache-Control'] = 'private, no-store'
         return response
     page_obj = Paginator(rows, 50).get_page(request.GET.get('page'))
-    return render(request, 'inventory/report.html', {
+    response = render(request, 'inventory/report.html', {
         'report_name': report_name,
         'title': REPORT_NAMES[report_name],
-        'report_names': (
-            REPORT_NAMES
-            if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership)
-            else {slug: label for slug, label in REPORT_NAMES.items() if slug not in COST_REPORT_NAMES}
-        ),
+        'report_names': {
+            slug: label for slug, label in REPORT_NAMES.items()
+            if has_tenant_permission(request.user, organization,
+                PermissionCode.COST_REPORT_VIEW if slug in COST_REPORT_NAMES else PermissionCode.SALES_REPORT_VIEW,
+                membership=request.membership)
+        },
         'description': REPORT_DESCRIPTIONS[report_name], 'result_count': len(rows),
         'headers': headers, 'rows': page_obj.object_list, 'page_obj': page_obj,
         'query': request.GET.get('q', ''), 'date_from': date_from, 'date_to': date_to,
+        'filter_form': form, 'summaries': summaries, 'filter_query': filter_query,
+        'filters_valid': valid, 'dated_report': report_name in DATED_REPORTS,
     })
+    response.status_code = 200 if valid else 400
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 @login_required

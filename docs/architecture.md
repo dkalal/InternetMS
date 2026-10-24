@@ -141,3 +141,6 @@ Deployment note:
 - Use the compose service name or network alias when the consumer runs in a different container
 
 Cart activity, scoped active/history lists, restoration, and maintenance follow [the cart lifecycle contract](cart_lifecycle.md). Cleanup is explicit maintenance with dry-run by default, never an HTTP list side effect.
+
+Inventory report selection, date boundaries, purchase totals, stock valuation,
+export and currency semantics follow [the inventory reports contract](inventory_reports_audit_2026-10-24.md).
