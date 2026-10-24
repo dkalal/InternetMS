@@ -578,6 +578,11 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         if product and self.cart is not None:
             from .services import CartService
 
+            if self.instance.pk and self.cart.lines.filter(product=product).exclude(pk=self.instance.pk).exists():
+                self.add_error('product', 'This product already has a cart line. Edit that item instead.')
+            if not product.is_serialized and cleaned.get('serial_units'):
+                self.add_error('serial_units', 'This product does not use serial selections.')
+
             unit_price, _ = CartService.line_pricing(
                 product=product,
                 quantity=quantity,

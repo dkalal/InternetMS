@@ -1370,18 +1370,20 @@ def cart_line_form(request, cart_pk, line_pk=None):
                 'title': 'Edit cart item' if line else 'Add cart item',
             })
         try:
-            with transaction.atomic():
-                obj = form.save(commit=False)
-                obj.cart = cart
-                obj.unit_price = unit_price
-                obj.save()
-                CartSerialSelection.objects.filter(cart_line=obj).delete()
-                CartSerialSelection.objects.bulk_create([
-                    CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit) for unit in form.cleaned_data.get('serial_units', [])
-                ])
-                CartService.validate_discount_authority(
-                    cart=cart, actor=request.user, membership=request.membership,
-                )
+            CartService.save_line(
+                organization=organization, cart_id=cart.pk, data=request.POST,
+                actor=request.user, membership=request.membership, line_id=line_pk,
+            )
+        except ValidationError as exc:
+            if hasattr(exc, 'message_dict'):
+                for field, errors in exc.message_dict.items():
+                    form.add_error(field if field in form.fields else None, errors)
+            else:
+                form.add_error(None, exc)
+            return render(request, 'inventory/cart_line_form.html', {
+                'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
+                'title': 'Edit cart item' if line else 'Add cart item',
+            })
         except InventoryError as exc:
             form.add_error('discount_amount', str(exc))
             return render(request, 'inventory/cart_line_form.html', {

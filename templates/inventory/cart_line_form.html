@@ -8,6 +8,7 @@
       <p class="jims-page-eyebrow">Cart #{{ cart.pk }}</p>
       <h1 class="jims-page-title">{{ title }}</h1>
       <p class="jims-page-subtitle">Availability is checked now for guidance and revalidated at full payment.</p>
+      {% if not line %}<p class="mt-2 text-sm text-slate-600">Adding an existing product increases its quantity on the same line. Choose additional serials only; use Edit to replace selections.</p>{% endif %}
     </div>
     <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Back to sale</a>
   </header>

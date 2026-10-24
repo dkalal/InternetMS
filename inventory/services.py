@@ -16,6 +16,7 @@ from products.models import Product
 from .models import (
     Cart,
     CartLine,
+    CartSerialSelection,
     DocumentSerialSelection,
     InventoryBalance,
     InventorySale,
@@ -487,6 +488,60 @@ class InventoryService:
 
 
 class CartService:
+    @classmethod
+    @transaction.atomic
+    def save_line(cls, *, organization, cart_id, data, actor, membership=None, line_id=None):
+        """Add quantities/serials to one product line; edits replace its values."""
+        from .cart_lifecycle import visible_carts
+        from .forms import CartLineForm
+        from users.permissions import PermissionCode, has_tenant_permission
+
+        if not has_tenant_permission(actor, organization, PermissionCode.CART_MANAGE, membership=membership):
+            raise PermissionDenied('Cannot manage cart items.')
+        cart = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update().filter(
+            pk=cart_id, status=Cart.Status.DRAFT,
+        ).first()
+        if cart is None:
+            raise PermissionDenied('Draft cart unavailable.')
+        line = cart.lines.filter(tenant=organization, pk=line_id).first() if line_id else None
+        if line_id and line is None:
+            raise PermissionDenied('Cart item unavailable.')
+        incoming = CartLineForm(data, instance=line, organization=organization, cart=cart,
+                                sale_pricing_category=cart.sale_pricing_category, membership=membership)
+        if not incoming.is_valid():
+            raise ValidationError(dict(incoming.errors))
+        product = incoming.cleaned_data['product']
+        if not line_id:
+            line = cart.lines.filter(tenant=organization, product=product).first()
+        if line and not line_id:
+            selected = list(incoming.cleaned_data['serial_units'])
+            saved_ids = list(line.serial_selections.values_list('stock_unit_id', flat=True))
+            if set(saved_ids).intersection(unit.pk for unit in selected):
+                raise ValidationError({'serial_units': 'A selected serial is already in this cart. Choose a different serial or edit the existing item.'})
+            merged = data.copy()
+            merged['quantity'] = str(line.quantity + incoming.cleaned_data['quantity'])
+            merged['discount_amount'] = str(line.discount_amount + incoming.cleaned_data['discount_amount'])
+            merged.setlist('serial_units', [str(pk) for pk in saved_ids] + [str(unit.pk) for unit in selected])
+            incoming = CartLineForm(merged, instance=line, organization=organization, cart=cart,
+                                    sale_pricing_category=cart.sale_pricing_category, membership=membership)
+            if not incoming.is_valid():
+                raise ValidationError(dict(incoming.errors))
+        obj = incoming.save(commit=False)
+        obj.cart = cart
+        obj.unit_price, _ = cls.line_pricing(product=product, quantity=obj.quantity, customer=cart.customer,
+                                            sale_pricing_category=cart.sale_pricing_category)
+        obj.save()
+        obj.serial_selections.all().delete()
+        CartSerialSelection.objects.bulk_create([
+            CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit)
+            for unit in incoming.cleaned_data['serial_units']
+        ])
+        cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
+        audit(organization=organization, actor=actor, action='inventory.cart_line.saved', obj=obj,
+              new_value={'quantity': str(obj.quantity), 'serial_ids': list(obj.serial_selections.values_list('stock_unit_id', flat=True))},
+              metadata={'stock_changed': False})
+        return obj
+
     @classmethod
     @transaction.atomic
     def start(cls, *, organization, actor, membership=None):

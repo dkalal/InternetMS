@@ -52,6 +52,30 @@ policy and display the saved prices for review.
 
 ## Migrations and compatibility
 
+### Repeated product additions
+
+Each draft cart retains exactly one line per product (`uniq_cart_product`). The
+add-item action adds the submitted quantity and additional serials to that line;
+the edit action replaces its quantity and serial selections. Selecting a serial
+already on that line fails with an actionable validation error and no mutation.
+Changing an edited line to a product already in the cart likewise fails safely.
+The add screen explains these semantics before submission.
+
+`CartService.save_line` checks permission and visible tenant/owner scope, locks
+the draft parent before looking up the existing line, and validates the submitted
+and combined values with the existing stock, serial, pricing and discount policy.
+Combined quantity determines the effective pricing tier. Existing discounts are
+preserved and authorized additional discounts are additive. Line persistence,
+serial replacement, final discount authorization and the audit event are atomic.
+Draft selections do not reserve stock; payment continues to revalidate stock and
+serial availability. No stock balances, unit states or movements change here.
+No migration or historical data rewrite is required.
+
+Regression coverage: `inventory.tests_cart_line_merge`, including simultaneous
+first additions against PostgreSQL. The transaction and lock design follows
+[Django 5.2 transactions](https://docs.djangoproject.com/en/5.2/topics/db/transactions/)
+and [row locking](https://docs.djangoproject.com/en/5.2/ref/models/querysets/#select-for-update).
+
 0014 adds nullable abandoned/restored timestamps and protected actor references,
 and a bounded abandonment reason. Existing lifecycle timestamps remain NULL;
 unknown history is never inferred from deployment time. No new index is needed:
