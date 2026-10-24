@@ -52,7 +52,9 @@ The application is then available at `http://localhost:8000`; PostgreSQL is expo
 ### PDF rendering on Windows
 
 The Docker runtime includes WeasyPrint's native Pango and HarfBuzz libraries. For
-native Windows development, install Pango through MSYS2's UCRT64 shell:
+native Windows development, install [MSYS2](https://www.msys2.org/) and install
+Pango through its UCRT64 shell, following the
+[official WeasyPrint Windows setup](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows):
 
 ```text
 pacman -S mingw-w64-ucrt-x86_64-pango
@@ -62,7 +64,16 @@ Then set `WEASYPRINT_DLL_DIRECTORIES=C:\msys64\ucrt64\bin` in `.env`, restart th
 Django process, and verify the same virtual environment used by Django with:
 
 ```powershell
-.\.venv\Scripts\python.exe -m weasyprint --info
+.\.venv\Scripts\python.exe manage.py shell -c "from billing.pdf import _load_weasyprint; backend = _load_weasyprint(); assert backend is not None, 'PDF native libraries unavailable'; pdf = backend.HTML(string='<p>PDF runtime check</p>').write_pdf(); assert pdf.startswith(b'%PDF-'); print('PDF runtime OK:', backend.__version__, len(pdf), 'bytes')"
+```
+
+Use the Django command above when the DLL path is configured in `.env`: the
+standalone `python -m weasyprint` command does not load the project's `.env`.
+The check renders an actual PDF in memory without reading or changing business
+data. Before the release gate, also run the PDF regression test:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py test billing.tests.BillingListViewTests.test_annual_number_displays_in_list_detail_and_print_view --keepdb
 ```
 
 When the PDF backend is unavailable, billing PDF routes deliberately return a
