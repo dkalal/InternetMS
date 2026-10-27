@@ -18,6 +18,8 @@
     </style>{% endif %}
     <script defer src="{% static 'inventory/js/jims-ui.js' %}"></script>
     <script defer src="{% static 'inventory/js/inventory-ui.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'inventory/css/money-inputs.css' %}">
+    <script defer src="{% static 'inventory/js/money-inputs.js' %}"></script>
     {% block extra_css %}{% endblock %}
 </head>
 <body class="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased {% if user.is_authenticated %}jims-auth-shell{% endif %} {% if embedded_create %}jims-embedded{% endif %} {% block body_class %}{% endblock %}">

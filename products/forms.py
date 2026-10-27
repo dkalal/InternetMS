@@ -9,6 +9,7 @@ from custom_fields.forms import CustomFieldFormMixin
 
 from .models import Product, ProductCategory, UnitOfMeasure
 from .images import prepare_product_image
+from .naming import name_with_brand
 
 
 class ProductForm(CustomFieldFormMixin, forms.ModelForm):
@@ -89,6 +90,11 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
         self.fields['category'].empty_label = None
+        self.fields['name'].label = 'Name / brand'
+        self.fields['name'].widget.attrs['placeholder'] = 'TP-Link Router, Dell Laptop, UTP Cable...'
+        self.fields['brand'].widget = forms.HiddenInput()
+        if self.instance.pk and not self.is_bound:
+            self.initial['name'] = name_with_brand(self.instance.name, self.instance.brand)
         self.fields['buying_price'].label = 'Buying price (TZS)'
         self.fields['selling_price'].label = 'Standard price (TZS)'
         self.fields['technician_price'].label = 'Technician price (TZS)'
@@ -120,6 +126,16 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         if not uploaded_image:
             return image
         return prepare_product_image(uploaded_image)
+
+    def clean_name(self):
+        legacy_brand = self.data.get('brand') if not self.instance.pk else ''
+        name = name_with_brand(self.cleaned_data['name'], legacy_brand)
+        self.fields['name'].run_validators(name)
+        return name
+
+    def clean_brand(self):
+        # Preserve existing metadata; the visible name is now the only editor.
+        return self.cleaned_data.get('brand') or self.instance.brand
 
     def clean_sku(self):
         sku = (self.cleaned_data.get('sku') or '').strip().upper()

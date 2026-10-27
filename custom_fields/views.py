@@ -140,6 +140,8 @@ class CustomFieldInlineCreateView(CustomFieldTenantMixin, CreateView):
                         "key": self.object.key,
                         "label": self.object.label,
                         "target_model": self.object.target_model,
+                        "show_on_create": self.object.show_on_create,
+                        "is_active": self.object.is_active,
                         "field_html": field_html,
                     },
                     "message": f"Custom field {self.object.label} created successfully.",

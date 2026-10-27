@@ -506,14 +506,14 @@ class ProductListViewTests(TestCase):
         response = self.client.get(reverse("product-create"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Save product")
-        self.assertContains(response, 'class="jims-form-page jims-product-form-page')
-        self.assertContains(response, 'sm:w-[320px]')
-        self.assertContains(response, 'data-product-image-preview')
-        self.assertContains(response, 'data-product-margin>')
-        self.assertContains(response, 'aria-label="Pricing summary"')
+        self.assertContains(response, "Create products")
+        self.assertContains(response, 'id="product-row-template"')
+        self.assertContains(response, 'class="product-grid-scroll"')
+        self.assertContains(response, 'class="product-thumbnail"')
+        self.assertContains(response, 'data-col="buying_price"')
+        self.assertContains(response, 'data-col="selling_price"')
         self.assertContains(response, 'enctype="multipart/form-data"')
-        self.assertContains(response, 'data-product-image-preview')
+        self.assertContains(response, 'data-field="image"')
         self.assertNotContains(response, 'name="measure_unit"')
         self.assertNotContains(response, 'name="retail_price"')
 
@@ -533,8 +533,11 @@ class ProductListViewTests(TestCase):
             with self.subTest(params=params):
                 response = self.client.get(reverse("product-create"), params)
                 self.assertEqual(response.status_code, 200)
-                self.assertContains(response, 'data-add-product-category')
-                self.assertContains(response, reverse('inventory:purchase_category_quick_create'))
+                if params:
+                    self.assertContains(response, 'data-add-product-category')
+                    self.assertContains(response, reverse('inventory:purchase_category_quick_create'))
+                else:
+                    self.assertContains(response, 'data-col="catalog_category"')
                 self.assertContains(response, f'<option value="{local_unit.pk}">', html=False)
                 self.assertNotContains(response, f'<option value="{foreign_unit.pk}">', html=False)
 
@@ -563,7 +566,7 @@ class ProductListViewTests(TestCase):
         get_response = self.client.get(reverse("product-create"))
         self.assertContains(get_response, 'name="is_serialized"')
         self.assertContains(get_response, "Serial numbers are recorded with stock")
-        self.assertContains(get_response, "Save &amp; add serial numbers")
+        self.assertContains(get_response, "Create products")
 
         response = self.client.post(reverse("product-create"), {
             "sku": "SERIAL-ROUTER-1",

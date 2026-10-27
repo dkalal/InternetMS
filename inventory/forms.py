@@ -149,6 +149,9 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
 
     def __init__(self, *args, organization=None, allow_extra_fields=False, **kwargs):
         super().__init__(*args, organization=organization, **kwargs)
+        self.fields['name'].label = 'Name / brand'
+        self.fields['name'].widget.attrs['placeholder'] = 'TP-Link Router, Dell Laptop...'
+        self.fields['brand'].widget = forms.HiddenInput()
         self.fields['catalog_category'].queryset = ProductCategory.objects.filter(tenant=organization, is_active=True)
         self.fields['sales_unit'].queryset = UnitOfMeasure.objects.filter(tenant=organization, is_active=True)
         if not allow_extra_fields:
@@ -156,7 +159,10 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
                 self.fields[name].disabled = True
 
     def clean_name(self):
-        value = (self.cleaned_data.get('name') or '').strip()
+        from products.naming import name_with_brand
+        brand = self.data.get(self.add_prefix('brand')) if not self.fields['brand'].disabled else ''
+        value = name_with_brand(self.cleaned_data.get('name'), brand)
+        self.fields['name'].run_validators(value)
         if Product.objects.unscoped().filter(tenant=self.organization, name__iexact=value, is_active=True).exists():
             raise forms.ValidationError('An active product with this name already exists.')
         return value

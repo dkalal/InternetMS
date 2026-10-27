@@ -66,7 +66,7 @@
           <p class="mt-2 hidden text-sm text-rose-700" data-new-category-error role="alert"></p>
         </div>
         {% endif %}
-        <div class="hidden">{{ form.category }}</div>
+        <div class="hidden">{{ form.category }}{{ form.brand }}</div>
         <details class="mt-3 text-xs text-slate-600"><summary class="cursor-pointer font-medium text-brand-700">Identifier and item guidance</summary><p class="mt-1">A SKU is generated when left blank. Physical items can use stock, serial, expiry and reorder controls. Services do not use inventory controls.</p></details>
       </section>
 
@@ -117,7 +117,7 @@
                 <div class="min-w-0 space-y-4">
                   {% include "components/form_field.html" with field=form.image %}
                   {% include "components/form_field.html" with field=form.description %}
-                  <div class="grid gap-3 sm:grid-cols-2" data-physical-only><div>{% include "components/form_field.html" with field=form.brand %}</div><div>{% include "components/form_field.html" with field=form.model_number %}</div></div>
+                  <div data-physical-only>{% include "components/form_field.html" with field=form.model_number %}</div>
                 </div>
               </div>
             </details>

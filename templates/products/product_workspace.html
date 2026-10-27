@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Add products{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'products/workspace.css' %}">{% endblock %}
+{% block content %}
+{% include 'inventory/includes/module_nav.html' %}
+<section class="product-workspace">
+  <nav class="jims-breadcrumb" aria-label="Breadcrumb"><a href="{% url 'product-list' %}">Catalog</a> / Add products</nav>
+  <header class="jims-page-header"><div><h1 class="jims-page-title">Add products</h1><p>One row per product. Nothing is saved until you create products.</p></div><a class="jims-btn jims-btn-secondary" href="{% url 'product-list' %}">Back to catalog</a></header>
+  <form id="product-workspace" method="post" enctype="multipart/form-data" novalidate>
+    {% csrf_token %}<input type="hidden" name="batch_token" value="{{ batch_token }}">
+    <div class="product-toolbar"><button type="button" class="jims-btn jims-btn-primary" id="add-product-row">+ Add row</button><button type="button" class="jims-btn jims-btn-secondary" id="paste-product-rows">Paste rows</button><details><summary class="jims-btn jims-btn-secondary">Columns</summary><div id="product-columns">{% for col in columns %}{% if col.name != 'name' %}<label><input type="checkbox" checked data-column="{{ col.name }}"> {{ col.label }}</label>{% endif %}{% endfor %}</div></details><span>Prices in TZS &middot; 200 rows maximum &middot; 50 pictures maximum, 6 MB each / 24 MB total</span></div>
+    <p class="text-sm text-slate-500">Serial numbers are recorded with stock receiving or authorized stock adjustments after creation.</p>
+    <p id="batch-errors" role="alert" tabindex="-1"></p>
+    <div class="product-grid-scroll" tabindex="0" aria-label="New products table, scroll horizontally for more columns">
+      <table class="product-grid"><thead><tr><th scope="col">#</th>{% for col in columns %}<th scope="col" data-col="{{ col.name }}">{{ col.label }}{% if col.field.field.required %} *{% endif %}</th>{% endfor %}<th scope="col">Details</th><th scope="col">Remove</th></tr></thead><tbody id="product-rows"></tbody></table>
+    </div>
+    <footer class="product-save-footer"><span id="product-count" aria-live="polite"></span><a class="jims-btn jims-btn-secondary" href="{% url 'product-list' %}">Cancel</a><button class="jims-btn jims-btn-primary" type="submit" id="create-products">Create products</button></footer>
+  </form>
+</section>
+{% if can_manage_custom_fields %}<button type="button" hidden data-custom-field-open id="grid-custom-field-opener">Add custom field</button>{% include 'includes/custom_field_definition_modal.html' %}{% endif %}
+<dialog id="product-paste-dialog" class="product-paste-dialog"><form method="dialog"><h2>Paste product rows</h2><p>Paste tab-separated cells from Excel or Google Sheets. Use the displayed column order from your selected cell, or include supported column headers.</p><label for="product-paste-text">Spreadsheet rows</label><textarea id="product-paste-text" rows="9" placeholder="Name&#9;Model&#9;SKU&#9;Sales unit&#9;Buying price&#9;Standard price"></textarea><p id="product-paste-error" role="alert"></p><div class="product-toolbar"><button value="cancel" class="jims-btn jims-btn-secondary">Cancel</button><button type="button" id="apply-product-paste" class="jims-btn jims-btn-primary">Preview paste</button></div></form></dialog>
+<template id="product-row-template">
+  <tr class="product-entry">
+    <th scope="row" class="row-number"></th>
+    {% for col in columns %}
+      <td data-col="{{ col.name }}">
+        {% if col.name == 'image' %}
+          <img class="product-thumbnail" hidden alt="Pending product picture">
+          <label class="product-picture-upload" title="Upload or replace picture">
+            <span aria-hidden="true">&#8593;</span>{{ col.field }}
+          </label>
+          <button type="button" data-remove-image aria-label="Clear picture">&times;</button>
+        {% else %}{{ col.field }}{% endif %}
+        <span class="cell-error" role="alert"></span>
+      </td>
+    {% endfor %}
+    <td><button type="button" data-details aria-expanded="false">More details{% if required_details %} *{% endif %}</button><span class="details-errors"></span></td>
+    <td><button type="button" data-remove-row aria-label="Remove unsaved row">&times;</button></td>
+  </tr>
+  <tr class="product-detail-row" hidden>
+    <td colspan="{{ columns|length|add:'3' }}">
+      <div class="product-detail-panel">
+        {% for field in detail_fields %}
+          <div class="detail-field" data-detail="{{ field.name }}">
+            <label>{{ field.label }}{% if field.field.required %} *{% endif %}</label>{{ field }}
+            <span class="cell-error" role="alert"></span>
+          </div>
+        {% endfor %}
+        <details class="product-detail-section"><summary>Wholesale settings</summary><div class="product-detail-panel">
+          {% for field in wholesale_fields %}
+            <div class="detail-field" data-detail="{{ field.name }}"><label>{{ field.label }}{% if field.field.required %} *{% endif %}</label>{{ field }}<span class="cell-error" role="alert"></span></div>
+          {% endfor %}
+        </div></details>
+        <details class="product-detail-section" data-additional-information {% if required_details %}open{% endif %}><summary>Additional information{% if required_details %} &middot; Required fields{% endif %}</summary><div class="product-detail-panel" data-grid-custom-fields>
+          {% if can_manage_custom_fields %}<div class="w-full"><button type="button" class="jims-btn jims-btn-secondary" data-grid-custom-field-open>Add custom field</button></div>{% endif %}
+          {% for field in additional_fields %}
+            <div class="detail-field" data-detail="{{ field.name }}"><label>{{ field.label }}{% if field.field.required %} *{% endif %}</label>{{ field }}<span class="cell-error" role="alert"></span></div>
+          {% endfor %}
+        </div></details>
+      </div>
+    </td>
+  </tr>
+</template>
+{{ unit_rules|json_script:'product-unit-rules' }}
+{% endblock %}
+{% block extra_js %}<script src="{% static 'products/workspace.js' %}" defer></script>{% endblock %}

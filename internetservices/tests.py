@@ -165,3 +165,22 @@ class NumberDisplayTests(SimpleTestCase):
         ):
             with self.subTest(template_name=template_name):
                 self.assertIsNotNone(get_template(template_name))
+
+class MoneyInputDesignTests(SimpleTestCase):
+    def test_whole_unit_spinner_keeps_fractional_validation_and_other_steps(self):
+        class Example(forms.Form):
+            buying_price = forms.DecimalField(max_digits=16, decimal_places=6)
+            monthly_fee = forms.DecimalField(decimal_places=2)
+            amount_paid = forms.DecimalField(decimal_places=2)
+            quantity = forms.DecimalField(decimal_places=6)
+            tax_rate = forms.DecimalField(decimal_places=2)
+        form = Example({'buying_price': '1000.123456', 'monthly_fee': '20.25',
+                        'amount_paid': '5.50', 'quantity': '0.125', 'tax_rate': '18.5'})
+        apply_tailwind(form)
+        self.assertTrue(form.is_valid(), form.errors)
+        for name in ('buying_price', 'monthly_fee', 'amount_paid'):
+            self.assertEqual(form.fields[name].widget.attrs['step'], 'any')
+            self.assertEqual(form.fields[name].widget.attrs['data-money-step'], '1')
+        for name in ('quantity', 'tax_rate'):
+            self.assertNotIn('data-money-step', form.fields[name].widget.attrs)
+        self.assertEqual(form.cleaned_data['buying_price'], Decimal('1000.123456'))

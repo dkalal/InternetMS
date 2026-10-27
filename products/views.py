@@ -192,6 +192,9 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
     def dispatch(self, request, *args, **kwargs):
         require_organization(request)
         require_permission(request, PermissionCode.PRODUCTS_CREATE)
+        if request.GET.get('purchase_modal') != '1' and (request.method == 'GET' or 'rows' in request.POST):
+            from .workspace import product_workspace
+            return product_workspace(request)
         response = super().dispatch(request, *args, **kwargs)
         if request.GET.get('purchase_modal') == '1':
             response['X-Frame-Options'] = 'SAMEORIGIN'

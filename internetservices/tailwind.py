@@ -67,6 +67,12 @@ def apply_tailwind(form: forms.BaseForm) -> None:
             compact_widget.is_localized = widget.is_localized
             field.widget = widget = compact_widget
 
+        if isinstance(field, forms.DecimalField) and isinstance(widget, forms.NumberInput):
+            tokens = set(bound_name.lower().split('_'))
+            if tokens & {'price', 'cost', 'amount', 'fee', 'balance', 'total'}:
+                # Fractions remain valid; the shared spinner changes the value by 1.
+                widget.attrs.update({'step': 'any', 'data-money-step': '1'})
+
         # Choice groups are container widgets whose attrs are also copied to
         # every generated input. They must never inherit full-width text-input
         # sizing; templates can safely iterate their native inputs instead.

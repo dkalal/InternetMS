@@ -7,12 +7,12 @@ from django.utils.text import slugify
 from .models import Product
 
 
-def save_purchase_product(product, *, organization, supplied_sku=''):
+def save_purchase_product(product, *, organization, supplied_sku='', max_attempts=20):
     """Allocate a SKU at persistence, using a savepoint for each retry."""
     base = (slugify(product.name).replace('-', '')[:24] or 'ITEM').upper()
     supplied_sku = supplied_sku.strip().upper()
     product.organization = product.tenant = organization
-    for attempt in range(1, 21):
+    for attempt in range(1, max_attempts + 1):
         product.sku = supplied_sku or (base if attempt == 1 else f'{base}-{attempt}')
         if Product.objects.unscoped().filter(tenant=organization, sku__iexact=product.sku).exists():
             if supplied_sku:
