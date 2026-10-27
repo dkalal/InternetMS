@@ -191,3 +191,61 @@ class InventoryReportTests(TestCase):
             self.assertEqual(report_rows(self.org, name)[1], [])
         StockUnit.objects.create(tenant=self.org, product=self.product, serial_number='REPORT-SERIAL')
         self.assertEqual(report_rows(self.org, 'serialized')[1][0][2], 'REPORT-SERIAL')
+
+    def test_numeric_search_excludes_amounts_and_dates_by_default(self):
+        self.purchase()
+        response = self.client.get(self.url(), {'q': '5'})
+        self.assertEqual(response.context['result_count'], 0)
+        self.assertEqual(response.context['summaries'][0][1], 0)
+        all_cells = self.client.get(self.url(), {'q': '5', 'search_in': 'all'})
+        self.assertEqual(all_cells.context['result_count'], 0)
+        self.assertNotContains(all_cells, 'Search in')
+        self.assertNotIn('search_in', all_cells.context['filter_query'])
+        self.assertEqual(self.client.get(self.url(), {'q': 'REPORT-1'}).context['result_count'], 1)
+        self.assertEqual(self.client.get(self.url(), {'q': '5', 'search_in': 'forged'}).context['result_count'], 0)
+
+    def test_valuation_bridge_uses_only_matching_tenant_products_and_discloses_difference(self):
+        InventoryBalance.objects.create(tenant=self.org, product=self.product, quantity=8, average_cost=10)
+        StockMovement.objects.create(tenant=self.org, product=self.product, movement_type='opening', quantity=10, balance_after=10, unit_cost=10)
+        StockMovement.objects.create(tenant=self.org, product=self.product, movement_type='sale_out', quantity=-2, balance_after=8, unit_cost=9)
+        response = self.client.get(self.url('stock-valuation'))
+        bridge = response.context['valuation_bridge']
+        self.assertEqual(bridge['total'], 80)
+        self.assertEqual(bridge['difference'], -2)
+        self.assertEqual(sum(value for _, value in bridge['entries']), bridge['total'])
+        empty = self.client.get(self.url('stock-valuation'), {'q': 'absent'})
+        self.assertEqual(empty.context['valuation_bridge']['total'], 0)
+        self.assertTrue(all(value == 0 for _, value in empty.context['valuation_bridge']['entries']))
+        workbook = load_workbook(BytesIO(self.client.get(self.url('stock-valuation'), {'export': 'xlsx'}).content))
+        self.assertEqual(workbook['Valuation bridge']['B8'].value, 80)
+        self.assertContains(response, 'Recorded valuation difference')
+
+    def test_loss_filter_preserves_negative_snapshots_and_excel(self):
+        customer = Customer.objects.create(tenant=self.org, organization=self.org, name='Buyer', customer_type='random', location='Moshi')
+        invoice = BillingDocument.objects.create(tenant=self.org, organization=self.org, customer=customer, document_type='invoice', number='LOSS-INV', issue_date=date(2026, 10, 1), created_by=self.admin)
+        sale = InventorySale.objects.create(tenant=self.org, invoice=invoice, stock_deducted=True, completed_at=timezone.now())
+        snapshots = []
+        for revenue, cost in ((20, 30), (50, 10), (10, 10)):
+            line = BillingLineItem.objects.create(tenant=self.org, organization=self.org, document=invoice, product=self.product, description='Historical item', quantity=1, unit_price=revenue)
+            snapshots.append(InventorySaleLine.objects.create(tenant=self.org, sale=sale, billing_line=line, net_revenue=revenue, cost_total=cost))
+        response = self.client.get(self.url('gross-profit'))
+        self.assertEqual(dict(response.context['summaries'])['Gross profit on TZS sales (TZS)'], 30)
+        self.assertEqual(response.context['loss_count'], 1)
+        self.assertContains(response, '1 loss-making line')
+        self.assertContains(response, 'report-result-loss')
+        for result, total in (('loss', -10), ('profit', 40), ('break-even', 0)):
+            filtered = self.client.get(self.url('gross-profit'), {'result': result})
+            self.assertEqual(filtered.context['result_count'], 1)
+            self.assertEqual(dict(filtered.context['summaries'])['Gross profit on TZS sales (TZS)'], total)
+        sheet = load_workbook(BytesIO(self.client.get(self.url('gross-profit'), {'result': 'loss', 'export': 'xlsx'}).content)).active
+        self.assertEqual(sheet['H2'].value, -10)
+        self.assertEqual(sheet['I2'].value, 'Loss')
+        self.assertEqual(InventorySaleLine.objects.get(tenant=self.org, pk=snapshots[0].pk).cost_total, 30)
+
+    def test_imported_reports_explain_empty_history_without_creating_records(self):
+        for name in ('historical-purchases', 'historical-sales'):
+            response = self.client.get(self.url(name))
+            self.assertContains(response, 'Reference-only imported history')
+            self.assertContains(response, 'No imported records match this report')
+            self.assertContains(response, 'Normal transactions appear in Purchase report and Sales report')
+        self.assertFalse(HistoricalInventoryRecord.objects.filter(tenant=self.org).exists())

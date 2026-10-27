@@ -1,5 +1,5 @@
 """Read-only, tenant-scoped inventory report calculations."""
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django import forms
 from django.db.models import F, Sum
@@ -8,12 +8,14 @@ from products.models import Product
 from .models import (HistoricalInventoryRecord, InventoryBalance, InventorySaleLine,
                      InventorySettings, Purchase, PurchaseLine, StockMovement, StockUnit, Supplier)
 from .services import money
+from internetservices.tailwind import apply_tailwind
 
 DATED_REPORTS = {'purchases', 'sales', 'gross-profit', 'movements', 'historical-purchases', 'historical-sales'}
 
 
 class ReportFilterForm(forms.Form):
-    q = forms.CharField(required=False, max_length=200, label='Search rows')
+    q = forms.CharField(required=False, max_length=200, label='Search report')
+    result = forms.ChoiceField(required=False, choices=[('', 'All results'), ('loss', 'Loss-making lines'), ('profit', 'Profitable lines'), ('break-even', 'Break-even lines')], label='Profit result')
     date_from = forms.DateField(required=False, input_formats=['%Y-%m-%d'], widget=forms.DateInput(attrs={'type': 'date'}), label='From date')
     date_to = forms.DateField(required=False, input_formats=['%Y-%m-%d'], widget=forms.DateInput(attrs={'type': 'date'}), label='To date')
     supplier = forms.ModelChoiceField(required=False, queryset=Supplier.objects.none(), empty_label='All suppliers')
@@ -28,8 +30,10 @@ class ReportFilterForm(forms.Form):
         if report_name not in DATED_REPORTS:
             del self.fields['date_from']
             del self.fields['date_to']
-        for field in self.fields.values():
-            field.widget.attrs['class'] = 'mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm'
+        if report_name != 'gross-profit':
+            del self.fields['result']
+        self.fields['q'].widget.attrs['placeholder'] = 'Name, SKU or reference'
+        apply_tailwind(self)
 
     def clean(self):
         data = super().clean()
@@ -60,6 +64,7 @@ def report_rows(organization, report_name, filters=None):
             sold = StockMovement.objects.filter(tenant=organization, product__tenant=organization, movement_type='sale_out', created_at__gte=cutoff).values('product_id')
             balances = balances.filter(quantity__gt=0).exclude(product_id__in=sold)
         if report_name == 'stock-valuation':
+            balances = balances.annotate(report_value=F('quantity') * F('average_cost')).order_by('-report_value', 'product__sku')
             return ['SKU', 'Product', 'Quantity', 'Average cost', 'Value', 'Threshold'], [
                 [b.product.sku, b.product.name, b.quantity, b.average_cost, money(b.quantity * b.average_cost), b.product.reorder_threshold] for b in balances
             ]
@@ -84,8 +89,8 @@ def report_rows(organization, report_name, filters=None):
                 [timezone.localdate(l.sale.completed_at), l.sale.invoice.number, l.billing_line.product.sku if l.billing_line.product_id else '', l.billing_line.description or (l.billing_line.product.name if l.billing_line.product_id else ''), l.billing_line.quantity, l.net_revenue, l.sale.invoice.currency]
                 for l in lines
             ]
-        return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue', 'Cost (TZS)', 'Gross profit (TZS)', 'Revenue currency'], [
-            [timezone.localdate(l.sale.completed_at), l.sale.invoice.number, l.billing_line.product.sku if l.billing_line.product_id else '', l.billing_line.description or (l.billing_line.product.name if l.billing_line.product_id else ''), l.billing_line.quantity, l.net_revenue, l.cost_total, l.gross_profit if l.sale.invoice.currency == 'TZS' else None, l.sale.invoice.currency]
+        return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue', 'Cost (TZS)', 'Gross profit (TZS)', 'Result', 'Revenue currency'], [
+            [timezone.localdate(l.sale.completed_at), l.sale.invoice.number, l.billing_line.product.sku if l.billing_line.product_id else '', l.billing_line.description or (l.billing_line.product.name if l.billing_line.product_id else ''), l.billing_line.quantity, l.net_revenue, l.cost_total, l.gross_profit if l.sale.invoice.currency == 'TZS' else None, profit_result(l.gross_profit) if l.sale.invoice.currency == 'TZS' else 'FX required', l.sale.invoice.currency]
             for l in lines
         ]
     if report_name == 'movements':
@@ -140,3 +145,63 @@ def report_totals(report_name, rows):
             totals.append(('Gross profit on TZS sales (TZS)', 7,
                            sum((row[7] for row in rows if row[7] is not None), Decimal('0.00'))))
     return totals
+
+
+SEARCH_COLUMNS = {
+    'stock-valuation': (0, 1), 'low-stock': (0, 1), 'out-of-stock': (0, 1), 'dead-stock': (0, 1),
+    'purchases': (1, 2, 3, 4), 'sales': (1, 2, 3), 'gross-profit': (1, 2, 3),
+    'movements': (1, 2, 3), 'serialized': (0, 1, 2, 3, 4, 6),
+    'historical-purchases': (1, 2, 3, 7), 'historical-sales': (1, 2, 3, 7),
+    'best-selling': (0, 1), 'fast-moving': (0, 1), 'slow-moving': (0, 1),
+}
+
+
+def profit_result(amount):
+    return 'Loss' if amount < 0 else 'Profit' if amount > 0 else 'Break-even'
+
+
+def filter_report_rows(report_name, rows, filters):
+    search = filters.get('q', '').casefold()
+    if search:
+        columns = SEARCH_COLUMNS[report_name]
+        rows = [row for row in rows if any(search in str(row[i] if row[i] is not None else '').casefold() for i in columns)]
+    result = filters.get('result')
+    if report_name == 'gross-profit' and result:
+        expected = {'loss': 'Loss', 'profit': 'Profit', 'break-even': 'Break-even'}[result]
+        rows = [row for row in rows if row[8] == expected]
+    return rows
+
+
+def valuation_bridge(organization, rows):
+    """Explain the selected balances using signed immutable movement values.
+
+    A nonzero residual is disclosed, never silently written into stock history.
+    It can arise from historical costing/rounding or unbacked balances.
+    """
+    movements = StockMovement.objects.filter(
+        tenant=organization, product__tenant=organization, product__sku__in=[row[0] for row in rows],
+    ).values('movement_type').annotate(value=Sum(F('quantity') * F('unit_cost')))
+    amounts = {row['movement_type']: row['value'] for row in movements}
+    labels = [('opening', 'Opening stock'), ('purchase_in', 'Confirmed stock receipts'),
+              ('adjustment_in', 'Positive adjustments'), ('adjustment_out', 'Negative adjustments'),
+              ('sale_out', 'Stock cost removed by sales')]
+    entries = [(label, money(amounts.get(kind, 0))) for kind, label in labels]
+    current = sum((row[4] for row in rows), Decimal('0.00'))
+    residual = current - sum((value for label, value in entries), Decimal('0.00'))
+    entries.append(('Recorded valuation difference', residual))
+    return {'entries': entries, 'total': current, 'difference': residual}
+
+
+def report_display(headers, rows):
+    """Presentation metadata, keeping canonical Decimal/date values for exports."""
+    numeric = [header in {'Quantity', 'Average cost', 'Value', 'Threshold', 'Unit cost', 'Total',
+                         'Net revenue', 'Cost (TZS)', 'Gross profit (TZS)', 'Balance after',
+                         'Unit amount', 'Units sold', 'Period days'} for header in headers]
+    columns = [{'label': label, 'numeric': numeric[index]} for index, label in enumerate(headers)]
+    records = []
+    for row in rows:
+        cells = [{'value': value.strftime('%Y-%m-%d %H:%M') if isinstance(value, datetime) else value.isoformat() if isinstance(value, date) else value, 'numeric': numeric[index],
+                  'loss': headers[index] == 'Gross profit (TZS)' and value is not None and value < 0,
+                  'status': headers[index] == 'Result'} for index, value in enumerate(row)]
+        records.append(cells)
+    return columns, records

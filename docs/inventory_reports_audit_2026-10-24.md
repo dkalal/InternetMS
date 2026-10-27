@@ -4,6 +4,8 @@ Date: 2026-10-24. Scope: the fourteen reports in `/inventory/reports/`.
 Branch: `feature/cart-lifecycle-management`; starting HEAD:
 `0b937d63b712358d2f01a6c8fe7cb3d9d192121d`.
 
+Follow-up: [search, valuation provenance, loss review and workspace redesign](inventory_reports_followup_2026-10-24.md) updates the search defaults and UI described here.
+
 ## Business answers
 
 - Purchase report: select a supplier (including an inactive supplier), choose

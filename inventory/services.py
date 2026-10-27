@@ -451,6 +451,15 @@ class InventoryService:
                     movement_unit_cost = balance.average_cost
                     cost_total = money(quantity * movement_unit_cost)
 
+                # Compare the actual locked acquisition cost, including selected
+                # serial costs. A stale pre-lock average cannot authorize a loss.
+                # Raising here rolls back receipt/payment, serials and stock.
+                if net_revenue / quantity <= balance.average_cost or net_revenue < cost_total:
+                    raise InventoryError(
+                        f'The net selling amount for {product.name} does not meet the current stock cost requirements. '
+                        'Ask an authorized manager to review pricing before payment.'
+                    )
+
                 balance.quantity = stock_quantity(balance.quantity - quantity)
                 balance.save(update_fields=['quantity', 'updated_at'])
                 cls._sync_legacy_stock(locked_product, balance)

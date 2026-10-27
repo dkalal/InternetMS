@@ -1,48 +1,48 @@
 {% extends 'base.html' %}
-{% load number_display %}
+{% load static number_display %}
 {% block title %}{{ title }}{% endblock %}
+{% block topbar_new_customer %}{% endblock %}
+{% block topbar_new_invoice %}{% endblock %}
+{% block topbar_start_sale %}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/reports-workspace.css' %}">{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
-<div class="space-y-5">
-  <header class="jims-page-header">
-    <div><p class="jims-page-eyebrow">Inventory reports</p><h1 class="jims-page-title">{{ title }}</h1><p class="jims-page-subtitle">{{ description }}</p></div>
-    {% if INVENTORY_CAN_EXPORT and filters_valid %}<a class="jims-btn jims-btn-secondary" href="?{{ filter_query }}&export=xlsx">Export Excel</a>{% endif %}
-  </header>
+<div class="report-shell">
+  <aside class="report-sidebar">{% include 'inventory/includes/report_navigation.html' with nav_label='Inventory reports' %}</aside>
+  <div class="report-content">
+    <header class="report-header">
+      <div><p class="jims-page-eyebrow">Reports workspace</p><h1 class="jims-page-title">{{ title }}</h1><p class="jims-page-subtitle">{{ description }}</p></div>
+      {% if INVENTORY_CAN_EXPORT and filters_valid %}<a class="jims-btn jims-btn-secondary report-export" href="?{{ filter_query }}&export=xlsx">Export Excel</a>{% endif %}
+    </header>
+    <details class="report-mobile-navigation jims-toolbar"><summary>Choose report: {{ title }}</summary>{% include 'inventory/includes/report_navigation.html' with nav_label='Choose inventory report' %}</details>
 
-  <details class="jims-toolbar sm:hidden">
-    <summary class="cursor-pointer text-sm font-semibold text-slate-900">Choose report: {{ title }}</summary>
-    <nav class="mt-3 grid gap-2" aria-label="Report type on mobile">
-    {% for slug,label in report_names.items %}<a class="whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold {% if slug == report_name %}border-brand-700 bg-brand-700 text-white{% else %}border-slate-300 bg-white text-slate-700 hover:border-brand-300{% endif %}" href="{% url 'inventory:report' slug %}" {% if slug == report_name %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-  </nav>
-  </details>
+    <section class="jims-toolbar report-filters" aria-label="Report filters">
+      <form method="get">
+        {% if filter_form.errors %}<div class="report-errors" role="alert">Report not generated. Correct the filters below. {{ filter_form.non_field_errors }}</div>{% endif %}
+        {% for field in filter_form %}<div class="report-field{% if field.name == 'q' %} report-search{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<p class="report-help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</p>{% endif %}<div class="report-field-errors">{{ field.errors }}</div></div>{% endfor %}
+        <div class="report-filter-actions"><button class="jims-btn jims-btn-primary">Apply filters</button><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:report' report_name %}">Reset</a></div>
+      </form>
+      {% if filters_valid and query %}<p class="report-help report-filter-note">Totals and exports include only rows matching this search.</p>{% endif %}
+    </section>
 
-  <nav class="hidden flex-wrap sm:flex gap-2 pb-2" aria-label="Report type">
-    {% for slug,label in report_names.items %}<a class="whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold {% if slug == report_name %}border-brand-700 bg-brand-700 text-white{% else %}border-slate-300 bg-white text-slate-700 hover:border-brand-300{% endif %}" href="{% url 'inventory:report' slug %}" {% if slug == report_name %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-  </nav>
+    {% if filters_valid %}
+      {% if summaries %}<section class="report-kpis" aria-label="Report totals">{% for label,total in summaries %}<div class="jims-kpi{% if total < 0 %} report-kpi-loss{% endif %}"><p class="report-kpi-label">{{ label }}</p><p class="report-kpi-value">{{ total|number_display }}</p><p class="report-help">All matching records, across all pages</p></div>{% endfor %}</section>{% endif %}
+      {% if loss_count %}<div class="report-warning" role="status"><strong>{{ loss_count }} loss-making line{{ loss_count|pluralize }} in these results.</strong> Losses remain included in gross profit. These are recorded sale-cost snapshots; changing today's product price does not rewrite them. Review original invoices and stock movements to distinguish historical data issues from trading losses. Use Profit result to review losses.</div>{% endif %}
+      {% if is_imported_report %}<div class="report-info"><strong>Reference-only imported history.</strong> These records are uploaded separately from live purchases and sales. They do not change stock, revenue snapshots or supplier balances. Normal transactions appear in Purchase report and Sales report.</div>{% endif %}
+      {% if valuation_bridge %}<p class="report-help">Recorded valuation difference: <strong>{{ valuation_bridge.difference|number_display }} TZS</strong>. Review recorded cost rounding or historical cost changes when this is nonzero.</p>{% endif %}
 
-  {% if filters_valid %}
-  <div class="grid gap-4 sm:grid-cols-3">
-    {% for label,total in summaries %}<div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">{{ label }}</div><div class="mt-2 text-2xl font-bold tabular-nums text-slate-950">{{ total|number_display }}</div><p class="mt-1 text-xs text-slate-600">All matching rows, across all pages</p></div>{% endfor %}
-    <div class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Matching records</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ result_count }}</div><p class="mt-1 text-xs text-slate-600">{% if dated_report %}{{ date_from|default:"All dates" }} to {{ date_to|default:"Latest" }} (inclusive){% else %}Current stock / configured reporting period{% endif %}</p></div>
-  </div>
-  {% endif %}
-
-  <section class="jims-toolbar" aria-label="Report filters">
-    <form method="get" class="grid gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:items-end">
-      {% if filter_form.errors %}<div class="sm:col-span-3 lg:col-span-5 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800" role="alert">Report not generated. Correct the filters below. {{ filter_form.non_field_errors }}</div>{% endif %}
-      {% for field in filter_form %}<div><label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">{{ field.label }}</label>{{ field }}<div class="mt-1 text-sm text-red-700">{{ field.errors }}</div></div>{% endfor %}
-      <div class="flex gap-2"><button class="jims-btn jims-btn-primary flex-1">Apply</button><a class="jims-btn jims-btn-secondary" href="{% url 'inventory:report' report_name %}">Reset</a></div>
-    </form>
-    {% if report_name == 'purchases' %}<p class="mt-3 text-xs text-slate-600">Confirmed receipts only, by purchase date. Includes inactive suppliers. Drafts, cancelled purchases and reference-only imports are excluded. This is purchase value, not supplier payments or outstanding debt.</p>{% elif report_name == 'stock-valuation' %}<p class="mt-3 text-xs text-slate-600">Current quantity multiplied by recorded weighted-average acquisition cost, rounded per product. Includes inactive products with remaining stock. This is current stock value, not a historical valuation or selling value.</p>{% endif %}
-  </section>
-
-  <section class="jims-panel overflow-hidden">
-    {% if rows %}
-      <div class="jims-table-wrap"><table class="jims-table"><caption class="sr-only">{{ title }}: filtered records</caption><thead><tr>{% for header in headers %}<th scope="col" class="whitespace-nowrap">{{ header }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr>{% for value in row %}<td class="whitespace-nowrap">{{ value|default_if_none:"—"|number_display }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-      {% if page_obj.paginator.num_pages > 1 %}<nav class="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm" aria-label="Report pagination"><span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span><div class="flex gap-2">{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&{{ filter_query }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&{{ filter_query }}">Next</a>{% endif %}</div></nav>{% endif %}
-    {% elif filters_valid %}
-      {% include "components/empty_state.html" with title="No report records" message="Change the filters or date range to find matching inventory activity." %}
+      {% comment %} {% if valuation_bridge %}<details class="jims-panel report-explanation"><summary>How is this stock value calculated?</summary><div class="report-explanation-body"><p>Current quantity multiplied by recorded average acquisition cost, rounded per product. Includes inactive products with remaining stock. Purchase report totals receipts; stock value also reflects opening stock, sales and adjustments.</p><dl class="report-bridge">{% for label,value in valuation_bridge.entries %}<div><dt>{{ label }}</dt><dd>{{ value|number_display }}</dd></div>{% endfor %}<div class="report-bridge-total"><dt>Current stock value (TZS)</dt><dd>{{ valuation_bridge.total|number_display }}</dd></div></dl><p class="report-help">All-time movements for the matching products. A valuation difference is disclosed separately; it may reflect recorded cost rounding or historical cost changes and needs review. This is an operational acquisition-cost report, not a historical or retail valuation.</p></div></details>{% elif report_name == 'purchases' %}<p class="report-help">Confirmed receipts by purchase date, including inactive suppliers. Drafts, cancellations and imported records are excluded. Purchase value differs from current stock value, cash paid and supplier debt.</p>{% endif %} {% endcomment %}
     {% endif %}
-  </section>
+
+    <section class="jims-panel report-results" aria-label="Report results">
+      {% if filters_valid %}<div class="report-results-header"><h2>{{ title }}</h2><span>{{ result_count }} record{{ result_count|pluralize }}{% if rows %} &middot; Showing {{ page_obj.start_index }}&ndash;{{ page_obj.end_index }}{% endif %}</span></div>{% endif %}
+      {% if rows %}
+        <div class="jims-table-wrap report-table-wrap" role="region" tabindex="0" aria-label="{{ title }} data. Scroll horizontally for all columns."><table class="jims-table report-table"><caption class="sr-only">{{ title }}: filtered records</caption><thead><tr>{% for header in display_headers %}<th scope="col"{% if header.numeric %} class="report-number"{% endif %}>{{ header.label }}</th>{% endfor %}</tr></thead><tbody>{% for row in display_rows %}<tr>{% for cell in row %}<td class="{% if cell.numeric %}report-number {% endif %}{% if cell.loss %}report-loss{% endif %}">{% if cell.status %}<span class="report-result-badge{% if cell.value == 'Loss' %} report-result-loss{% endif %}">{{ cell.value }}</span>{% else %}{{ cell.value|default_if_none:"Unavailable"|number_display }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+        {% if page_obj.paginator.num_pages > 1 %}<nav class="report-pagination" aria-label="Report pagination"><span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span><div>{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&{{ filter_query }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&{{ filter_query }}">Next</a>{% endif %}</div></nav>{% endif %}
+      {% elif filters_valid %}
+        <div class="report-empty"><h3>{% if is_imported_report %}No imported records match this report{% else %}No matching records{% endif %}</h3><p>{% if is_imported_report %}If no history has been imported, this report is expected to be empty. Live transactions are listed in Purchase report and Sales report. Otherwise, review your filters.{% else %}Review the search, period and other filters. No records or totals have been changed.{% endif %}</p>{% if is_imported_report and INVENTORY_CAN_IMPORT %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:import_data' %}">Review history imports</a>{% endif %}</div>
+      {% endif %}
+    </section>
+  </div>
 </div>
 {% endblock %}

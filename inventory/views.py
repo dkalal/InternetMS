@@ -68,7 +68,7 @@ from .models import (
     StockUnit,
     Supplier,
 )
-from .reporting import DATED_REPORTS, ReportFilterForm, report_rows, report_totals
+from .reporting import DATED_REPORTS, ReportFilterForm, report_rows, report_totals, filter_report_rows, valuation_bridge, report_display
 from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService, audit, money
 from .purchase_import import (
@@ -1655,8 +1655,8 @@ REPORT_NAMES = {
     'gross-profit': 'Gross profit', 'best-selling': 'Best-selling products', 'fast-moving': 'Fast-moving products',
     'slow-moving': 'Slow-moving products', 'dead-stock': 'Dead stock', 'low-stock': 'Low-stock products',
     'out-of-stock': 'Out-of-stock products', 'movements': 'Stock movements', 'serialized': 'Serialized stock history',
-    'historical-purchases': 'Historical purchases (record only)',
-    'historical-sales': 'Historical sales (record only)',
+    'historical-purchases': 'Imported purchases',
+    'historical-sales': 'Imported sales',
 }
 COST_REPORT_NAMES = {'stock-valuation', 'purchases', 'gross-profit', 'movements', 'historical-purchases'}
 
@@ -1693,9 +1693,8 @@ def report(request, report_name='stock-valuation'):
     valid = form.is_valid()
     filters = form.cleaned_data if valid else {}
     headers, rows = report_rows(organization, report_name, filters) if valid else ([], [])
-    search = filters.get('q', '').casefold()
-    if search:
-        rows = [row for row in rows if any(search in str(value if value is not None else '').casefold() for value in row)]
+    rows = filter_report_rows(report_name, rows, filters) if valid else []
+    bridge = valuation_bridge(organization, rows) if valid and report_name == 'stock-valuation' else None
     totals = report_totals(report_name, rows) if valid else []
     summaries = [(label, total) for label, column, total in totals]
     date_from = request.GET.get('date_from', '') if report_name in DATED_REPORTS else ''
@@ -1703,6 +1702,7 @@ def report(request, report_name='stock-valuation'):
     params = request.GET.copy()
     params.pop('page', None)
     params.pop('export', None)
+    params.pop('search_in', None)
     filter_query = params.urlencode()
     if exporting and valid:
         # Excel cannot store timezone-aware datetimes. Export local wall time,
@@ -1729,6 +1729,12 @@ def report(request, report_name='stock-valuation'):
             for cell in metadata[metadata.max_row]:
                 if isinstance(cell.value, str):
                     cell.data_type = 's'
+        if bridge is not None:
+            breakdown = workbook.create_sheet('Valuation bridge')
+            breakdown.append(['Source (all matching products, all time)', 'Value (TZS)'])
+            for label, value in bridge['entries']:
+                breakdown.append([label, value])
+            breakdown.append(['Current stock value', bridge['total']])
         output = BytesIO()
         workbook.save(output)
         response = HttpResponse(output.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1736,15 +1742,31 @@ def report(request, report_name='stock-valuation'):
         response['Cache-Control'] = 'private, no-store'
         return response
     page_obj = Paginator(rows, 50).get_page(request.GET.get('page'))
+    display_headers, display_rows = report_display(headers, page_obj.object_list)
+    loss_count = sum(1 for row in rows if row[7] is not None and row[7] < 0) if report_name == 'gross-profit' else 0
+    allowed_reports = {
+        slug: label for slug, label in REPORT_NAMES.items()
+        if has_tenant_permission(request.user, organization,
+            PermissionCode.COST_REPORT_VIEW if slug in COST_REPORT_NAMES else PermissionCode.SALES_REPORT_VIEW,
+            membership=request.membership)
+    }
+    report_groups = []
+    for label, slugs in (
+        ('Stock & inventory', ('stock-valuation', 'low-stock', 'out-of-stock', 'dead-stock', 'movements', 'serialized')),
+        ('Purchasing', ('purchases',)),
+        ('Sales & margin', ('sales', 'gross-profit', 'best-selling', 'fast-moving', 'slow-moving')),
+        ('Imported records', ('historical-purchases', 'historical-sales')),
+    ):
+        links = [(slug, allowed_reports[slug]) for slug in slugs if slug in allowed_reports]
+        if links:
+            report_groups.append({'label': label, 'links': links})
     response = render(request, 'inventory/report.html', {
+        'display_headers': display_headers, 'display_rows': display_rows, 'valuation_bridge': bridge,
+        'loss_count': loss_count, 'is_imported_report': report_name.startswith('historical-'),
         'report_name': report_name,
         'title': REPORT_NAMES[report_name],
-        'report_names': {
-            slug: label for slug, label in REPORT_NAMES.items()
-            if has_tenant_permission(request.user, organization,
-                PermissionCode.COST_REPORT_VIEW if slug in COST_REPORT_NAMES else PermissionCode.SALES_REPORT_VIEW,
-                membership=request.membership)
-        },
+        'report_names': allowed_reports,
+        'report_groups': report_groups,
         'description': REPORT_DESCRIPTIONS[report_name], 'result_count': len(rows),
         'headers': headers, 'rows': page_obj.object_list, 'page_obj': page_obj,
         'query': request.GET.get('q', ''), 'date_from': date_from, 'date_to': date_to,
