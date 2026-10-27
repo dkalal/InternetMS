@@ -11,6 +11,7 @@
       <p class="mt-1 max-w-2xl text-sm text-slate-600">{% if is_manager_workspace %}See the operational work that needs attention, then move directly into the right workflow.{% else %}Pick up your current sales work without exposing tenant-wide financial information.{% endif %}</p>
     </div>
     <div class="flex flex-wrap gap-2">
+      {% include "components/asset_management_link.html" %}
       {% if "customers.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'customer-create' %}" class="jims-btn jims-btn-secondary">New customer</a>{% endif %}
       {% if "sales_documents.create" in ACTIVE_PERMISSIONS %}<a href="{% url 'billing:document_create' doc_type='invoice' %}" class="jims-btn jims-btn-primary">New invoice</a>{% endif %}
     </div>

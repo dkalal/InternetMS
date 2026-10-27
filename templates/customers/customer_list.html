@@ -7,12 +7,13 @@
 
 {% block content %}
 <div class="jims-customer-list-page space-y-2">
-  <header class="flex items-center justify-between gap-4">
+  <header class="flex flex-wrap items-center justify-between gap-4">
     <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
       <h1 class="text-2xl font-bold tracking-tight text-slate-950">Customers</h1>
       <span class="text-sm font-medium text-slate-500">{{ customer_record_count|intcomma }} total</span>
       <p class="w-full text-sm text-slate-600 xl:w-auto">Internet and walk-in customer accounts.</p>
     </div>
+    {% include "components/asset_management_link.html" %}
   </header>
 
   <nav class="jims-customer-queues -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1" aria-label="Customer action queues">
