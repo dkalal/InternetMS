@@ -142,5 +142,19 @@ Deployment note:
 
 Cart activity, scoped active/history lists, restoration, and maintenance follow [the cart lifecycle contract](cart_lifecycle.md). Cleanup is explicit maintenance with dry-run by default, never an HTTP list side effect.
 
+Exact-ID sample handover maintenance follows [the handover cleanup contract and runbook](handover_cleanup_runbook.md).
+Its signed, tenant/support-authorized offline plans are the narrow maintenance
+exception for explicitly approved sample inventory/POS history. Ordinary financial
+and inventory immutability remains in force. Registered-customer billing and
+internet subscription data are protected; customer cleanup uses a separate,
+dependency-blocking policy. Apply requires a database-wide write-quiescence window,
+verified backup/restore evidence and complete revalidation under PostgreSQL locks.
+Explicitly classified sample billing and the all-products-zero postcondition use
+the [v2 classified maintenance contract](handover_classified_cleanup_contract_v2.md).
+These are distinct offline operations; default inventory cleanup still blocks
+registered-customer and mixed billing, and normal financial immutability is unchanged.
+
 Inventory report selection, date boundaries, purchase totals, stock valuation,
 export and currency semantics follow [the inventory reports contract](inventory_reports_audit_2026-10-24.md).
+
+Search scope, valuation provenance, historical loss review and the reporting workspace follow [the reporting follow-up contract](inventory_reports_followup_2026-10-24.md).
