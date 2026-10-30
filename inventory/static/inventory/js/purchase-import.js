@@ -23,6 +23,14 @@
       "brand", "model_number", "serialized", "track_expiry", "batch_reference", "expiry_date", "serial_numbers", "staging_reference"];
     var snapshots = ["expected_sku", "expected_serialized", "expected_expiry", "expected_unit_id"];
     var PAGE_SIZE = 20;
+    var serialReview = window.JimsSerialValidation ? new window.JimsSerialValidation.Controller(dialog, {
+      form: form, review: true,
+      entries: function () {
+        return window.JimsSerialValidation.manualEntries(form).map(function (entry) {
+          return Object.assign({}, entry, {control: null});
+        }).concat(window.JimsSerialValidation.importEntries(rows, dialog));
+      }
+    }) : null;
     function node(tag, cls, text) {
       var el = document.createElement(tag);
       if (cls) el.className = cls;
@@ -54,6 +62,7 @@
       revision++; busy = false;
       if (row) { row.valid = false; row.status = row.excluded ? "excluded" : "unresolved"; row.errors = ["Changes need validation. Save this item to check them."]; }
       renderList();
+      if (serialReview) serialReview.schedule();
     }
     function updateFooter() {
       var c = counts(), included = c.all - c.excluded;
@@ -216,6 +225,7 @@
     }
     async function validate(source, next) {
       if (busy) return;
+      if (!source && serialReview && !(await serialReview.validate())) { serialReview.focusError(); return; }
       var data = new FormData(), expected = revision;
       if (source) {
         try { data = sourceData(); } catch (exc) { message(exc.message); return; }
@@ -313,6 +323,7 @@
       } else { control = node(key === "serial_numbers" ? "textarea" : "input"); if (key !== "serial_numbers") control.type = key === "expiry_date" ? "date" : "text"; }
       control.value = displayValue;
       control.dataset.field = key;
+      if (key === 'serial_numbers') control.dataset.serialImportIndex = String(rows.indexOf(row));
       control.addEventListener(choices ? "change" : "input", function () {
         row[key] = control.value;
         if (key === "category") row.unit = defaultCategoryUnit(row.category);
@@ -450,8 +461,9 @@
       var definitions = new Set(rows.filter(function (r) { return !r.excluded && r.resolution === "new"; }).map(function (r) { return r.staging_reference; }));
       [["Existing product lines", c.matched], ["New products on draft save", definitions.size], ["Included purchase lines", c.all - c.excluded], ["Excluded lines", c.excluded], ["Estimated purchase total (TZS)", total()]].forEach(function (pair) { var item = node("div"); item.append(node("dt", "", pair[0]), node("dd", "", pair[1])); dl.appendChild(item); });
     }
-    function apply() {
+    async function apply() {
       if (busy || counts().attention || rows.every(function (r) { return r.excluded; })) return;
+      if (serialReview && !(await serialReview.validate())) { serialReview.focusError(); return; }
       var manual = Number(form.querySelector('[name="lines-TOTAL_FORMS"]').value);
       var included = rows.filter(function (r) { return !r.excluded; }).length;
       // Match the existing server submission limit, including excluded entries
@@ -465,9 +477,12 @@
     opener.addEventListener("click", show);
     $("[data-import-close]").addEventListener("click", close);
     $("[data-import-back]").addEventListener("click", function () { if (step === 1) close(); else setStep(step - 1, true); });
-    primary.addEventListener("click", function () {
+    primary.addEventListener("click", async function () {
       if (step === 1 && !mapping && $("[data-import-format]").value === "custom" && method === "paste") inspectColumns();
-      else if (step === 1) validate(true); else if (step === 2) setStep(3, true); else apply();
+      else if (step === 1) validate(true); else if (step === 2) {
+        if (!serialReview || await serialReview.validate()) setStep(3, true);
+        else serialReview.focusError();
+      } else apply();
     });
     $("[data-import-replace]").addEventListener("click", function () { setStep(1, true); });
     $$("[data-import-method]").forEach(function (tab) { tab.addEventListener("click", function () { if (method !== tab.dataset.importMethod) { setMethod(tab.dataset.importMethod); invalidateSource(); } }); });
@@ -515,7 +530,7 @@
     });
     // Enter in the contextual editor never submits the outer purchase form.
     dialog.addEventListener("keypress", function (event) { if (event.key === "Enter" && event.target.tagName === "INPUT") event.preventDefault(); });
-    form.querySelector("[data-clear-import]").addEventListener("click", function () { hidden.value = ""; applied.classList.add("hidden"); opener.focus(); });
+    form.querySelector("[data-clear-import]").addEventListener("click", function () { hidden.value = ""; hidden.dispatchEvent(new Event('change', {bubbles: true})); applied.classList.add("hidden"); opener.focus(); });
     if (hidden.value) {
       try {
         rows = JSON.parse(hidden.value); sourceName = "Preserved import"; sourceFormat = "Review saved items";

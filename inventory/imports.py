@@ -5,6 +5,10 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from django.db import transaction
+from django.core.exceptions import PermissionDenied, ValidationError
+from products.creation import save_purchase_product
+from products.sku import validate_manual_sku
+from users.permissions import PermissionCode, has_tenant_permission
 
 from audit.models import AuditLog
 from products.models import Product, ProductCategory
@@ -108,6 +112,8 @@ def validate_workbook(*, organization, actor, import_type: str, uploaded_file) -
     else:
         accepted = required
         positions = {header: headers.index(header) for header in accepted if header in headers}
+        seen_skus = set()
+        seen_serials = {}
         for number, values_row in enumerate(values, start=2):
             if not any(value not in (None, '') for value in values_row):
                 continue
@@ -116,10 +122,26 @@ def validate_workbook(*, organization, actor, import_type: str, uploaded_file) -
                 raw.setdefault(header, None)
             row_errors = []
             normalized = _validate_row(organization=organization, import_type=import_type, raw=raw, errors=row_errors)
+            if import_type == 'opening_stock':
+                for serial in normalized['serial_numbers']:
+                    if serial in seen_serials:
+                        row_errors.append(f'Serial {serial} is repeated (first entered on row {seen_serials[serial]}).')
+                    seen_serials.setdefault(serial, number)
+            if import_type == 'products' and normalized['sku']:
+                if normalized['sku'] in seen_skus:
+                    row_errors.append('Duplicate supplied SKU in this workbook.')
+                seen_skus.add(normalized['sku'])
             if row_errors:
                 errors.append({'row': number, 'errors': row_errors})
             normalized['_row'] = number
             rows.append(normalized)
+        if import_type == 'opening_stock':
+            from .serial_validation import existing_serials
+            existing = existing_serials(organization=organization, serials=seen_serials)
+            for row in rows:
+                conflicts = sorted(set(row['serial_numbers']) & existing)
+                if conflicts:
+                    errors.append({'row': row['_row'], 'errors': ['Serials already exist in this organization: ' + ', '.join(conflicts[:10])]})
     return ImportJob.objects.create(
         organization=organization,
         tenant=organization,
@@ -140,13 +162,15 @@ def _validate_row(*, organization, import_type, raw, errors):
         sku = str(raw['sku'] or '').strip().upper()
         name = str(raw['name'] or '').strip()
         item_type = str(raw['item_type'] or 'physical').strip().lower()
-        if not sku:
-            errors.append('sku is required.')
+        try:
+            sku = validate_manual_sku(sku)
+        except ValidationError as exc:
+            errors.extend(exc.messages)
         if not name:
             errors.append('name is required.')
         if item_type not in Product.ItemType.values:
             errors.append('item_type must be physical or service.')
-        if Product.objects.unscoped().filter(tenant=organization, sku__iexact=sku).exists():
+        if sku and Product.objects.unscoped().filter(tenant=organization, sku__iexact=sku).exists():
             errors.append('sku already exists.')
         buying = _decimal(raw['buying_price'], 'buying_price', errors)
         selling = _decimal(raw['selling_price'], 'selling_price', errors)
@@ -200,6 +224,12 @@ def commit_import(*, organization, actor, job_id: int):
     job = ImportJob.objects.unscoped().select_for_update().filter(pk=job_id, tenant=organization).first()
     if job is None:
         raise ValueError('Import job not found.')
+    if job.created_by_id != actor.pk or not has_tenant_permission(actor, organization, PermissionCode.INVENTORY_IMPORT):
+        raise PermissionDenied('Import belongs to another actor or permission is missing.')
+    if job.import_type == 'products' and not has_tenant_permission(actor, organization, PermissionCode.PRODUCTS_CREATE):
+        raise PermissionDenied('Product creation permission is required.')
+    if job.status == ImportJob.Status.COMMITTED:
+        return job
     if job.status != ImportJob.Status.VALIDATED or job.error_count:
         raise ValueError('Only a validation with zero errors can be committed.')
     for row in job.validated_rows:
@@ -210,7 +240,7 @@ def commit_import(*, organization, actor, job_id: int):
                     tenant=organization, name=row['category'],
                     defaults={'organization': organization, 'description': '', 'is_active': True},
                 )
-            Product.objects.create(
+            product = Product(
                 organization=organization, tenant=organization, sku=row['sku'], name=row['name'],
                 item_type=row['item_type'], catalog_category=category, brand=row['brand'], model_number=row['model_number'],
                 buying_price=Decimal(row['buying_price']), selling_price=Decimal(row['selling_price']),
@@ -218,6 +248,10 @@ def commit_import(*, organization, actor, job_id: int):
                 is_serialized=row['serialized'], track_stock=row['item_type'] == Product.ItemType.PHYSICAL,
                 tax_eligible=row['tax_eligible'], quantity=Decimal('0.00'), stock=0, measure_unit='Unit',
             )
+            try:
+                save_purchase_product(product, organization=organization, supplied_sku=row['sku'], actor=actor)
+            except ValidationError as exc:
+                raise ValueError(f"Import row {row.get('_row', '?')}: {'; '.join(exc.messages)}") from exc
         elif job.import_type == 'suppliers':
             Supplier.objects.create(
                 organization=organization, tenant=organization, company_name=row['company_name'],

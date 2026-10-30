@@ -98,6 +98,13 @@ Tax-exempt products hazihesabiwi kwenye taxable subtotal.
 
 ## 4. Payment status na balances
 
+Receipt print/PDF inaonyesha **Subtotal (before discounts)**: stored billing
+subtotal pamoja na item discounts zilizokwisha kutolewa kwenye line totals.
+Printed **Discount** inajumuisha item discounts na document discount mara moja.
+VAT na Total hutumia source document snapshots; **Amount received** hutumia receipt
+hii pekee. Kwa installments, Invoice total si sawa na malipo ya receipt moja.
+Angalia [receipt print contract](receipt_print_contract.md) kwa formulas na history rules.
+
 ### Amount paid / Paid
 **Amount paid** ni jumla ya receipts halali zilizounganishwa na invoice. Hii ndiyo fedha ambayo mfumo ume-record kuwa imepokelewa.
 

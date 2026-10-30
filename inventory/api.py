@@ -1,4 +1,7 @@
 from decimal import Decimal
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from audit.models import AuditLog
 
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, serializers, status
@@ -64,25 +67,44 @@ class ProductSerializer(serializers.ModelSerializer):
         category = attrs.get('catalog_category')
         if category and category.tenant_id != organization.id:
             raise serializers.ValidationError({'catalog_category': 'Category belongs to another tenant.'})
-        sku = (attrs.get('sku') or getattr(self.instance, 'sku', '')).strip().upper()
+        from products.sku import validate_manual_sku
+        try:
+            sku = validate_manual_sku(attrs.get('sku'), existing=getattr(self.instance, 'sku', ''))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
         query = Product.objects.unscoped().filter(tenant=organization, sku__iexact=sku)
         if self.instance:
             query = query.exclude(pk=self.instance.pk)
-        if not sku or query.exists():
-            raise serializers.ValidationError({'sku': 'A unique SKU is required.'})
+        if sku and query.exists():
+            raise serializers.ValidationError({'sku': 'SKU is already in use in this business.'})
         attrs['sku'] = sku
         return attrs
 
     def create(self, validated_data):
         organization = resolve_integration_consumer(self.context['request']).organization
-        return Product.objects.create(organization=organization, tenant=organization, quantity=0, stock=0, measure_unit='Unit', **validated_data)
+        from products.creation import save_purchase_product
+        product = Product(quantity=0, stock=0, measure_unit='Unit', **validated_data)
+        try:
+            return save_purchase_product(product, organization=organization, supplied_sku=product.sku,
+                                         actor=self.context['request'].user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages) from exc
 
     def update(self, instance, validated_data):
         protected = {'quantity', 'stock'}
         for key, value in validated_data.items():
             if key not in protected:
                 setattr(instance, key, value)
-        instance.save()
+        try:
+            with transaction.atomic():
+                previous = Product.objects.unscoped().select_for_update().get(pk=instance.pk, tenant=instance.tenant)
+                instance.save()
+                from .services import audit
+                audit(organization=instance.tenant, actor=self.context['request'].user,
+                      action='inventory.product.updated', obj=instance,
+                      old_value={'sku': previous.sku}, new_value={'sku': instance.sku})
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages) from exc
         return instance
 
 
@@ -264,9 +286,31 @@ class ProductListCreateAPI(generics.ListCreateAPIView):
         return Product.objects.unscoped().filter(tenant=resolve_integration_consumer(self.request).organization).order_by('name')
 
     def post(self, request, *args, **kwargs):
-        if not _api_allowed(request, PermissionCode.PRODUCT_MANAGE):
+        if not _api_allowed(request, PermissionCode.PRODUCTS_CREATE):
             return Response({'detail': 'Product management permission is required.'}, status=403)
-        return super().post(request, *args, **kwargs)
+        key = request.headers.get('Idempotency-Key', '')
+        if not key:
+            return super().post(request, *args, **kwargs)
+        if len(key) > 128:
+            return Response({'detail': 'Idempotency-Key must be at most 128 characters.'}, status=400)
+        from products.workspace import submission_fingerprint
+        from .services import audit
+        organization = resolve_integration_consumer(request).organization
+        fingerprint = submission_fingerprint(dict(request.data), {})
+        with transaction.atomic():
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                action='inventory.product.api_submission', metadata__key=key).first()
+            if prior:
+                if prior.metadata.get('fingerprint') != fingerprint:
+                    return Response({'detail': 'Idempotency key was already used with different content.'}, status=409)
+                product = get_object_or_404(Product.objects.unscoped(), tenant=organization, pk=prior.object_id)
+                return Response(self.get_serializer(product).data, status=200)
+            response = super().post(request, *args, **kwargs)
+            product = Product.objects.unscoped().get(tenant=organization, pk=response.data['id'])
+            audit(organization=organization, actor=request.user, action='inventory.product.api_submission', obj=product,
+                  metadata={'key': key, 'fingerprint': fingerprint})
+            return response
 
 
 class ProductDetailAPI(generics.RetrieveUpdateAPIView):

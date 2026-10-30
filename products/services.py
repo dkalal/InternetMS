@@ -1,4 +1,6 @@
 from __future__ import annotations
+import hashlib
+import json
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -27,6 +29,12 @@ class ProductUnitTransitionService:
         ):
             raise PermissionDenied('Insufficient permissions for a product unit transition.')
         transition_key = str(transition_key)
+        fingerprint = hashlib.sha256(json.dumps({key: str(getattr(value, 'pk', value))
+            for key, value in values.items()}, sort_keys=True).encode()).hexdigest()
+        type(organization).objects.select_for_update(no_key=True).get(pk=organization.pk)
+        source = Product.objects.unscoped().select_for_update().filter(pk=source_product_id, tenant=organization).first()
+        if source is None:
+            raise PermissionDenied('Product is not available in the active business.')
         prior = AuditLog.objects.unscoped().filter(
             tenant=organization,
             action='inventory.product.unit_successor_created',
@@ -35,15 +43,14 @@ class ProductUnitTransitionService:
             metadata__transition_key=transition_key,
         ).first()
         if prior is not None:
+            if prior.metadata.get('fingerprint') not in (None, fingerprint):
+                raise ProductUnitTransitionError('Transition key was already used with different content.')
             successor = Product.objects.unscoped().filter(
                 tenant=organization, pk=prior.metadata.get('successor_product_id'),
             ).first()
             if successor is not None:
                 return successor, False
 
-        source = Product.objects.unscoped().select_for_update().filter(pk=source_product_id).first()
-        if source is None or source.tenant_id != organization.id:
-            raise PermissionDenied('Product is not available in the active business.')
         if source.item_type != Product.ItemType.PHYSICAL or not source.track_stock:
             raise ProductUnitTransitionError('Only a stock-tracked physical product can move to a new unit identity.')
         if not source.has_unit_history():
@@ -59,7 +66,7 @@ class ProductUnitTransitionService:
             raise ProductUnitTransitionError('The successor must use a different sales/stock unit.')
         if not category.allowed_units.filter(pk=unit.pk, is_active=True).exists():
             raise ProductUnitTransitionError('The selected unit is not allowed by the chosen category.')
-        if Product.objects.unscoped().filter(tenant=organization, sku__iexact=values['sku']).exists():
+        if values.get('sku') and Product.objects.unscoped().filter(tenant=organization, sku__iexact=values['sku']).exists():
             raise ProductUnitTransitionError('The successor SKU is already in use.')
 
         successor = Product(
@@ -92,7 +99,8 @@ class ProductUnitTransitionService:
         )
         try:
             successor.full_clean()
-            successor.save()
+            from .creation import save_purchase_product
+            save_purchase_product(successor, organization=organization, supplied_sku=successor.sku)
         except ValidationError as exc:
             raise ProductUnitTransitionError('; '.join(exc.messages)) from exc
 
@@ -122,6 +130,7 @@ class ProductUnitTransitionService:
             },
             metadata={
                 'transition_key': transition_key,
+                'fingerprint': fingerprint,
                 'successor_product_id': successor.pk,
                 'reason': values['reason'],
                 'stock_transferred': False,

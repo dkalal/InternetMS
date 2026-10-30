@@ -9,7 +9,7 @@
     </div>
     <div class="purchase-cell purchase-cell-quantity">{% include "components/form_field.html" with field=line_form.quantity hide_help=True %}</div>
     <div class="purchase-cell purchase-cell-unit" data-product-unit aria-label="Unit">&#8212;</div>
-    <div class="purchase-cell purchase-cell-cost">{% include "components/form_field.html" with field=line_form.unit_cost hide_help=True %}</div>
+    <div class="purchase-cell purchase-cell-cost">{% include "components/form_field.html" with field=line_form.unit_cost hide_help=True %}<p class="text-xs text-slate-500" data-buying-price-hint></p></div>
     <div class="purchase-cell purchase-cell-amount" data-line-total aria-label="Estimated line amount in TZS">&#8212;</div>
     <div class="purchase-cell purchase-cell-details"><button type="button" class="purchase-line-details" data-open-line-details aria-expanded="false">Details</button></div>
     <div class="purchase-cell purchase-cell-remove"><button type="button" data-remove-line aria-label="Remove purchase line">&#215;</button></div>

@@ -360,6 +360,17 @@ class ProductUnitSuccessorTests(TestCase):
             'reason': 'Future CAT6 purchasing and sales are by unopened box.',
         }
 
+    def test_successor_with_blank_sku_uses_shared_sequence(self):
+        values = self.values()
+        values['sku'] = ''
+        successor, created = ProductUnitTransitionService.create_successor(
+            organization=self.organization, source_product_id=self.source.pk,
+            actor=self.manager, transition_key=uuid4(), values=values,
+        )
+        self.assertTrue(created)
+        self.assertEqual(successor.sku, 'PRD-000001')
+        self.assertEqual(successor.quantity, 0)
+
     def test_service_creates_zero_stock_successor_without_reassigning_history(self):
         transition_key = uuid4()
         successor, created = ProductUnitTransitionService.create_successor(

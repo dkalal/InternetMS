@@ -17,10 +17,10 @@
           {% if cart.status == 'draft' and not line.product.is_serialized %}
             <div class="pos-quantity-stepper">
               <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="decrease"><button type="submit" aria-label="Decrease {{ line.product.name }} quantity">−</button></form>
-              <span data-pos-quantity>{{ line.quantity|quantity_display }}</span>
+              <strong><font size="3"><span data-pos-quantity>{{ line.quantity|quantity_display }}</span></font></strong>
               <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="increase"><button type="submit" aria-label="Increase {{ line.product.name }} quantity">+</button></form>
             </div>
-          {% else %}<span class="text-sm text-slate-600">{{ line.quantity|quantity_display }}</span>{% endif %}
+          {% else %}<strong><font size="3"><span class="text-sm text-slate-600">{{ line.quantity|quantity_display }}</span></font></strong>{% endif %}
         </div>
         <div class="pos-row-unit text-slate-500"><span data-pos-unit-price>{{ line.unit_price|money_display }}</span> <span>TZS</span></div>
         <div class="pos-row-total font-bold text-slate-950"><span data-pos-line-total>{{ line.line_total|money_display }}</span> <span>TZS</span></div>

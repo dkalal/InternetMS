@@ -1,5 +1,10 @@
 # Product creation workspace
 
+SKU allocation and submission replay now follow the
+[tenant SKU sequence contract](sku_sequence_contract.md). It supersedes the
+name-derived allocation/retry-cap description below; blank SKU allocates only
+at final save, and reused submission tokens must have identical content.
+
 Implemented on `feature/cart-lifecycle-management`, based on `36bfa1f`.
 
 ## Contract

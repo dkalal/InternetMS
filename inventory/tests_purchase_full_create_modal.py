@@ -69,6 +69,7 @@ class PurchaseFullCreateModalTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
         self.assertContains(response, 'purchase-modal-created')
+        self.assertEqual(response.context['created_record']['buying_price'], '100.00')
         product = Product.objects.get(tenant=self.organization)
         self.assertEqual(product.brand, 'MikroTik')
         self.assertEqual(product.model_number, 'RB-1')

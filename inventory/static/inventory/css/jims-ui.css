@@ -669,6 +669,7 @@ body.pos-modal-open { overflow: hidden; }
 .pos-grand-total dd { color: #5b48ed; }
 .pos-checkout-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .65rem; }
 .pos-checkout-actions .jims-btn { min-width: 0; text-align: center; }
+.pos-checkout-actions .pos-pay-button { grid-column: 1 / -1; }
 .pos-pay-amount { display: none; }
 .pos-product-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; line-height: 1.25rem; min-height: 2.5rem; font-size: .82rem; }
 .pos-product-price { overflow-wrap: anywhere; font-size: .9rem; }

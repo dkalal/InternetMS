@@ -14,7 +14,23 @@ from users.permissions import (
     permission_grant_for,
 )
 
-from .models import Cart, CartLine, InventorySettings, Purchase, PurchaseLine, StockAdjustment, StockUnit, Supplier, SupplierPaymentRecord
+from .models import Cart, CartLine, CartSerialSelection, InventorySettings, Purchase, PurchaseLine, StockAdjustment, StockUnit, Supplier, SupplierPaymentRecord
+
+
+class CartPaymentForm(forms.Form):
+    payment_method = forms.ChoiceField(choices=[
+        ('', 'Select payment method'), ('cash', 'Cash'), ('bank', 'Bank'),
+        ('mobile_money', 'Mobile money'), ('other', 'Other'),
+    ])
+    payment_reference = forms.CharField(max_length=80, required=False, label='Payment reference')
+
+    def __init__(self, *args, cart_id, **kwargs):
+        super().__init__(*args, **kwargs)
+        apply_tailwind(self)
+        for field in self.fields.values():
+            field.widget.attrs['form'] = f'cart-details-form-{cart_id}'
+        # Draft saves and quotations do not require payment details.
+        self.use_required_attribute = False
 
 
 class TenantFormMixin:
@@ -166,6 +182,13 @@ class QuickPurchaseProductForm(TenantFormMixin, forms.ModelForm):
         if Product.objects.unscoped().filter(tenant=self.organization, name__iexact=value, is_active=True).exists():
             raise forms.ValidationError('An active product with this name already exists.')
         return value
+
+    def clean_sku(self):
+        from products.sku import validate_manual_sku
+        try:
+            return validate_manual_sku(self.cleaned_data.get('sku'))
+        except forms.ValidationError as exc:
+            raise forms.ValidationError(exc.messages) from exc
 
     def clean(self):
         cleaned = super().clean()
@@ -547,6 +570,9 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             self.fields['serial_units'].initial = [
                 str(value) for value in self.instance.serial_selections.values_list('stock_unit_id', flat=True)
             ]
+        self.serials_in_cart = set(CartSerialSelection.objects.filter(
+            tenant=organization, cart_line__cart=cart,
+        ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart else set()
         can_discount = (
             has_tenant_permission(
                 membership.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership

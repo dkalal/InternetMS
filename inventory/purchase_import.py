@@ -413,6 +413,12 @@ def validate_rows(rows, *, organization, for_save=False):
             row['serialized_value'] = _flag(row['serialized'], 'Serialized', errors)
             row['track_expiry_value'] = _flag(row['track_expiry'], 'Track expiry', errors)
             if row['sku']:
+                from products.sku import validate_manual_sku
+                from django.core.exceptions import ValidationError
+                try:
+                    validate_manual_sku(row['sku'])
+                except ValidationError as exc:
+                    errors.extend(exc.messages)
                 if known:
                     errors.append('This SKU already belongs to a catalog product.')
                 prior = seen_new_sku.setdefault(row['sku'], number)
@@ -489,6 +495,17 @@ def validate_rows(rows, *, organization, for_save=False):
         row['valid'] = excluded or (not errors and status in ('matched', 'new'))
         row['errors'] = [] if excluded else errors
         results.append(row)
+    from .serial_validation import existing_serials
+    existing = existing_serials(organization=organization, serials=[
+        serial for result in results if not result['excluded']
+        for serial in result['serial_numbers'].splitlines()
+    ])
+    for result in results:
+        conflicts = sorted({serial.upper() for serial in result['serial_numbers'].splitlines()} & existing)
+        if conflicts and not result['excluded']:
+            result['errors'].append('Serials already exist in this organization: ' + ', '.join(conflicts[:10]))
+            result['valid'] = False
+            result['status'] = 'invalid'
     return results
 
 

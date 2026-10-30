@@ -35,6 +35,7 @@ class PurchaseProposalTests(TestCase):
         received = InventoryService.confirm_purchase(organization=self.tenant, purchase_id=purchase.pk, actor=self.user)
         self.assertEqual(received.status, Purchase.Status.CONFIRMED)
         self.assertEqual(Product.objects.count(), 2)
+        self.assertEqual(Product.objects.get(tenant=self.tenant, name='New radio').sku, 'PRD-000001')
         self.assertEqual(purchase.lines.count(), 2)
         self.assertFalse(purchase.product_proposals.exists())
         self.assertEqual(StockMovement.objects.count(), 2)
@@ -54,6 +55,8 @@ class PurchaseProposalTests(TestCase):
         self.assertFalse(StockMovement.objects.exists())
         purchase.refresh_from_db()
         self.assertEqual(purchase.status, Purchase.Status.DRAFT)
+        from products.models import ProductSKUCounter
+        self.assertFalse(ProductSKUCounter.objects.filter(tenant=self.tenant).exists())
 
     def test_catalog_conflict_preserves_proposal(self):
         purchase = self.save_draft()

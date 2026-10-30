@@ -35,6 +35,7 @@ from users.tenancy import require_organization
 
 from .forms import (
     CartForm,
+    CartPaymentForm,
     CartLineDiscountForm,
     CartLineForm,
     InventoryImportForm,
@@ -124,6 +125,9 @@ def _form_error_summary(form):
 
 def _pos_response(request, cart, *, message='', level='success', status=200, errors=None):
     workspace = _cart_workspace(cart)
+    workspace['can_register_payment'] = has_tenant_permission(
+        request.user, cart.tenant, PermissionCode.PAYMENT_REGISTER, membership=request.membership,
+    )
     workspace['can_apply_line_discount'] = has_tenant_permission(
         request.user, cart.tenant, PermissionCode.CART_DISCOUNT_APPLY, membership=request.membership,
     )
@@ -523,6 +527,9 @@ def purchase_product_search(request):
     rows = list(products[start:start + PURCHASE_PRODUCT_SEARCH_PAGE_SIZE + 1])
     more = len(rows) > PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
 
+    can_view_costs = has_tenant_permission(
+        request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership,
+    )
     return JsonResponse({
         'results': [
             {
@@ -536,11 +543,55 @@ def purchase_product_search(request):
                 'model_number': product.model_number,
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
+                **({'buying_price': str(product.buying_price)} if can_view_costs else {}),
             }
             for product in rows[:PURCHASE_PRODUCT_SEARCH_PAGE_SIZE]
         ],
         'pagination': {'page': page, 'more': more},
     })
+
+
+@login_required
+@require_POST
+@never_cache
+def serial_check(request):
+    """Bounded, non-mutating feedback; never reserves a serial."""
+    mode = request.POST.get('mode', '')
+    if mode not in ('purchase', 'adjustment'):
+        return JsonResponse({'error': 'Invalid serial-check context.'}, status=400)
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE if mode == 'purchase' else PermissionCode.STOCK_ADJUST)
+    raw = request.POST.get('serials', '')
+    if len(raw) > 100000:
+        return JsonResponse({'error': 'Check at most 1,000 serials at a time.'}, status=400)
+    try:
+        serials = json.loads(raw)
+    except (TypeError, ValueError):
+        serials = None
+    if (not isinstance(serials, list) or len(serials) > 1000
+            or any(not isinstance(value, str) or not value.strip() or '\x00' in value or len(value.strip()) > 160 for value in serials)):
+        return JsonResponse({'error': 'Provide at most 1,000 serials, each up to 160 characters.'}, status=400)
+    normalized = {value.strip().upper() for value in serials}
+    if any(len(value) > 160 for value in normalized):
+        return JsonResponse({'error': 'Normalized serials must be at most 160 characters.'}, status=400)
+    from .serial_validation import existing_serials
+    if mode == 'adjustment':
+        direction = request.POST.get('direction')
+        if direction not in ('increase', 'decrease'):
+            return JsonResponse({'error': 'Choose the stock adjustment direction.'}, status=400)
+        try:
+            product_id = int(request.POST.get('product', ''))
+        except (TypeError, ValueError):
+            product_id = None
+        product = get_object_or_404(Product.objects.filter(
+            tenant=organization, is_active=True, item_type=Product.ItemType.PHYSICAL, track_stock=True,
+        ), pk=product_id)
+        if direction == 'decrease':
+            available = set(StockUnit.objects.filter(
+                tenant=organization, product=product, status=StockUnit.Status.AVAILABLE,
+                serial_number__in=normalized,
+            ).values_list('serial_number', flat=True))
+            return JsonResponse({'conflicts': sorted(normalized - available), 'reason': 'unavailable'})
+    return JsonResponse({'conflicts': sorted(existing_serials(organization=organization, serials=normalized)), 'reason': 'exists'})
 
 
 @login_required
@@ -604,17 +655,32 @@ def purchase_rows_preview(request):
 @login_required
 @require_POST
 def purchase_product_quick_create(request):
+    from audit.models import AuditLog
     organization = _scope(request, PermissionCode.PRODUCTS_CREATE)
     form = QuickPurchaseProductForm(request.POST, organization=organization)
+    key = request.headers.get('Idempotency-Key', '')
+    if len(key) > 128:
+        return JsonResponse({'message': 'Idempotency-Key must be at most 128 characters.'}, status=400)
+    from products.workspace import submission_fingerprint
+    fingerprint = submission_fingerprint({k: v for k, v in request.POST.lists() if k != 'csrfmiddlewaretoken'}, {})
     try:
         with transaction.atomic():
             type(organization).objects.select_for_update().get(pk=organization.pk)
+            if key:
+                prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                    action='inventory.product.created_quick', metadata__key=key).first()
+                if prior:
+                    if prior.metadata.get('fingerprint') != fingerprint:
+                        return JsonResponse({'message': 'Idempotency key was already used with different content.'}, status=409)
+                    product = get_object_or_404(Product.objects.unscoped(), tenant=organization, pk=prior.object_id)
+                    return _quick_product_response(product, status=200)
             if not form.is_valid():
                 return JsonResponse({'errors': form.errors.get_json_data()}, status=400)
             product = form.save(commit=True)
             audit(
                 organization=organization, actor=request.user,
                 action='inventory.product.created_quick', obj=product,
+                metadata={'key': key, 'fingerprint': fingerprint} if key else {},
                 new_value={
                     'name': product.name, 'sku': product.sku,
                     'catalog_category_id': product.catalog_category_id,
@@ -627,11 +693,15 @@ def purchase_product_quick_create(request):
         return JsonResponse({'errors': {'__all__': [{
             'message': 'Product could not be saved safely. Refresh and try again.', 'code': 'integrity',
         }]}}, status=409)
+    return _quick_product_response(product, status=201)
+
+
+def _quick_product_response(product, *, status):
     return JsonResponse({'product': {
         'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
         'unit': product.sales_unit.label, 'serialized': product.is_serialized,
         'expiry': product.track_expiry,
-    }}, status=201)
+    }}, status=status)
 
 
 @login_required
@@ -1257,11 +1327,12 @@ def cart_create(request):
 @login_required
 @ensure_csrf_cookie
 @cart_access
-def cart_detail(request, pk):
+def cart_detail(request, pk, *, checkout_forms=None):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     cart = get_object_or_404(Cart.objects.filter(tenant=organization).select_related('customer', 'quotation', 'invoice'), pk=pk)
-    cart_form = CartForm(request.POST or None, instance=cart, organization=organization, membership=request.membership)
-    if request.method == 'POST':
+    cart_form = checkout_forms[0] if checkout_forms else CartForm(request.POST or None, instance=cart, organization=organization, membership=request.membership)
+    payment_form = checkout_forms[1] if checkout_forms else CartPaymentForm(cart_id=cart.pk)
+    if request.method == 'POST' and checkout_forms is None:
         if cart.status != Cart.Status.DRAFT:
             messages.error(request, 'Only draft carts can be edited.')
             return redirect('inventory:cart_detail', pk=cart.pk)
@@ -1331,7 +1402,7 @@ def cart_detail(request, pk):
             'Pricing review required before this product can be added to a sale.'
         )
     return render(request, 'inventory/cart_detail.html', {
-        'cart': cart, 'cart_form': cart_form, **workspace,
+        'cart': cart, 'cart_form': cart_form, 'payment_form': payment_form, **workspace,
         'is_stale': stale(cart),
         'can_restore': cart.status == Cart.Status.ABANDONED and not cart.converted_at and not business_linked(cart) and has_tenant_permission(request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=request.membership),
         'can_apply_line_discount': has_tenant_permission(
@@ -1640,6 +1711,41 @@ def cart_convert(request, pk, target):
 @login_required
 @require_POST
 @cart_access
+def cart_checkout(request, pk):
+    organization = _scope(request, PermissionCode.CART_MANAGE)
+    require_permission(request, PermissionCode.PAYMENT_REGISTER)
+    payment_form = CartPaymentForm(request.POST, cart_id=pk)
+    try:
+        with transaction.atomic():
+            cart = get_object_or_404(Cart.objects.select_for_update().filter(tenant=organization), pk=pk)
+            cart_form = CartForm(
+                request.POST, instance=cart, organization=organization, membership=request.membership,
+            )
+            if cart.status == Cart.Status.DRAFT:
+                details_valid = cart_form.is_valid()
+                payment_valid = payment_form.is_valid()
+                if not details_valid or not payment_valid:
+                    raise InventoryError('Check the sale and payment details below.')
+                cart_form.save()
+                CartService.refresh_cart_prices(cart=cart)
+                _cart_workspace(cart)
+            receipt = CartService.checkout(
+                organization=organization, cart_id=pk, actor=request.user, membership=request.membership,
+                payment_method=request.POST.get('payment_method', '').strip(),
+                payment_reference=request.POST.get('payment_reference', '').strip(),
+            )
+    except (InventoryError, BillingServiceError) as exc:
+        cart_form.add_error(None, str(exc))
+        response = cart_detail(request, pk=pk, checkout_forms=(cart_form, payment_form))
+        response.status_code = 422
+        return response
+    messages.success(request, 'Payment recorded. Sale completed.')
+    return redirect('billing:document_detail', doc_type='receipt', pk=receipt.pk)
+
+
+@login_required
+@require_POST
+@cart_access
 def cart_restore(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     try:
@@ -1820,14 +1926,24 @@ def invoice_serials(request, pk):
     if request.method == 'POST':
         errors = []
         selections = {}
+        seen_serial_ids = set()
         for entry in line_options:
             line = entry['line']
             ids = request.POST.getlist(f'line_{line.pk}')
+            normalized_ids = {int(value) for value in ids
+                              if value.isdecimal() and len(value) <= 19 and 0 < int(value) <= 9223372036854775807}
+            entry['selected_ids'] = normalized_ids
+            if any(not value.isdecimal() or len(value) > 19 or not 0 < int(value) <= 9223372036854775807 for value in ids):
+                errors.append(f'A selected serial for {line.product.name} is unavailable.')
+                continue
+            if len(normalized_ids) != len(ids) or seen_serial_ids.intersection(normalized_ids):
+                errors.append('Each serial may be selected only once across this invoice.')
+            seen_serial_ids.update(normalized_ids)
             if len(ids) != int(line.quantity):
                 errors.append(f'{line.product.name} requires exactly {int(line.quantity)} serial numbers.')
                 continue
             units = list(StockUnit.objects.filter(
-                tenant=organization, product=line.product, status=StockUnit.Status.AVAILABLE, pk__in=ids
+                tenant=organization, product=line.product, status=StockUnit.Status.AVAILABLE, pk__in=normalized_ids
             ))
             if len(units) != len(ids):
                 errors.append(f'A selected serial for {line.product.name} is unavailable.')

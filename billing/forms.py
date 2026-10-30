@@ -185,7 +185,6 @@ class ReceiptCreateForm(forms.Form):
         ('cash', 'Cash'),
         ('bank', 'Bank'),
         ('mobile_money', 'Mobile money'),
-        ('card', 'Credit/Debit card'),
         ('other', 'Other'),
     ])
     payment_reference = forms.CharField(max_length=80, required=False, help_text="Optional transaction reference / idempotency key.")

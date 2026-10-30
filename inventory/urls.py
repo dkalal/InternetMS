@@ -5,6 +5,7 @@ from . import views
 app_name = 'inventory'
 
 urlpatterns = [
+    path('serials/check/', views.serial_check, name='serial_check'),
     path('', views.dashboard, name='dashboard'),
     path('categories/', views.category_list, name='category_list'),
     path('categories/new/', views.category_form, name='category_create'),
@@ -40,6 +41,7 @@ urlpatterns = [
     path('carts/<int:pk>/restore/', views.cart_restore, name='cart_restore'),
     path('carts/<int:pk>/abandon/', views.cart_abandon, name='cart_abandon'),
     path('carts/<int:pk>/convert/<str:target>/', views.cart_convert, name='cart_convert'),
+    path('carts/<int:pk>/checkout/', views.cart_checkout, name='cart_checkout'),
     path('reports/', views.report, name='reports'),
     path('reports/<slug:report_name>/', views.report, name='report'),
     path('imports/', views.import_data, name='import_data'),

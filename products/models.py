@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Upper, Trim
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
 from django.urls import reverse
@@ -169,6 +170,12 @@ def protect_category_unit_tenant_boundary(sender, instance, action, reverse, pk_
         raise ValidationError('Allowed units and product categories must belong to the same tenant.')
 
 
+class ProductSKUCounter(models.Model):
+    """Durable state; never delete during catalog cleanup."""
+    tenant = models.OneToOneField('users.Organization', on_delete=models.PROTECT, primary_key=True)
+    next_number = models.PositiveBigIntegerField(default=1)
+
+
 class Product(models.Model):
     CATEGORY_CHOICES = (
         ('hardware', 'Hardware'),
@@ -293,6 +300,11 @@ class Product(models.Model):
                 fields=['tenant', 'sku'],
                 condition=~Q(sku=''),
                 name='uniq_product_sku_per_tenant',
+            ),
+            models.UniqueConstraint(
+                models.F('tenant'), Upper(Trim('sku')),
+                condition=~Q(sku=''), name='uniq_product_sku_normalized',
+                violation_error_code='sku_conflict',
             ),
         ]
         indexes = [
@@ -473,7 +485,12 @@ class Product(models.Model):
             )
         if self.sales_unit_id:
             self.measure_unit = self.sales_unit.label
+        previous_sku = None
+        if not self._state.adding:
+            previous_sku = type(self).objects.unscoped().filter(pk=self.pk).values_list('sku', flat=True).first()
         self.sku = (self.sku or '').strip().upper()
+        if previous_sku and (not self.sku or self.sku == previous_sku.strip().upper()):
+            self.sku = previous_sku
         if self.item_type == self.ItemType.SERVICE:
             self.track_stock = False
             self.is_serialized = False
@@ -487,8 +504,13 @@ class Product(models.Model):
         super().clean()
         if self.pk:
             previous = type(self).objects.unscoped().filter(pk=self.pk).values(
-                'sales_unit_id', 'measure_unit',
+                'sales_unit_id', 'measure_unit', 'sku',
             ).first()
+            if previous and previous['sku'] and self.sku and self.sku.strip().upper() != previous['sku'].strip().upper():
+                from .sku import validate_manual_sku
+                validate_manual_sku(self.sku)
+                if self.has_unit_history():
+                    raise ValidationError({'sku': 'SKU cannot change after stock or transaction history exists.'})
             unit_changed = previous and (
                 previous['sales_unit_id'] != self.sales_unit_id
                 or (previous['measure_unit'] or '').strip().casefold()

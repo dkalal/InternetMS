@@ -11,6 +11,7 @@
     {% csrf_token %}<input type="hidden" name="batch_token" value="{{ batch_token }}">
     <div class="product-toolbar"><button type="button" class="jims-btn jims-btn-primary" id="add-product-row">+ Add row</button><button type="button" class="jims-btn jims-btn-secondary" id="paste-product-rows">Paste rows</button><details><summary class="jims-btn jims-btn-secondary">Columns</summary><div id="product-columns">{% for col in columns %}{% if col.name != 'name' %}<label><input type="checkbox" checked data-column="{{ col.name }}"> {{ col.label }}</label>{% endif %}{% endfor %}</div></details><span>Prices in TZS &middot; 200 rows maximum &middot; 50 pictures maximum, 6 MB each / 24 MB total</span></div>
     <p class="text-sm text-slate-500">Serial numbers are recorded with stock receiving or authorized stock adjustments after creation.</p>
+    <p class="text-sm text-slate-500">Product code (SKU): generated automatically when saved. Optionally enter your company code.</p>
     <p id="batch-errors" role="alert" tabindex="-1"></p>
     <div class="product-grid-scroll" tabindex="0" aria-label="New products table, scroll horizontally for more columns">
       <table class="product-grid"><thead><tr><th scope="col">#</th>{% for col in columns %}<th scope="col" data-col="{{ col.name }}">{{ col.label }}{% if col.field.field.required %} *{% endif %}</th>{% endfor %}<th scope="col">Details</th><th scope="col">Remove</th></tr></thead><tbody id="product-rows"></tbody></table>

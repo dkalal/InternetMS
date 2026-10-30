@@ -34,6 +34,11 @@ Browser
 
 `products` owns product catalog records, categories, tenant units of measure, and pricing tiers.
 
+Product/service SKU identity is allocated only at persistence by the shared
+products creation service and a durable tenant counter. The
+[SKU allocation contract](sku_sequence_contract.md) defines normalization,
+historical compatibility, retries, entry points and deployment/backfill steps.
+
 `billing` owns billing documents, billing line items, numbering, printable templates, receipts, and PDF-related behavior.
 
 `audit` owns append-only audit records and audit metadata.

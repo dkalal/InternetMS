@@ -940,7 +940,8 @@ class InventoryAcceptanceTests(TestCase):
         for _ in range(2):
             response = self.client.post(url, {'product': self.product.pk, 'direction': 'add'}, **headers)
             self.assertEqual(response.status_code, 200)
-        self.assertIn('Continue to payment', response.json()['checkout_html'])
+        self.assertIn('Confirm payment &amp; view receipt', response.json()['checkout_html'])
+        self.assertIn(reverse('inventory:cart_checkout', args=[cart.pk]), response.json()['checkout_html'])
         self.assertIn('data-pos-payment-total>300</span> TZS', response.json()['checkout_html'])
         line = CartLine.objects.get(cart=cart, product=self.product)
         self.assertEqual(line.unit_price, Decimal('150.00'))
@@ -1466,6 +1467,24 @@ class CartTechnicianPricingTests(TestCase):
 
 
 class InventoryAPITests(TestCase):
+    def test_auto_sku_api_replay_conflict_and_update_preservation(self):
+        payload = {'name': 'API automatic', 'buying_price': '10', 'selling_price': '20'}
+        url = '/api/inventory/products/'
+        response = self.client.post(url, payload, format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['sku'], 'PRD-000001')
+        replay = self.client.post(url, payload, format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay.data['id'], response.data['id'])
+        conflict = self.client.post(url, dict(payload, name='Changed'), format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(conflict.status_code, 409)
+        update = self.client.patch(f"{url}{response.data['id']}/", {'sku': '', 'name': 'Renamed'}, format='json')
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(update.data['sku'], 'PRD-000001')
+        invalid = self.client.post(url, dict(payload, sku='prd-000002'), format='json')
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('sku', invalid.data)
+
     def setUp(self):
         self.org = Organization.objects.create(name='API Tenant', slug='api-inventory-tenant')
         self.other_org = Organization.objects.create(name='Other API Tenant', slug='other-api-inventory-tenant')

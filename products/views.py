@@ -16,6 +16,11 @@ from users.permissions import PermissionCode, has_tenant_permission, require_per
 from inventory.services import audit
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
+from django.core import signing
+from django.core.exceptions import ValidationError
+from django.http import HttpResponse
+from uuid import uuid4
+from audit.models import AuditLog
 
 class ProductListView(LoginRequiredMixin, ListView):
     model = Product
@@ -189,6 +194,48 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
     custom_field_target_model = "product"
     custom_field_inline_use = True
 
+    def post(self, request, *args, **kwargs):
+        token = request.POST.get('submission_token')
+        if not token:
+            # Compatibility for pre-token integrations and legacy form clients.
+            return super().post(request, *args, **kwargs)
+        organization = require_organization(request)
+        try:
+            key = signing.loads(token, salt='product-single', max_age=86400)
+            if key['tenant'] != organization.pk or key['actor'] != request.user.pk:
+                raise signing.BadSignature('Submission belongs to another actor.')
+        except (signing.BadSignature, KeyError):
+            return HttpResponse('Invalid or expired product submission.', status=400)
+        from .workspace import submission_fingerprint
+        payload = {k: v for k, v in request.POST.lists() if k not in ('csrfmiddlewaretoken', 'submission_token')}
+        fingerprint = submission_fingerprint(payload, request.FILES)
+        with transaction.atomic():
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                action='inventory.product.submission', metadata__key=key['key']).first()
+            if prior:
+                if prior.metadata.get('fingerprint') != fingerprint:
+                    return HttpResponse('Submission key was already used with different content.', status=409)
+                self.object = get_object_or_404(Product.objects.unscoped(), tenant=organization, pk=prior.object_id)
+                if request.GET.get('purchase_modal') == '1':
+                    return self.modal_created_response()
+                return redirect(self.success_url)
+            response = super().post(request, *args, **kwargs)
+            if self.object and self.object.pk:
+                audit(organization=organization, actor=request.user, action='inventory.product.submission', obj=self.object,
+                      metadata={'key': key['key'], 'fingerprint': fingerprint})
+            return response
+
+    def modal_created_response(self):
+        return render(self.request, 'inventory/includes/purchase_modal_created.html', {
+            'created_record': {'kind': 'product', 'id': self.object.pk, 'text': str(self.object),
+                'name': self.object.name, 'sku': self.object.sku, 'unit': self.object.sales_unit.label,
+                'serialized': self.object.is_serialized, 'expiry': self.object.track_expiry,
+                **({'buying_price': str(self.object.buying_price)} if has_tenant_permission(
+                    self.request.user, self.request.organization, PermissionCode.COST_REPORT_VIEW,
+                    membership=self.request.membership,
+                ) else {})}})
+
     def dispatch(self, request, *args, **kwargs):
         require_organization(request)
         require_permission(request, PermissionCode.PRODUCTS_CREATE)
@@ -201,6 +248,17 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
         return response
 
     def form_valid(self, form):
+        try:
+            with transaction.atomic():
+                return self._save_valid_form(form)
+        except ValidationError as exc:
+            self.object = None
+            form.instance.pk = None
+            form.instance._state.adding = True
+            form.add_error(None, exc)
+            return self.form_invalid(form)
+
+    def _save_valid_form(self, form):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.PRODUCTS_CREATE)
         form.instance.organization = organization
@@ -237,14 +295,7 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                         actor=self.request.user,
                     )
         if self.request.GET.get('purchase_modal') == '1':
-            return render(self.request, 'inventory/includes/purchase_modal_created.html', {
-                'created_record': {
-                    'kind': 'product', 'id': self.object.pk, 'text': str(self.object),
-                    'name': self.object.name, 'sku': self.object.sku,
-                    'unit': self.object.sales_unit.label, 'serialized': self.object.is_serialized,
-                    'expiry': self.object.track_expiry,
-                },
-            })
+            return self.modal_created_response()
         if (
             self.request.POST.get('next') == 'add_serials'
             and self.object.is_serialized
@@ -281,6 +332,8 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['embedded_create'] = self.request.GET.get('purchase_modal') == '1'
+        context['submission_token'] = self.request.POST.get('submission_token') or signing.dumps(
+            {'tenant': require_organization(self.request).pk, 'actor': self.request.user.pk, 'key': str(uuid4())}, salt='product-single')
         context['quick_category_units'] = context['form'].fields['sales_unit'].queryset
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)

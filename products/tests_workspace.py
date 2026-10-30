@@ -53,6 +53,31 @@ class ProductWorkspaceTests(TestCase):
         self.assertTrue(self.post(data).json()['replayed'])
         self.assertEqual(Product.objects.unscoped().filter(tenant=self.org).count(), 1)
 
+    def test_changed_content_reusing_batch_token_conflicts(self):
+        self.assertEqual(self.post([self.row()]).status_code, 200)
+        self.assertEqual(self.post([self.row(name='Different')]).status_code, 409)
+        self.assertEqual(Product.objects.unscoped().filter(tenant=self.org).count(), 1)
+
+    def test_reserved_namespace_and_validation_consume_no_sequence(self):
+        from products.models import ProductSKUCounter
+        self.assertEqual(self.post([self.row(sku='PRD-123')]).status_code, 400)
+        self.assertFalse(ProductSKUCounter.objects.filter(tenant=self.org).exists())
+        self.assertEqual(self.post([self.row()]).status_code, 200)
+        self.assertEqual(Product.objects.unscoped().get(tenant=self.org).sku, 'PRD-000001')
+
+    def test_single_modal_submission_replays_without_allocating_again(self):
+        url = self.url + '?purchase_modal=1'
+        response = self.client.get(url)
+        token = response.context['submission_token']
+        values = self.row()['values']
+        values['submission_token'] = token
+        self.assertEqual(self.client.post(url, values).status_code, 200)
+        self.assertEqual(self.client.post(url, values).status_code, 200)
+        self.assertEqual(Product.objects.unscoped().filter(tenant=self.org).count(), 1)
+        self.assertEqual(Product.objects.unscoped().get(tenant=self.org).sku, 'PRD-000001')
+        values['name'] = 'Changed'
+        self.assertEqual(self.client.post(url, values).status_code, 409)
+
     def test_foreign_unit_and_partial_row(self):
         other = Organization.objects.create(name='Other grid', slug='other-grid')
         unit = UnitOfMeasure.objects.create(tenant=other, organization=other, name='Other')
@@ -67,9 +92,17 @@ class ProductWorkspaceTests(TestCase):
         self.assertFalse(Product.objects.unscoped().filter(tenant=self.org).exists())
 
     def test_two_hundred_text_rows(self):
-        response = self.post([self.row('r'+str(i), name='Product '+str(i)) for i in range(200)])
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from time import perf_counter
+        started = perf_counter()
+        with CaptureQueriesContext(connection) as queries:
+            response = self.post([self.row('r'+str(i), name='Product '+str(i)) for i in range(200)])
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(Product.objects.unscoped().filter(tenant=self.org).count(), 200)
+        scans = [q for q in queries if 'LIKE' in q['sql'] and 'PRD-' in q['sql']]
+        self.assertEqual(len(scans), 1)
+        print(f'SKU 200-row workspace baseline: {len(queries)} queries; {len(scans)} initialization scan; {perf_counter() - started:.3f}s')
 
     def test_blank_rows_ignored_and_partial_rows_rejected(self):
         from products.workspace import workspace_form

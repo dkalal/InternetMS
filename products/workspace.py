@@ -1,5 +1,6 @@
 """Bounded, atomic new-product batches. No inventory mutation occurs here."""
 import json
+import hashlib
 from uuid import uuid4
 
 from django.core import signing
@@ -25,7 +26,7 @@ from .pricing import can_view_cost
 MAX_ROWS = 200
 MAX_IMAGES = 24 * 1024 * 1024
 MAX_IMAGE_COUNT = 50
-GRID = [('name', 'Name / brand'), ('model_number', 'Model'), ('sku', 'SKU'),
+GRID = [('name', 'Name / brand'), ('model_number', 'Model'), ('sku', 'Product code (SKU)'),
         ('catalog_category', 'Category'), ('sales_unit', 'Sales unit'),
         ('buying_price', 'Buying price (TZS)'), ('selling_price', 'Standard price (TZS)'),
         ('technician_price', 'Technician price (TZS)'), ('description', 'Description'), ('image', 'Picture')]
@@ -36,6 +37,16 @@ class BatchRowError(Exception):
         self.row_id = row_id
         self.errors = errors
         super().__init__('A product row could not be saved.')
+
+
+def submission_fingerprint(rows, files):
+    digest = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode())
+    for key, upload in sorted(files.items()):
+        digest.update(key.encode())
+        for chunk in upload.chunks():
+            digest.update(chunk)
+        upload.seek(0)
+    return digest.hexdigest()
 
 
 def meaningful_row(values, baseline):
@@ -60,6 +71,7 @@ def workspace_form(organization, actor, *args, **kwargs):
     return form
 
 
+@transaction.atomic
 def product_workspace(request):
     organization = require_organization(request)
     require_permission(request, PermissionCode.PRODUCTS_CREATE)
@@ -96,14 +108,22 @@ def product_workspace(request):
         token = signing.loads(request.POST.get('batch_token', ''), salt='product-batch', max_age=86400)
         if token['tenant'] != organization.pk or token['actor'] != request.user.pk:
             raise ValueError('Invalid submission token.')
-        if AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
-                action='inventory.products.batch_created', metadata__batch_key=token['key']).exists():
-            return JsonResponse({'redirect': reverse('product-list'), 'replayed': True})
+        # Serialize replay checks and validation together. Otherwise an identical
+        # manual-SKU retry can see the first commit during form validation and
+        # incorrectly report a duplicate before reaching the receipt check.
+        Organization.objects.select_for_update().get(pk=organization.pk)
         rows = json.loads(request.POST.get('rows', 'null'))
         if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_ROWS:
             raise ValueError('Enter between 1 and 200 rows.')
         if len(request.FILES) > MAX_IMAGE_COUNT or sum(f.size for f in request.FILES.values()) > MAX_IMAGES:
             raise ValueError('Use at most 50 pictures, totaling 24 MB or smaller.')
+        fingerprint = submission_fingerprint(rows, request.FILES)
+        prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                action='inventory.products.batch_created', metadata__batch_key=token['key']).first()
+        if prior:
+            if prior.metadata.get('fingerprint') != fingerprint:
+                return JsonResponse({'message': 'Submission key was already used with different content.'}, status=409)
+            return JsonResponse({'redirect': reverse('product-list'), 'replayed': True})
         ids = [r['id'] for r in rows]
         if any(not isinstance(i, str) or not i.isalnum() or len(i) > 64 for i in ids) or len(set(ids)) != len(ids):
             raise ValueError('Invalid row identifiers.')
@@ -131,7 +151,7 @@ def product_workspace(request):
             return JsonResponse({'errors': errors}, status=400)
         if not forms_to_save:
             raise ValueError('Enter at least one product.')
-        created = save_product_batch(organization=organization, actor=request.user, forms_to_save=forms_to_save, batch_key=token['key'])
+        created = save_product_batch(organization=organization, actor=request.user, forms_to_save=forms_to_save, batch_key=token['key'], fingerprint=fingerprint)
         if created:
             messages.success(request, f'{len(forms_to_save)} products created. Stock remains unchanged.')
         return JsonResponse({'redirect': reverse('product-list'), 'count': len(forms_to_save), 'replayed': not created})
@@ -141,7 +161,7 @@ def product_workspace(request):
         return JsonResponse({'message': '; '.join(exc.messages) if isinstance(exc, ValidationError) else str(exc)}, status=400)
 
 
-def save_product_batch(*, organization, actor, forms_to_save, batch_key):
+def save_product_batch(*, organization, actor, forms_to_save, batch_key, fingerprint=None):
     """Persist validated product forms, audit and custom fields as one aggregate."""
     from django.core.exceptions import PermissionDenied
     from users.permissions import has_tenant_permission
@@ -157,8 +177,10 @@ def save_product_batch(*, organization, actor, forms_to_save, batch_key):
             # A tenant row lock serializes both SKU allocation and token consumption.
             Organization.objects.select_for_update().get(pk=organization.pk)
             prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=actor,
-                action='inventory.products.batch_created', metadata__batch_key=batch_key).exists()
+                action='inventory.products.batch_created', metadata__batch_key=batch_key).first()
             if prior:
+                if prior.metadata.get('fingerprint') != fingerprint:
+                    raise ValidationError('Submission key was already used with different content.')
                 return False
             # Explicit SKUs reserve their names before automatic allocation.
             for row, form in sorted(forms_to_save, key=lambda pair: not bool(str(pair[0]['values'].get('sku', '')).strip())):
@@ -176,7 +198,7 @@ def save_product_batch(*, organization, actor, forms_to_save, batch_key):
                 audit(organization=organization, actor=actor, action='inventory.product.created', obj=product,
                       new_value={'sku': product.sku, 'name': product.name, 'item_type': product.item_type, 'has_image': bool(product.image)})
             audit(organization=organization, actor=actor, action='inventory.products.batch_created', obj=organization,
-                  metadata={'batch_key': batch_key, 'count': len(forms_to_save)})
+                  metadata={'batch_key': batch_key, 'count': len(forms_to_save), 'fingerprint': fingerprint})
     except Exception:
         for storage, name in stored:
             storage.delete(name)

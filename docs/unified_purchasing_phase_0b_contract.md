@@ -74,7 +74,7 @@ Phase 2 may introduce the compact high-volume line grid, keyboard entry, bulk se
 
 ### Phase 2 search contract
 
-The purchase product search endpoint is authenticated, permission-protected, tenant-scoped, read-only, paginated, and limited to active physical stock-tracked products. It may return only the metadata required by the purchase combobox; it must not expose cost or cross-tenant catalog data. The server-side form and confirmation service remain authoritative even when the browser uses search results to populate a row.
+The purchase product search endpoint is authenticated, permission-protected, tenant-scoped, read-only, paginated, and limited to active physical stock-tracked products. It may return only the metadata required by the purchase combobox; it must not expose cross-tenant catalog data. Product buying price may be returned as an exact decimal string only to users with the existing stock-cost viewing permission. Selecting a product (including through the bulk picker) prefills the editable same-unit purchase cost from that catalog default, including zero. Loading a draft or validation errors never replaces submitted costs; imports retain their explicit costs. This default is not the weighted-average ledger cost and does not change catalog prices or stock. Brand/model metadata may assist product identification. The server-side form and confirmation service remain authoritative even when the browser uses search results to populate a row.
 
 ### Phase 2 compact-grid contract
 
@@ -149,6 +149,10 @@ The purchase import's Add data step also supports custom XLSX/TSV layouts throug
 `column_mapping` is an ordered JSON array with one allowlisted purchase field or the explicit `__ignore__` marker for every physical source column. `has_header` must be explicitly true or false for a custom mapping. Numeric values never infer Quantity, Unit cost or Selling price. Recognized, unique header names may suggest fields; unknown/duplicate headings remain unassigned. Each imported field is assigned at most once, Quantity and Unit cost are mandatory, and at least one of SKU or Product name is required. Blank leading/intermediate cells, text identifiers, row references, quoting and all input/workspace limits are preserved. This normalizes into the existing purchase row contract; it does not expose tenant/product/category/unit IDs as mapping targets or alter catalog/opening-stock/historical import semantics.
 
 A structural numeric mismatch in the fixed template order, or a headerless list beyond six legacy columns, returns HTTP 400 with `code=column_mapping_required` and a bounded `column_mapping` descriptor. The client opens the mapper at Add data, retains the source, and requires explicit choices before review. A mapped preview and all subsequent row/product validation use the same normalization and tenant-scoped resolution pipeline. Explicitly ignored source columns are disclosed in mapping and review. Header changes, source replacement and mapping edits invalidate row decisions and pending responses; a failed header reinspection blocks progression until a fresh inspection succeeds. All normal product permissions, pricing/precision/tracking validation, atomic draft save and receiving rules remain authoritative.
+
+## Live serial feedback
+
+Live duplicate-serial feedback across purchase entry/import, adjustments and serial selections follows [the live serial validation review](live_serial_validation_2026-10-29.md). Feedback is tenant-scoped and advisory; it never reserves a serial or replaces final transactional uniqueness checks. No typed serial is silently removed.
 
 ## Reporting and sale-cost follow-up
 

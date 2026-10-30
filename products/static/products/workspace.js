@@ -44,7 +44,7 @@ function paste(text, target) {
     .filter(cell => !cell.hidden).map(cell => cell.dataset.col);
   const aliases = {
     'name': 'name', 'name / brand': 'name', 'name/brand': 'name', 'model': 'model_number', 'model_number': 'model_number',
-    'sku': 'sku', 'category': 'catalog_category', 'sales unit': 'sales_unit',
+    'sku': 'sku', 'product code (sku)': 'sku', 'category': 'catalog_category', 'sales unit': 'sales_unit',
     'buying price': 'buying_price', 'buying price (tzs)': 'buying_price',
     'standard price': 'selling_price', 'standard price (tzs)': 'selling_price',
     'technician price': 'technician_price', 'technician price (tzs)': 'technician_price',

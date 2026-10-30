@@ -56,17 +56,27 @@ PAYMENT_METHOD_LABELS = {
     "cash": "Cash",
     "bank": "Bank",
     "mobile_money": "Mobile money",
-    "card": "Credit/Debit card",
     "other": "Other",
 }
 
 
 def _receipt_print_context(*, document, organization, logo_data_uri=None):
     """Build a receipt-only view of immutable payment and source-invoice data."""
+    from .receipt_presentation import receipt_amount_summary
+
     source_invoice = document.invoice
     source_document = source_invoice or document
+    if (
+        document.tenant_id != organization.pk
+        or document.organization_id != organization.pk
+        or source_document.tenant_id != organization.pk
+        or source_document.organization_id != organization.pk
+        or source_document.currency != document.currency
+        or (source_invoice is not None and source_invoice.document_type != BillingDocument.DocumentType.INVOICE)
+    ):
+        raise Http404('Receipt source unavailable.')
     items = list(
-        source_document.items.filter(organization=organization)
+        source_document.items.filter(tenant=organization, organization=organization)
         .select_related("product", "package")
         .order_by("id")
     )
@@ -97,6 +107,7 @@ def _receipt_print_context(*, document, organization, logo_data_uri=None):
         "document": document,
         "items": items,
         "source_invoice": source_invoice,
+        "receipt_amounts": receipt_amount_summary(receipt=document, source=source_document, items=items),
         "customer_name": customer_name,
         "is_walk_in": is_walk_in,
         "customer_account_id": "" if is_walk_in else str(document.customer.uuid),

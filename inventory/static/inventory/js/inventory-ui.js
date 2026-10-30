@@ -217,6 +217,12 @@
         if (focusField) focusField.focus();
       }
 
+      purchaseForm.addEventListener('jims:serial-focus', function (event) {
+        var prefix = event.target.name.replace(/-serial_numbers$/, '');
+        var product = Array.from(purchaseForm.elements).find(function (field) { return field.name === prefix + '-product'; });
+        if (product) openLineDetails(product.closest('[data-purchase-line]'));
+      });
+
       if (trackingPanel) trackingPanel.querySelector('[data-close-line-details]').addEventListener('click', function () {
         var button = selectedLine && selectedLine.querySelector('[data-open-line-details]');
         closeLineDetails();
@@ -313,7 +319,7 @@
             title.textContent = result.name;
             var detail = document.createElement("span");
             detail.className = "block text-xs text-slate-500";
-            detail.textContent = (result.sku || "No SKU") + " · " + (result.unit || "Unit");
+            detail.textContent = [result.sku || "No SKU", result.unit || "Unit", result.brand, result.model_number].filter(Boolean).join(" / ");
             button.appendChild(title);
             button.appendChild(detail);
             button.addEventListener("click", function () {
@@ -324,7 +330,8 @@
                 sku: result.sku || "",
                 base_unit: result.unit || "Unit",
                 serialized: Boolean(result.serialized),
-                expiry: Boolean(result.expiry)
+                expiry: Boolean(result.expiry),
+                buying_price: result.buying_price
               };
               input.value = result.name || result.text;
               closeList();
@@ -409,6 +416,9 @@
         if (unit) unit.textContent = meta ? meta.base_unit : '—';
         var quantity = line.querySelector("input[name$='-quantity']");
         var unitCost = line.querySelector("input[name$='-unit_cost']");
+        var priceHint = line.querySelector("[data-buying-price-hint]");
+        if (priceHint) priceHint.textContent = meta && meta.buying_price != null
+          ? 'Buying: TZS ' + formatPurchaseCost(meta.buying_price) + ' / ' + meta.base_unit + ' (editable)' : '';
         var total = line.querySelector("[data-line-total]");
         if (total) total.textContent = product && product.value
           ? tzsDisplayFormatter.format(number(quantity && quantity.value) * number(unitCost && unitCost.value)) : '—';
@@ -468,10 +478,23 @@
         }, 0));
       }
 
+      function formatPurchaseCost(value) {
+        return String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+      }
+
+      function applyBuyingPrice(line) {
+        var product = line.querySelector("select[name$='-product']");
+        var meta = product && productMeta[product.value];
+        var cost = line.querySelector("input[name$='-unit_cost']");
+        // Only an explicit product selection supplies a default. Loading a draft,
+        // validation rerender, and edits to quantity/cost preserve entered values.
+        if (cost) cost.value = meta && meta.buying_price != null ? formatPurchaseCost(meta.buying_price) : "";
+      }
+
       function bindLine(line) {
         var product = line.querySelector("select[name$='-product']");
         enhanceProductSelect(product, line);
-        if (product) product.addEventListener("change", function () { syncLine(line); });
+        if (product) product.addEventListener("change", function () { applyBuyingPrice(line); syncLine(line); });
         var details = line.querySelector('[data-open-line-details]');
         if (details) details.addEventListener('click', function () { openLineDetails(line); });
         line.querySelectorAll("input[name$='-quantity'], input[name$='-unit_cost']").forEach(function (input) {
@@ -492,6 +515,7 @@
             line.classList.add("hidden");
             syncDuplicateWarnings();
             syncSummary();
+            purchaseForm.dispatchEvent(new Event('jims:serials-changed'));
           });
         }
         var existingDeletion = line.querySelector("input[name$='-DELETE']");
@@ -517,11 +541,13 @@
             sku: result.sku || "",
             base_unit: result.unit || "Unit",
             serialized: Boolean(result.serialized),
-            expiry: Boolean(result.expiry)
+            expiry: Boolean(result.expiry),
+            buying_price: result.buying_price
           };
         }
         formset.appendChild(line);
         totalForms.value = String(index + 1);
+        if (result) applyBuyingPrice(line);
         bindLine(line);
         return line;
       }
@@ -692,7 +718,7 @@
             name.textContent = result.name;
             var detail = document.createElement("span");
             detail.className = "block text-xs text-slate-500";
-            detail.textContent = (result.sku || "No SKU") + " · " + (result.unit || "Unit") + (checkbox.disabled ? " · Already added" : "");
+            detail.textContent = [result.sku || "No SKU", result.unit || "Unit", result.brand, result.model_number].filter(Boolean).join(" / ");
             copy.appendChild(name);
             copy.appendChild(detail);
             label.appendChild(checkbox);

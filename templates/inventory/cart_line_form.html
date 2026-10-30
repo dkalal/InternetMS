@@ -52,8 +52,8 @@
               {% for unit in form.serial_units.field.queryset %}
                 {% with unit_id=unit.pk|stringformat:"s" %}
                   <label class="jims-serial-option" data-serial-option>
-                    <input class="jims-serial-input" type="checkbox" name="{{ form.serial_units.html_name }}" value="{{ unit.pk }}" {% if unit_id in form.serial_units.value %}checked{% endif %}>
-                    <span class="min-w-0"><span class="block truncate text-sm font-semibold text-slate-950">{{ unit.serial_number }}</span><span class="block truncate text-xs text-slate-500">Available{% if unit.batch_reference %} · Batch {{ unit.batch_reference }}{% endif %}{% if unit.expiry_date %} · Expires {{ unit.expiry_date|date:"d M Y" }}{% endif %}</span></span>
+                    <input class="jims-serial-input" type="checkbox" name="{{ form.serial_units.html_name }}" value="{{ unit.pk }}" {% if unit.pk in form.serials_in_cart %}disabled{% endif %} {% if unit_id in form.serial_units.value %}checked{% endif %}>
+                    <span class="min-w-0"><span class="block truncate text-sm font-semibold text-slate-950">{{ unit.serial_number }}</span><span class="block truncate text-xs text-slate-500">{% if unit.pk in form.serials_in_cart %}Already in this cart{% else %}Available{% endif %}{% if unit.batch_reference %} · Batch {{ unit.batch_reference }}{% endif %}{% if unit.expiry_date %} · Expires {{ unit.expiry_date|date:"d M Y" }}{% endif %}</span></span>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="jims-serial-check h-4 w-4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 12 4 4L19 6"/></svg>
                   </label>
                 {% endwith %}

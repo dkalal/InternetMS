@@ -138,6 +138,16 @@
           {% endif %}
         </form>
         <div class="hidden rounded-lg border px-3 py-2 text-sm" data-pos-feedback role="status" aria-live="polite"></div>
+        {% if cart.status == 'draft' and can_register_payment %}
+          <section class="border-t border-slate-200 p-3" aria-labelledby="pos-payment-title">
+            <h3 id="pos-payment-title" class="mb-2 text-sm font-semibold text-slate-950">Payment details</h3>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {% include "components/form_field.html" with field=payment_form.payment_method %}
+              {% include "components/form_field.html" with field=payment_form.payment_reference %}
+            </div>
+            {% comment %} <p class="mt-2 text-xs text-slate-500">The full cart total will be recorded as paid today. Completing payment deducts stock.</p> {% endcomment %}
+          </section>
+        {% endif %}
         <div class="pos-total-dock"><dl class="pos-totals text-sm"><div><dt>Subtotal</dt><dd><span data-pos-subtotal>{{ subtotal|money_display }}</span> TZS</dd></div><div><dt>Discount</dt><dd data-live-discount>-{{ cart.discount_amount|money_display }}</dd></div><div><dt>VAT (<span data-live-tax-rate>{{ cart.tax_rate|number_display:2 }}</span>%)</dt><dd data-live-tax>{{ tax|money_display }}</dd></div><div class="pos-grand-total"><dt>Total</dt><dd><span data-live-total>{{ grand_total|money_display }}</span> TZS</dd></div></dl><div class="pos-checkout-actions" data-pos-checkout-container>{% include "inventory/includes/pos_checkout.html" %}</div></div>
       </div>
     </aside>

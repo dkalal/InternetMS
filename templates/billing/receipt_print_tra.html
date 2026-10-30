@@ -42,7 +42,11 @@
     <tbody>
       {% for item in items %}
         <tr>
-          <td class="desc">{% if item.description %}{{ item.description }}{% elif item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}Item {{ forloop.counter }}{% endif %}</td>
+          <td class="desc">
+            {% if item.description %}{{ item.description }}{% elif item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}Item {{ forloop.counter }}{% endif %}
+            <div class="small">Unit price: {{ item.unit_price|money_display:document.currency }}</div>
+            {% if item.discount_amount %}<div class="small">Item discount: -{{ item.discount_amount|money_display:document.currency }}</div>{% endif %}
+          </td>
           <td class="qty">{{ item.quantity|quantity_display }}{% if item.unit_snapshot %} {{ item.unit_snapshot }}{% endif %}</td>
           <td class="amt">{{ item.line_total|money_display:document.currency }}</td>
         </tr>
@@ -53,10 +57,17 @@
   </table>
 
   <div class="sep-solid"></div>
-  <table class="totals">
+  <table class="totals" aria-label="Sale totals">
+    <tr><td class="label">Subtotal (before discounts)</td><td class="value">{{ receipt_amounts.subtotal|money_display:document.currency }}</td></tr>
+    <tr><td class="label">Discount</td><td class="value">{% if receipt_amounts.discount %}-{% endif %}{{ receipt_amounts.discount|money_display:document.currency }}</td></tr>
+    <tr><td class="label">VAT ({{ receipt_amounts.tax_rate|number_display:2 }}%)</td><td class="value">{{ receipt_amounts.tax|money_display:document.currency }}</td></tr>
+    <tr><td class="label total-strong">{% if receipt_amounts.payment_differs_from_total %}INVOICE TOTAL{% else %}TOTAL{% endif %}</td><td class="value total-strong">{{ document.currency|upper }} {{ receipt_amounts.total|money_display:document.currency }}</td></tr>
+  </table>
+  {% if receipt_amounts.payment_differs_from_total %}<p class="small">The totals above describe the invoice. This receipt records only the payment received below.</p>{% endif %}
+  <table class="totals" aria-label="Payment received" style="margin-top:5px;">
     <tr>
       <td class="label total-strong" style="font-size:12px;">AMOUNT RECEIVED</td>
-      <td class="value total-strong" style="font-size:12px;white-space:nowrap;">{{ document.currency|upper }} {{ document.total|money_display:document.currency }}</td>
+      <td class="value total-strong" style="font-size:12px;white-space:nowrap;">{{ document.currency|upper }} {{ receipt_amounts.amount_received|money_display:document.currency }}</td>
     </tr>
   </table>
 

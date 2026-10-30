@@ -5,7 +5,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from products.models import Product, ProductCategory, UnitOfMeasure
-from users.models import Organization, UserAccessProfile
+from users.models import Organization, UserAccessProfile, TenantMembership, TenantPermissionGrant
+from users.permissions import PermissionCode
 
 
 User = get_user_model()
@@ -187,3 +188,24 @@ class PurchaseProductSearchTests(TestCase):
         self.assertEqual(len(second['results']), 5)
         self.assertFalse(second['pagination']['more'])
         self.assertEqual(invalid_page['pagination']['page'], 1)
+
+    def test_buying_price_default_preserves_decimal_precision_and_zero(self):
+        self.client.force_login(self.admin)
+        for price in (Decimal('123.456789'), Decimal('0.000000')):
+            with self.subTest(price=price):
+                Product.objects.filter(pk=self.product.pk).update(buying_price=price)
+                response = self.client.get(self.url, {'q': self.product.sku})
+                self.assertEqual(response.json()['results'][0]['buying_price'], str(price))
+                self.assertIn('no-store', response['Cache-Control'])
+
+    def test_delegated_buyer_without_cost_access_does_not_receive_buying_price(self):
+        membership = TenantMembership.objects.get(user=self.sales, tenant=self.organization)
+        grantor = TenantMembership.objects.get(user=self.admin, tenant=self.organization)
+        TenantPermissionGrant.objects.create(
+            membership=membership, action_code=PermissionCode.PURCHASES_CREATE, granted_by=grantor,
+        )
+        self.client.force_login(self.sales)
+        response = self.client.get(self.url, {'q': self.product.sku})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['results'][0]['id'], self.product.pk)
+        self.assertNotIn('buying_price', response.json()['results'][0])

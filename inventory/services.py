@@ -899,6 +899,48 @@ class CartService:
         return document
 
     @classmethod
+    @transaction.atomic
+    def checkout(cls, *, organization, cart_id, actor, payment_method, payment_reference='', membership=None):
+        """Complete a full cart payment once, including reference-free retries."""
+        from billing.services import BillingService
+        from users.permissions import PermissionCode, has_tenant_permission, can_view_sales_document
+
+        for permission in (PermissionCode.CART_MANAGE, PermissionCode.PAYMENT_REGISTER):
+            if not has_tenant_permission(actor, organization, permission, membership=membership):
+                raise PermissionDenied('You cannot complete this sale.')
+        cart = Cart.objects.unscoped().select_for_update().filter(tenant=organization, pk=cart_id).first()
+        if cart is None:
+            raise PermissionDenied('Cart unavailable.')
+        if cart.created_by_id != actor.pk and not has_tenant_permission(
+            actor, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=membership,
+        ):
+            raise PermissionDenied('Cart unavailable.')
+        if cart.invoice_id:
+            if not can_view_sales_document(actor, cart.invoice, membership=membership):
+                raise PermissionDenied('Invoice unavailable.')
+            receipt = BillingDocument.objects.unscoped().filter(
+                tenant=organization, invoice_id=cart.invoice_id,
+                document_type=BillingDocument.DocumentType.RECEIPT,
+            ).first()
+            if receipt is not None:
+                if cart.invoice.status != BillingDocument.Status.PAID:
+                    raise InventoryError('This invoice needs review in billing before payment.')
+                return receipt
+        if payment_method not in {'cash', 'bank', 'mobile_money', 'card', 'other'}:
+            raise InventoryError('Select a valid payment method.')
+        if len(payment_reference) > 80:
+            raise InventoryError('Payment reference cannot exceed 80 characters.')
+        invoice = cls.convert(
+            organization=organization, cart_id=cart_id, target=BillingDocument.DocumentType.INVOICE,
+            actor=actor, membership=membership,
+        )
+        return BillingService.create_receipt_from_invoice(
+            organization=organization, created_by=actor, invoice_id=invoice.pk,
+            amount_paid=invoice.total, payment_date=timezone.localdate(),
+            payment_method=payment_method, payment_reference=payment_reference,
+        )
+
+    @classmethod
     def copy_document_serials(cls, *, organization, source: BillingDocument, target: BillingDocument):
         source_lines = list(source.items.order_by('id'))
         target_lines = list(target.items.order_by('id'))

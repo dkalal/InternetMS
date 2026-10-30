@@ -102,12 +102,12 @@ class PurchaseProductQuickCreateTests(TestCase):
 
     def test_generated_sku_collisions_are_resolved_within_tenant(self):
         Product.objects.create(
-            organization=self.tenant, tenant=self.tenant, name='Existing', sku='COLLISIONPRODUCT',
+            organization=self.tenant, tenant=self.tenant, name='Existing', sku='PRD-000001',
             catalog_category=self.category, sales_unit=self.unit, measure_unit=self.unit.label,
             selling_price='1.00', buying_price='0.00', quantity=Decimal('0.000000'), stock=0,
         )
         Product.objects.create(
-            organization=self.other, tenant=self.other, name='Other existing', sku='COLLISIONPRODUCT-2',
+            organization=self.other, tenant=self.other, name='Other existing', sku='PRD-000002',
             catalog_category=self.foreign_category, sales_unit=self.foreign_unit,
             measure_unit=self.foreign_unit.label, selling_price='1.00', buying_price='0.00',
             quantity=Decimal('0.000000'), stock=0,
@@ -115,7 +115,17 @@ class PurchaseProductQuickCreateTests(TestCase):
         self.client.login(username='quick-product-admin', password='pass')
         response = self.client.post(self.url, self.payload(name='Collision Product'))
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(Product.objects.get(tenant=self.tenant, name='Collision Product').sku, 'COLLISIONPRODUCT-2')
+        self.assertEqual(Product.objects.get(tenant=self.tenant, name='Collision Product').sku, 'PRD-000002')
+
+    def test_idempotency_key_replays_before_duplicate_name_validation(self):
+        self.client.force_login(self.admin)
+        first = self.client.post(self.url, self.payload(), HTTP_IDEMPOTENCY_KEY='quick-once')
+        self.assertEqual(first.status_code, 201, first.content)
+        replay = self.client.post(self.url, self.payload(), HTTP_IDEMPOTENCY_KEY='quick-once')
+        self.assertEqual(replay.status_code, 200, replay.content)
+        self.assertEqual(replay.json()['product']['id'], first.json()['product']['id'])
+        conflict = self.client.post(self.url, self.payload(name='Changed'), HTTP_IDEMPOTENCY_KEY='quick-once')
+        self.assertEqual(conflict.status_code, 409)
 
     def test_duplicate_active_name_is_rejected_and_workspace_exposes_modal(self):
         self.client.login(username='quick-product-admin', password='pass')

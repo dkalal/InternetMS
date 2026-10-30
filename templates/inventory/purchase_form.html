@@ -9,7 +9,7 @@
 {{ product_meta|json_script:"purchase-product-meta" }}
 
 <div data-purchase-workspace>
-  <form method="post" class="purchase-workspace-form" data-unsaved-form data-submit-lock data-product-search-url="{{ product_search_url }}" data-purchase-rows-preview-url="{{ purchase_rows_preview_url }}" data-can-create-import-product="{{ can_create_import_product|yesno:'true,false' }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}" data-product-quick-create-url="{{ product_quick_create_url }}" data-category-quick-create-url="{{ category_quick_create_url }}">
+  <form method="post" class="purchase-workspace-form" data-unsaved-form data-submit-lock data-serial-validation-url="{% url 'inventory:serial_check' %}" data-serial-mode="purchase" data-product-search-url="{{ product_search_url }}" data-purchase-rows-preview-url="{{ purchase_rows_preview_url }}" data-can-create-import-product="{{ can_create_import_product|yesno:'true,false' }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}" data-product-quick-create-url="{{ product_quick_create_url }}" data-category-quick-create-url="{{ category_quick_create_url }}">
     {% csrf_token %}{{ form.auto_generated_reference }}
     <input type="hidden" name="import_token" value="{{ import_token }}">
     <input type="hidden" name="import_rows" value="{{ import_rows }}" data-import-rows>

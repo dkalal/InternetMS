@@ -10,7 +10,7 @@
     <p class="jims-page-subtitle">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p></div>
   </header>
 
-  <form method="post" class="grid gap-5 lg:grid-cols-3" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">
+  <form method="post" class="grid gap-5 lg:grid-cols-3" data-serial-validation-url="{% url 'inventory:serial_check' %}" data-serial-mode="adjustment" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">
     {% csrf_token %}
     <section class="jims-panel p-5 lg:col-span-2">
       {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}

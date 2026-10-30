@@ -2135,8 +2135,8 @@ class BillingService:
             if inventory_sale and amount_paid != remaining_balance:
                 raise BillingServiceError('Inventory sales require complete payment of the full remaining balance.')
             payment_method = (payment_method or '').strip().lower()
-            if inventory_sale and payment_method not in {'cash', 'bank', 'mobile_money', 'card', 'other'}:
-                raise BillingServiceError('Select Cash, Bank, Mobile money, Credit/Debit card, or Other.')
+            if inventory_sale and payment_method not in {'cash', 'bank', 'mobile_money', 'other'}:
+                raise BillingServiceError('Select Cash, Bank, Mobile money, or Other.')
             if payment_date is None:
                 payment_date = timezone.localdate()
             remaining_after_payment = (remaining_balance - amount_paid).quantize(Decimal('0.01'))

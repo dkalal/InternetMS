@@ -50,6 +50,24 @@ an actionable review message before conversion. Restoration itself never silentl
 reprices items. Intentional item/details edits continue the established pricing
 policy and display the saved prices for review.
 
+## Direct cart payment
+
+The cart builder collects only payment method and optional payment reference.
+`cart_checkout` requires canonical sales creation and payment registration permissions
+and the existing tenant/owner cart scope. The server saves validated draft details,
+converts to the internal invoice and records its full total using the current local
+payment date in one transaction. Client-supplied payment amounts/dates are ignored.
+The user is redirected directly to the receipt; the invoice remains the internal
+billing and inventory link. No schema or historical record changes are required.
+
+The cart row lock serializes retries, including cash payments without references.
+A completed paid cart returns its existing receipt without saving submitted fields.
+Stock/serial, pricing, reference and payment failures roll back the entire checkout
+and render bound forms on the cart. Draft saves and quotations do not require payment
+fields. Staff without payment permission retain the invoice-only action. Existing
+standalone invoice payment workflows remain supported. Regression coverage lives in
+`inventory.tests_cart_checkout` alongside existing billing/inventory contracts.
+
 ## Migrations and compatibility
 
 ### Repeated product additions

@@ -6,13 +6,13 @@
           data-pos-convert>Save as quotation</button>
   <button class="jims-btn jims-btn-primary pos-pay-button w-full" type="submit"
           form="cart-details-form-{{ cart.pk }}"
-          formaction="{% url 'inventory:cart_convert' cart.pk 'invoice' %}"
+          formaction="{% if can_register_payment %}{% url 'inventory:cart_checkout' cart.pk %}{% else %}{% url 'inventory:cart_convert' cart.pk 'invoice' %}{% endif %}"
           data-pos-convert
-          data-confirm="Create an invoice with the customer, discount, tax, and total shown here? Stock is deducted only after full payment."
+          data-confirm="{% if can_register_payment %}Confirm full payment using the selected payment method? This completes the sale and deducts stock.{% else %}Create an invoice with the sale details shown here? Stock is deducted only after full payment.{% endif %}"
           data-confirm-title="Confirm final sale details"
-          data-confirm-action="Create invoice"
-          data-loading-label="Creating invoice...">
-    <span>Continue to payment</span>
+          data-confirm-action="{% if can_register_payment %}Confirm payment{% else %}Create invoice{% endif %}"
+          data-loading-label="{% if can_register_payment %}Completing sale...{% else %}Creating invoice...{% endif %}">
+    <span>{% if can_register_payment %}Confirm payment &amp; view receipt{% else %}Create invoice{% endif %}</span>
     <span class="pos-pay-amount"><span data-pos-payment-total>{{ grand_total|money_display }}</span> TZS</span>
   </button>
 {% elif cart.quotation %}

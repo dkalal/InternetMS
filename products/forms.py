@@ -2,7 +2,6 @@ from decimal import Decimal
 from uuid import uuid4
 
 from django import forms
-from django.utils.text import slugify
 
 from internetservices.tailwind import apply_tailwind
 from custom_fields.forms import CustomFieldFormMixin
@@ -87,6 +86,8 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
                 tenant=self.organization, is_active=True
             ).order_by('name')
         self.fields['sku'].required = False
+        self.fields['sku'].label = 'Product code (SKU)'
+        self.fields['sku'].help_text = 'Generated automatically when saved.'
         self.fields['item_type'].required = False
         self.fields['reorder_threshold'].required = False
         self.fields['category'].empty_label = None
@@ -101,7 +102,7 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         self.fields['wholesale_price'].label = 'Wholesale price (TZS)'
         self.fields['buying_price'].widget.attrs.update({'step': '0.000001', 'min': '0'})
         self.fields['name'].widget.attrs.setdefault('placeholder', 'Router, radio, cable, software license...')
-        self.fields['sku'].widget.attrs.setdefault('placeholder', 'SKU (generated if left blank)')
+        self.fields['sku'].widget.attrs.setdefault('placeholder', 'Generated on save')
         for field_name, placeholder in (
             ('buying_price', 'Buying price'),
             ('selling_price', 'Standard price'),
@@ -138,21 +139,29 @@ class ProductForm(CustomFieldFormMixin, forms.ModelForm):
         return self.cleaned_data.get('brand') or self.instance.brand
 
     def clean_sku(self):
-        sku = (self.cleaned_data.get('sku') or '').strip().upper()
-        if not sku:
-            base = (slugify(self.cleaned_data.get('name') or 'ITEM').replace('-', '')[:24] or 'ITEM').upper()
-            sku = base
-            suffix = 1
-            while Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku).exclude(pk=self.instance.pk).exists():
-                suffix += 1
-                sku = f'{base}-{suffix}'
+        from .sku import validate_manual_sku
+        try:
+            sku = validate_manual_sku(self.cleaned_data.get('sku'), existing=self.instance.sku if self.instance.pk else '')
+        except forms.ValidationError as exc:
+            raise forms.ValidationError(exc.messages) from exc
         if self.organization is not None:
             queryset = Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku)
             if self.instance.pk:
                 queryset = queryset.exclude(pk=self.instance.pk)
-            if queryset.exists():
+            if sku and queryset.exists():
                 raise forms.ValidationError('This SKU is already used in the active business.')
         return sku
+
+    def save(self, commit=True):
+        product = super().save(commit=False)
+        if commit:
+            if product._state.adding:
+                from .creation import save_purchase_product
+                save_purchase_product(product, organization=self.organization, supplied_sku=product.sku)
+            else:
+                product.save()
+            self.save_m2m()
+        return product
 
     def clean(self):
         cleaned = super().clean()
@@ -221,7 +230,8 @@ class ProductUnitSuccessorForm(forms.Form):
     """Create a new catalog identity when the business adopts a different stock unit."""
 
     name = forms.CharField(max_length=200, label='New product name')
-    sku = forms.CharField(max_length=50, label='New SKU')
+    sku = forms.CharField(max_length=64, label='Product code (SKU)', required=False,
+                          help_text='Generated automatically when saved.', widget=forms.TextInput(attrs={'placeholder': 'Generated on save'}))
     catalog_category = forms.ModelChoiceField(queryset=ProductCategory.objects.none())
     sales_unit = forms.ModelChoiceField(queryset=UnitOfMeasure.objects.none(), label='New sales / stock unit')
     buying_price = forms.DecimalField(max_digits=16, decimal_places=6, min_value=Decimal('0'))
@@ -248,7 +258,7 @@ class ProductUnitSuccessorForm(forms.Form):
         self.source_product = source_product
         initial = kwargs.setdefault('initial', {})
         initial.setdefault('name', source_product.name)
-        initial.setdefault('sku', self._suggest_sku(source_product.sku))
+        initial.setdefault('sku', '')
         initial.setdefault('catalog_category', source_product.catalog_category_id)
         initial.setdefault('buying_price', source_product.buying_price)
         initial.setdefault('selling_price', source_product.selling_price)
@@ -266,14 +276,13 @@ class ProductUnitSuccessorForm(forms.Form):
         ).order_by('name')
         apply_tailwind(self)
 
-    @staticmethod
-    def _suggest_sku(source_sku):
-        base = (source_sku or 'ITEM').strip().upper()[:42]
-        return f'{base}-NEW'
-
     def clean_sku(self):
-        sku = (self.cleaned_data.get('sku') or '').strip().upper()
-        if Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku).exists():
+        from .sku import validate_manual_sku
+        try:
+            sku = validate_manual_sku(self.cleaned_data.get('sku'))
+        except forms.ValidationError as exc:
+            raise forms.ValidationError(exc.messages) from exc
+        if sku and Product.objects.unscoped().filter(tenant=self.organization, sku__iexact=sku).exists():
             raise forms.ValidationError('This SKU is already used in the active business.')
         return sku
 
