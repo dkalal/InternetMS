@@ -1,0 +1,20 @@
+# Portable source files: LF in Git and on checkout on Windows/Linux.
+*.py text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+Dockerfile text eol=lf
+Procfile text eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.xlsx binary
