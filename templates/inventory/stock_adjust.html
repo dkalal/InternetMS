@@ -3,19 +3,19 @@
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
 {{ stock_levels|json_script:"stock-level-data" }}
-<div class="mx-auto max-w-4xl space-y-5">
-  <header>
-    <p class="text-sm font-semibold text-brand-700">Sensitive stock operation</p>
-    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Adjust stock</h1>
-    <p class="mt-1 text-sm text-slate-600">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p>
+<div class="jims-workflow-page jims-form-page--standard space-y-5">
+  <header class="jims-page-header">
+    <div><p class="jims-page-eyebrow">Sensitive stock operation</p>
+    <h1 class="jims-page-title">Adjust stock</h1>
+    <p class="jims-page-subtitle">Correct a verified difference. Every adjustment is permanently recorded in movement history.</p></div>
   </header>
 
-  <form method="post" class="grid gap-5 lg:grid-cols-3" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">
+  <form method="post" class="grid gap-5 lg:grid-cols-3" data-serial-validation-url="{% url 'inventory:serial_check' %}" data-serial-mode="adjustment" data-stock-adjustment data-unsaved-form data-submit-lock data-confirm="This adjustment changes the live stock balance and creates an immutable history record. Verify the expected balance before continuing." data-confirm-title="Record stock adjustment?" data-confirm-action="Record adjustment">
     {% csrf_token %}
     <section class="jims-panel p-5 lg:col-span-2">
       {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
       <div class="space-y-5">
-        {% include "components/form_field.html" with field=form.product %}
+        <div class="min-w-0 max-w-[23rem]">{% include "components/form_field.html" with field=form.product %}</div>
         <fieldset>
           <legend class="text-sm font-semibold text-slate-800">Adjustment direction <span class="text-rose-600">*</span></legend>
           <div class="mt-2 grid gap-3 sm:grid-cols-2">
@@ -27,10 +27,10 @@
           </div>
           {% for error in form.direction.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
         </fieldset>
-        {% include "components/form_field.html" with field=form.quantity %}
-        {% include "components/form_field.html" with field=form.reason %}
-        {% include "components/form_field.html" with field=form.serial_numbers %}
-        {% include "components/form_field.html" with field=form.notes %}
+        <div class="min-w-0 max-w-[12rem]">{% include "components/form_field.html" with field=form.quantity %}</div>
+        <div class="min-w-0 max-w-[34rem]">{% include "components/form_field.html" with field=form.reason %}</div>
+        <div class="min-w-0 max-w-[40rem]">{% include "components/form_field.html" with field=form.serial_numbers %}</div>
+        <div class="min-w-0 max-w-[40rem]">{% include "components/form_field.html" with field=form.notes %}</div>
       </div>
     </section>
 

@@ -1,0 +1,8 @@
+<div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <dl class="grid gap-3 text-sm sm:grid-cols-2">
+        <div><dt class="text-xs text-slate-500">Package</dt><dd class="mt-1 font-medium text-slate-900">{{ internet_profile.package_label|default:"—" }}</dd></div>
+        <div><dt class="text-xs text-slate-500">Days remaining</dt><dd class="mt-1 font-medium text-slate-900">{% if internet_profile.end_date %}{% if internet_profile.days_remaining is not None %}{% if internet_profile.days_remaining > 0 %}{{ internet_profile.days_remaining }} day{{ internet_profile.days_remaining|pluralize }}{% else %}Expired{% endif %}{% else %}—{% endif %}{% else %}—{% endif %}</dd></div>
+        <div><dt class="text-xs text-slate-500">Start date</dt><dd class="mt-1 font-medium text-slate-900">{{ internet_profile.start_date|date:"F d, Y"|default:"—" }}</dd></div>
+        <div><dt class="text-xs text-slate-500">End date</dt><dd class="mt-1 font-medium text-slate-900">{{ internet_profile.end_date|date:"F d, Y"|default:"—" }}</dd></div>
+    </dl>
+</div>

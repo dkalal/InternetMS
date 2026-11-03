@@ -25,6 +25,7 @@ urlpatterns = [
     path("<str:doc_type>/create/", views.document_create, name="document_create"),
     path("<str:doc_type>/<int:pk>/", views.document_detail, name="document_detail"),
     path("<str:doc_type>/<int:pk>/edit/", views.document_edit, name="document_edit"),
+    path("receipt/<int:pk>/print/", views.receipt_print, name="receipt_print"),
     path("<str:doc_type>/<int:pk>/pdf/", views.document_pdf, name="document_pdf"),
     path("quotation/<int:pk>/create-invoice/", views.create_invoice_from_quotation, name="create_invoice_from_quotation"),
     path("quotation/<int:pk>/send/", views.send_quotation, name="send_quotation"),
@@ -35,4 +36,5 @@ urlpatterns = [
     path("invoice/<int:pk>/reissue/", views.reissue_invoice, name="reissue_invoice"),
     path("invoice/<int:pk>/credit-note/", views.create_credit_note, name="create_credit_note"),
     path("invoice/<int:pk>/create-receipt/", views.create_receipt_from_invoice, name="create_receipt_from_invoice"),
+    path("credit-note/<int:pk>/void/", views.void_credit_note, name="void_credit_note"),
 ]

@@ -1,17 +1,26 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
+from django.contrib import messages
 from django.db.models import F, Q
 from custom_fields.mixins import CustomFieldPageContextMixin
 from .models import Product, ProductCategory
-from .forms import ProductForm
+from .forms import ProductForm, ProductUnitSuccessorForm
+from .services import ProductUnitTransitionError, ProductUnitTransitionService
 from custom_fields.services import CustomFieldService
-from users.permissions import PermissionCode, require_permission
+from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from inventory.services import audit
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
+from django.core import signing
+from django.core.exceptions import ValidationError
+from django.http import HttpResponse
+from uuid import uuid4
+from audit.models import AuditLog
 
 class ProductListView(LoginRequiredMixin, ListView):
     model = Product
@@ -25,8 +34,8 @@ class ProductListView(LoginRequiredMixin, ListView):
         "-category": ("-catalog_category__name", "-category", "name"),
         "stock": ("quantity", "name"),
         "-stock": ("-quantity", "name"),
-        "retail": ("retail_price", "selling_price", "name"),
-        "-retail": ("-retail_price", "-selling_price", "name"),
+        "retail": ("selling_price", "name"),
+        "-retail": ("-selling_price", "name"),
         "wholesale": ("wholesale_price", "name"),
         "-wholesale": ("-wholesale_price", "name"),
     }
@@ -38,7 +47,7 @@ class ProductListView(LoginRequiredMixin, ListView):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.PRODUCT_VIEW)
         queryset = super().get_queryset().filter(organization=organization).select_related(
-            "customer", "catalog_category", "inventory_balance"
+            "catalog_category", "inventory_balance"
         )
         search = (self.request.GET.get("search") or "").strip()
         if search:
@@ -48,7 +57,6 @@ class ProductListView(LoginRequiredMixin, ListView):
                 | Q(sku__icontains=search)
                 | Q(brand__icontains=search)
                 | Q(model_number__icontains=search)
-                | Q(customer__name__icontains=search)
                 | Q(stock_units__serial_number__icontains=search)
             ).distinct()
         catalog_category = self.request.GET.get("catalog_category")
@@ -87,9 +95,9 @@ class ProductListView(LoginRequiredMixin, ListView):
         min_price = positive_decimal(self.request.GET.get("min_price"))
         max_price = positive_decimal(self.request.GET.get("max_price"))
         if min_price is not None:
-            queryset = queryset.filter(Q(retail_price__gte=min_price) | Q(retail_price__isnull=True, selling_price__gte=min_price))
+            queryset = queryset.filter(selling_price__gte=min_price)
         if max_price is not None:
-            queryset = queryset.filter(Q(retail_price__lte=max_price) | Q(retail_price__isnull=True, selling_price__lte=max_price))
+            queryset = queryset.filter(selling_price__lte=max_price)
         queryset, self.active_sort = apply_sort(queryset, self.request.GET.get("sort"), self.sort_options, "name")
         return queryset
 
@@ -117,8 +125,66 @@ class ProductDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["custom_fields"] = CustomFieldService.get_custom_field_values(self.object)
+        context["has_unit_history"] = self.object.has_unit_history()
         context.update(self.get_custom_field_modal_context(target_model="product"))
         return context
+
+
+@login_required
+def product_unit_successor(request, pk):
+    organization = require_organization(request)
+    require_permission(request, PermissionCode.PRODUCT_MANAGE)
+    require_permission(request, PermissionCode.COST_REPORT_VIEW)
+    source = get_object_or_404(
+        Product.objects.unscoped().select_related('sales_unit', 'catalog_category'),
+        pk=pk,
+        tenant=organization,
+    )
+    if not source.has_unit_history():
+        messages.info(request, 'This product has no transaction history. Edit its unit directly instead.')
+        return redirect('product-update', pk=source.pk)
+
+    form = ProductUnitSuccessorForm(
+        request.POST or None,
+        organization=organization,
+        source_product=source,
+    )
+    if request.method == 'POST' and form.is_valid():
+        try:
+            successor, created = ProductUnitTransitionService.create_successor(
+                organization=organization,
+                source_product_id=source.pk,
+                actor=request.user,
+                transition_key=form.cleaned_data['transition_key'],
+                values=form.cleaned_data,
+            )
+        except ProductUnitTransitionError as exc:
+            form.add_error(None, str(exc))
+        else:
+            if created:
+                messages.success(
+                    request,
+                    f'{successor.name} was created in {successor.get_measure_unit_display()}. '
+                    f'{source.name} was made inactive; its history and stock were not moved.',
+                )
+            else:
+                messages.info(request, 'This unit transition was already completed; no duplicate product was created.')
+            return redirect('product-detail', pk=successor.pk)
+
+    open_document_count = source.billinglineitem_set.filter(
+        document__tenant=organization,
+        document__document_type='invoice',
+        document__status__in=('draft', 'sent', 'issued', 'partially_paid'),
+    ).values('document_id').distinct().count()
+    draft_cart_count = source.cart_lines.filter(
+        cart__tenant=organization, cart__status='draft',
+    ).values('cart_id').distinct().count()
+    return render(request, 'products/product_unit_successor.html', {
+        'source': source,
+        'form': form,
+        'open_document_count': open_document_count,
+        'draft_cart_count': draft_cart_count,
+    })
 
 class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateView):
     model = Product
@@ -128,13 +194,73 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
     custom_field_target_model = "product"
     custom_field_inline_use = True
 
+    def post(self, request, *args, **kwargs):
+        token = request.POST.get('submission_token')
+        if not token:
+            # Compatibility for pre-token integrations and legacy form clients.
+            return super().post(request, *args, **kwargs)
+        organization = require_organization(request)
+        try:
+            key = signing.loads(token, salt='product-single', max_age=86400)
+            if key['tenant'] != organization.pk or key['actor'] != request.user.pk:
+                raise signing.BadSignature('Submission belongs to another actor.')
+        except (signing.BadSignature, KeyError):
+            return HttpResponse('Invalid or expired product submission.', status=400)
+        from .workspace import submission_fingerprint
+        payload = {k: v for k, v in request.POST.lists() if k not in ('csrfmiddlewaretoken', 'submission_token')}
+        fingerprint = submission_fingerprint(payload, request.FILES)
+        with transaction.atomic():
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                action='inventory.product.submission', metadata__key=key['key']).first()
+            if prior:
+                if prior.metadata.get('fingerprint') != fingerprint:
+                    return HttpResponse('Submission key was already used with different content.', status=409)
+                self.object = get_object_or_404(Product.objects.unscoped(), tenant=organization, pk=prior.object_id)
+                if request.GET.get('purchase_modal') == '1':
+                    return self.modal_created_response()
+                return redirect(self.success_url)
+            response = super().post(request, *args, **kwargs)
+            if self.object and self.object.pk:
+                audit(organization=organization, actor=request.user, action='inventory.product.submission', obj=self.object,
+                      metadata={'key': key['key'], 'fingerprint': fingerprint})
+            return response
+
+    def modal_created_response(self):
+        return render(self.request, 'inventory/includes/purchase_modal_created.html', {
+            'created_record': {'kind': 'product', 'id': self.object.pk, 'text': str(self.object),
+                'name': self.object.name, 'sku': self.object.sku, 'unit': self.object.sales_unit.label,
+                'serialized': self.object.is_serialized, 'expiry': self.object.track_expiry,
+                **({'buying_price': str(self.object.buying_price)} if has_tenant_permission(
+                    self.request.user, self.request.organization, PermissionCode.COST_REPORT_VIEW,
+                    membership=self.request.membership,
+                ) else {})}})
+
     def dispatch(self, request, *args, **kwargs):
         require_organization(request)
-        return super().dispatch(request, *args, **kwargs)
+        require_permission(request, PermissionCode.PRODUCTS_CREATE)
+        if request.GET.get('purchase_modal') != '1' and (request.method == 'GET' or 'rows' in request.POST):
+            from .workspace import product_workspace
+            return product_workspace(request)
+        response = super().dispatch(request, *args, **kwargs)
+        if request.GET.get('purchase_modal') == '1':
+            response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
 
     def form_valid(self, form):
+        try:
+            with transaction.atomic():
+                return self._save_valid_form(form)
+        except ValidationError as exc:
+            self.object = None
+            form.instance.pk = None
+            form.instance._state.adding = True
+            form.add_error(None, exc)
+            return self.form_invalid(form)
+
+    def _save_valid_form(self, form):
         organization = require_organization(self.request)
-        require_permission(self.request, PermissionCode.PRODUCT_MANAGE)
+        require_permission(self.request, PermissionCode.PRODUCTS_CREATE)
         form.instance.organization = organization
         form.instance.tenant = organization
         form.instance.quantity = 0
@@ -147,9 +273,14 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                 actor=self.request.user,
                 action='inventory.product.created',
                 obj=self.object,
-                new_value={'sku': self.object.sku, 'name': self.object.name, 'item_type': self.object.item_type},
+                new_value={
+                    'sku': self.object.sku,
+                    'name': self.object.name,
+                    'item_type': self.object.item_type,
+                    'has_image': bool(self.object.image),
+                },
             )
-            legacy_quantity = self.request.POST.get('quantity')
+            legacy_quantity = None if self.request.GET.get('purchase_modal') == '1' else self.request.POST.get('quantity')
             if legacy_quantity and self.object.track_stock:
                 from decimal import Decimal
                 from inventory.services import InventoryService
@@ -163,17 +294,57 @@ class ProductCreateView(CustomFieldPageContextMixin, LoginRequiredMixin, CreateV
                         notes='Opening balance supplied by the legacy product form.',
                         actor=self.request.user,
                     )
+        if self.request.GET.get('purchase_modal') == '1':
+            return self.modal_created_response()
+        if (
+            self.request.POST.get('next') == 'add_serials'
+            and self.object.is_serialized
+            and has_tenant_permission(
+                self.request.user,
+                organization,
+                PermissionCode.STOCK_ADJUST,
+                membership=getattr(self.request, 'membership', None),
+            )
+        ):
+            messages.success(
+                self.request,
+                f'{self.object.name} was created. Enter one serial number for each unit being added.',
+            )
+            return redirect(f'{reverse("inventory:stock_adjust")}?product={self.object.pk}')
         return response
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        if self.request.GET.get('purchase_modal') == '1':
+            for name, value in (
+                ('item_type', Product.ItemType.PHYSICAL), ('track_stock', True), ('is_active', True),
+            ):
+                form.fields[name].initial = value
+                form.fields[name].disabled = True
+        return form
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['organization'] = require_organization(self.request)
+        kwargs['actor'] = self.request.user
         return kwargs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['embedded_create'] = self.request.GET.get('purchase_modal') == '1'
+        context['submission_token'] = self.request.POST.get('submission_token') or signing.dumps(
+            {'tenant': require_organization(self.request).pk, 'actor': self.request.user.pk, 'key': str(uuid4())}, salt='product-single')
+        context['quick_category_units'] = context['form'].fields['sales_unit'].queryset
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)
+        categories = ProductCategory.objects.filter(tenant=require_organization(self.request)).prefetch_related('allowed_units')
+        context['unit_rules'] = {
+            str(category.pk): {
+                'allowed': [unit.pk for unit in category.allowed_units.all()],
+                'default': category.default_unit_id or '',
+            }
+            for category in categories
+        }
         return context
 
 class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateView):
@@ -197,6 +368,7 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
             'sku': previous.sku,
             'name': previous.name,
             'selling_price': str(previous.selling_price),
+            'image': previous.image.name if previous.image else '',
             'track_stock': previous.track_stock,
             'is_serialized': previous.is_serialized,
             'is_active': previous.is_active,
@@ -216,6 +388,7 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
                     'sku': self.object.sku,
                     'name': self.object.name,
                     'selling_price': str(self.object.selling_price),
+                    'image': self.object.image.name if self.object.image else '',
                     'track_stock': self.object.track_stock,
                     'is_serialized': self.object.is_serialized,
                     'is_active': self.object.is_active,
@@ -226,12 +399,21 @@ class ProductUpdateView(CustomFieldPageContextMixin, LoginRequiredMixin, UpdateV
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['organization'] = require_organization(self.request)
+        kwargs['actor'] = self.request.user
         return kwargs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context.update(self.get_custom_field_modal_context(target_model="product"))
         context["has_movement_history"] = getattr(context["form"], "has_movement_history", False)
+        categories = ProductCategory.objects.filter(tenant=require_organization(self.request)).prefetch_related('allowed_units')
+        context['unit_rules'] = {
+            str(category.pk): {
+                'allowed': [unit.pk for unit in category.allowed_units.all()],
+                'default': category.default_unit_id or '',
+            }
+            for category in categories
+        }
         return context
 
 class ProductDeleteView(LoginRequiredMixin, DeleteView):
@@ -243,3 +425,23 @@ class ProductDeleteView(LoginRequiredMixin, DeleteView):
         organization = require_organization(self.request)
         require_permission(self.request, PermissionCode.PRODUCT_MANAGE)
         return super().get_queryset().filter(organization=organization)
+
+    def form_valid(self, form):
+        if self.object.quantity > 0 or self.object.stock > 0:
+            messages.error(
+                self.request,
+                'This product still has stock and cannot be deleted. Reconcile its stock '
+                'through the inventory workflow before considering removal.',
+            )
+            return redirect('product-detail', pk=self.object.pk)
+        try:
+            with transaction.atomic():
+                return super().form_valid(form)
+        except ProtectedError:
+            messages.error(
+                self.request,
+                'This product cannot be deleted because purchase, stock, sale, or other records '
+                'refer to it. Its history is preserved. If it should no longer be used, '
+                'edit the product and mark it inactive.',
+            )
+            return redirect('product-detail', pk=self.object.pk)

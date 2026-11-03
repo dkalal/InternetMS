@@ -4,7 +4,19 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
-from users.tenant_models import TenantScopedManager
+from users.tenant_models import TenantScopedManager, TenantScopedQuerySet
+
+
+class ImmutableAuditQuerySet(TenantScopedQuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Audit logs are immutable.")
+
+    def delete(self):
+        raise ValidationError("Audit logs are immutable.")
+
+
+class AuditLogManager(TenantScopedManager.from_queryset(ImmutableAuditQuerySet)):
+    pass
 
 
 class AuditLog(models.Model):
@@ -26,8 +38,6 @@ class AuditLog(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_audit_logs",
-        null=True,
-        blank=True,
         db_index=True,
     )
     actor = models.ForeignKey(
@@ -54,7 +64,7 @@ class AuditLog(models.Model):
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     performed_at = models.DateTimeField(null=True, blank=True, db_index=True)
-    objects = TenantScopedManager()
+    objects = AuditLogManager()
 
     class Meta:
         ordering = ["-created_at"]

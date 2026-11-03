@@ -1,12 +1,22 @@
 from django.core.management.base import BaseCommand
 
 from billing.models import BillingDocument
+from users.models import Organization
 
 
 class Command(BaseCommand):
     help = "List billing documents whose statuses do not fit the current invoice or quotation lifecycle."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--tenant", required=True, help="Tenant ID or slug (required).")
+
     def handle(self, *args, **options):
+        key = options["tenant"]
+        tenant = Organization.objects.filter(pk=key).first() if str(key).isdigit() else None
+        tenant = tenant or Organization.objects.filter(slug=key).first()
+        if tenant is None:
+            self.stderr.write(self.style.ERROR("Tenant not found."))
+            return
         invoice_allowed = {
             BillingDocument.Status.DRAFT,
             BillingDocument.Status.ISSUED,
@@ -27,10 +37,12 @@ class Command(BaseCommand):
             BillingDocument.Status.CONVERTED,
         }
 
-        invoice_anomalies = BillingDocument.objects.filter(
+        invoice_anomalies = BillingDocument.objects.unscoped().filter(
+            tenant=tenant,
             document_type=BillingDocument.DocumentType.INVOICE,
         ).exclude(status__in=invoice_allowed)
-        quotation_anomalies = BillingDocument.objects.filter(
+        quotation_anomalies = BillingDocument.objects.unscoped().filter(
+            tenant=tenant,
             document_type=BillingDocument.DocumentType.QUOTATION,
         ).exclude(status__in=quotation_allowed)
 

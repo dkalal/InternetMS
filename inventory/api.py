@@ -1,4 +1,7 @@
 from decimal import Decimal
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from audit.models import AuditLog
 
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, serializers, status
@@ -8,9 +11,17 @@ from rest_framework.views import APIView
 
 from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
+from customers.models import Customer
 from integrations.services import resolve_integration_consumer
 from products.models import Product, ProductCategory
-from users.permissions import PermissionCode, user_has_permission
+from users.permissions import (
+    PermissionCode,
+    discount_authorization_error,
+    has_tenant_permission,
+    membership_for,
+    permission_grant_for,
+    sales_document_queryset_for,
+)
 
 from .models import DocumentSerialSelection, InventoryBalance, StockMovement, StockUnit, Supplier
 from .services import CartService
@@ -21,10 +32,15 @@ class InventoryAPIPermission(BasePermission):
 
     def has_permission(self, request, view):
         consumer = resolve_integration_consumer(request)
-        if consumer is None or not user_has_permission(request.user, PermissionCode.INVENTORY_API):
+        if consumer is None or not has_tenant_permission(request.user, consumer.organization, PermissionCode.INVENTORY_API):
             return False
         required = getattr(view, 'required_permission', None)
-        return required is None or user_has_permission(request.user, required)
+        return required is None or has_tenant_permission(request.user, consumer.organization, required)
+
+
+def _api_allowed(request, code):
+    consumer = resolve_integration_consumer(request)
+    return consumer is not None and has_tenant_permission(request.user, consumer.organization, code)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -32,13 +48,18 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number', 'buying_price', 'selling_price', 'tax_eligible', 'track_stock', 'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
+        fields = ['id', 'sku', 'name', 'description', 'item_type', 'catalog_category', 'brand', 'model_number',
+                  'buying_price', 'selling_price', 'technician_price', 'tax_eligible', 'track_stock',
+                  'is_serialized', 'track_expiry', 'reorder_threshold', 'is_active', 'available_stock']
         read_only_fields = ['available_stock']
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
-            fields.pop('buying_price', None)
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
+            for name in ('buying_price',):
+                fields.pop(name, None)
+        if not _api_allowed(self.context['request'], PermissionCode.PRODUCT_MANAGE):
+            fields.pop('technician_price', None)
         return fields
 
     def validate(self, attrs):
@@ -46,25 +67,44 @@ class ProductSerializer(serializers.ModelSerializer):
         category = attrs.get('catalog_category')
         if category and category.tenant_id != organization.id:
             raise serializers.ValidationError({'catalog_category': 'Category belongs to another tenant.'})
-        sku = (attrs.get('sku') or getattr(self.instance, 'sku', '')).strip().upper()
+        from products.sku import validate_manual_sku
+        try:
+            sku = validate_manual_sku(attrs.get('sku'), existing=getattr(self.instance, 'sku', ''))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
         query = Product.objects.unscoped().filter(tenant=organization, sku__iexact=sku)
         if self.instance:
             query = query.exclude(pk=self.instance.pk)
-        if not sku or query.exists():
-            raise serializers.ValidationError({'sku': 'A unique SKU is required.'})
+        if sku and query.exists():
+            raise serializers.ValidationError({'sku': 'SKU is already in use in this business.'})
         attrs['sku'] = sku
         return attrs
 
     def create(self, validated_data):
         organization = resolve_integration_consumer(self.context['request']).organization
-        return Product.objects.create(organization=organization, tenant=organization, quantity=0, stock=0, measure_unit='Unit', **validated_data)
+        from products.creation import save_purchase_product
+        product = Product(quantity=0, stock=0, measure_unit='Unit', **validated_data)
+        try:
+            return save_purchase_product(product, organization=organization, supplied_sku=product.sku,
+                                         actor=self.context['request'].user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages) from exc
 
     def update(self, instance, validated_data):
         protected = {'quantity', 'stock'}
         for key, value in validated_data.items():
             if key not in protected:
                 setattr(instance, key, value)
-        instance.save()
+        try:
+            with transaction.atomic():
+                previous = Product.objects.unscoped().select_for_update().get(pk=instance.pk, tenant=instance.tenant)
+                instance.save()
+                from .services import audit
+                audit(organization=instance.tenant, actor=self.context['request'].user,
+                      action='inventory.product.updated', obj=instance,
+                      old_value={'sku': previous.sku}, new_value={'sku': instance.sku})
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages) from exc
         return instance
 
 
@@ -91,7 +131,7 @@ class StockSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
             fields.pop('average_cost', None)
         return fields
 
@@ -106,7 +146,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
-        if not user_has_permission(self.context['request'].user, PermissionCode.COST_REPORT_VIEW):
+        if not _api_allowed(self.context['request'], PermissionCode.COST_REPORT_VIEW):
             fields.pop('unit_cost', None)
         return fields
 
@@ -125,11 +165,11 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
 class InvoiceSerializer(serializers.ModelSerializer):
     items = InvoiceLineSerializer(many=True, read_only=True)
-    customer_name = serializers.CharField(source='customer.name')
+    customer_name = serializers.CharField(source='display_customer_name', read_only=True)
 
     class Meta:
         model = BillingDocument
-        fields = ['id', 'number', 'customer_name', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
+        fields = ['id', 'number', 'customer_name', 'shipping_address_snapshot', 'sale_pricing_category', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
 
 
 class InvoiceItemInputSerializer(serializers.Serializer):
@@ -141,7 +181,17 @@ class InvoiceItemInputSerializer(serializers.Serializer):
 
 class InvoiceCreateSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(required=False, allow_null=True)
-    walk_in_name = serializers.CharField(required=False, allow_blank=True)
+    walk_in_name = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    shipping_address = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    sale_pricing_category = serializers.ChoiceField(
+        choices=(
+            BillingDocument.SalePricingCategory.CUSTOMER_TIER,
+            BillingDocument.SalePricingCategory.STANDARD,
+            BillingDocument.SalePricingCategory.TECHNICIAN,
+            BillingDocument.SalePricingCategory.WHOLESALE,
+        ),
+        default=BillingDocument.SalePricingCategory.CUSTOMER_TIER,
+    )
     tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     discount_amount = serializers.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     status = serializers.ChoiceField(choices=[BillingDocument.Status.DRAFT, BillingDocument.Status.ISSUED], default=BillingDocument.Status.DRAFT)
@@ -152,10 +202,33 @@ class InvoiceCreateSerializer(serializers.Serializer):
         request = self.context['request']
         organization = resolve_integration_consumer(request).organization
         customer_id = validated_data.get('customer_id')
+        shipping_address = validated_data.get('shipping_address', '').strip()
+        if customer_id is not None and shipping_address:
+            raise serializers.ValidationError({'shipping_address': 'This address is for a walk-in sale without a selected customer.'})
+        walk_in_name = None
         if customer_id is None:
+            walk_in_name = validated_data.get('walk_in_name', '').strip() or 'Walk-in Customer'
             customer_id = CartService._walk_in_customer(organization=organization, label=validated_data.get('walk_in_name', '')).pk
+        customer = Customer.all_objects.filter(pk=customer_id, tenant=organization, is_deleted=False).first()
+        if customer is None:
+            raise serializers.ValidationError({'customer_id': 'Invalid customer.'})
         inputs = []
         products = []
+        sale_pricing_category = validated_data['sale_pricing_category']
+        membership = membership_for(request.user, organization)
+        if sale_pricing_category != BillingDocument.SalePricingCategory.CUSTOMER_TIER and not has_tenant_permission(request.user, organization, PermissionCode.CART_PRICING_OVERRIDE, membership=membership):
+            raise serializers.ValidationError({'sale_pricing_category': 'You cannot override the customer category.'})
+        pricing_grant = permission_grant_for(membership, PermissionCode.CART_PRICING_OVERRIDE)
+        if pricing_grant is not None and sale_pricing_category not in {'customer_tier', *pricing_grant.allowed_pricing_categories}:
+            raise serializers.ValidationError({'sale_pricing_category': 'This customer category is outside your allowed categories.'})
+        requested_tax_rate = validated_data['tax_rate']
+        if requested_tax_rate != Decimal('0.00') and not has_tenant_permission(request.user, organization, PermissionCode.CART_TAX_RATE_EDIT, membership=membership):
+            raise serializers.ValidationError({'tax_rate': 'You do not have permission to edit the tax rate.'})
+        effective_category = (
+            customer.default_sale_pricing_category
+            if sale_pricing_category == BillingDocument.SalePricingCategory.CUSTOMER_TIER
+            else sale_pricing_category
+        )
         for item in validated_data['items']:
             product = Product.objects.unscoped().filter(pk=item['product_id'], tenant=organization, is_active=True).first()
             if product is None:
@@ -164,15 +237,29 @@ class InvoiceCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({'items': 'Quantities must be positive.'})
             inputs.append(LineItemInput(
                 product_id=product.pk, description=product.name, quantity=item['quantity'],
-                unit_price=product.price_for(quantity=item['quantity']), discount_amount=item['discount_amount'],
-                pricing_mode=BillingLineItem.PricingMode.RETAIL,
+                unit_price=product.price_for_sale_category(
+                    sale_pricing_category=effective_category, quantity=item['quantity'],
+                ),
+                discount_amount=item['discount_amount'], pricing_mode=effective_category,
             ))
             products.append((product, item.get('serial_numbers', [])))
+        requested_discount = validated_data['discount_amount'] + sum((item.discount_amount for item in inputs), Decimal('0.00'))
+        subtotal = sum((item.quantity * item.unit_price for item in inputs), Decimal('0.00'))
+        discount_error = discount_authorization_error(
+            membership,
+            gross_subtotal=subtotal,
+            total_discount=requested_discount,
+        )
+        if discount_error:
+            raise serializers.ValidationError({'discount_amount': discount_error})
         try:
             invoice = BillingService.create_document(
                 organization=organization, created_by=request.user, document_type=BillingDocument.DocumentType.INVOICE,
                 customer_id=customer_id, status=validated_data['status'], tax_rate=validated_data['tax_rate'],
                 discount_amount=validated_data['discount_amount'], notes=validated_data.get('notes', ''), items=inputs,
+                sale_pricing_category=sale_pricing_category,
+                walk_in_name=walk_in_name,
+                shipping_address=shipping_address,
             )
         except BillingServiceError as exc:
             raise serializers.ValidationError(str(exc)) from exc
@@ -199,9 +286,31 @@ class ProductListCreateAPI(generics.ListCreateAPIView):
         return Product.objects.unscoped().filter(tenant=resolve_integration_consumer(self.request).organization).order_by('name')
 
     def post(self, request, *args, **kwargs):
-        if not user_has_permission(request.user, PermissionCode.PRODUCT_MANAGE):
+        if not _api_allowed(request, PermissionCode.PRODUCTS_CREATE):
             return Response({'detail': 'Product management permission is required.'}, status=403)
-        return super().post(request, *args, **kwargs)
+        key = request.headers.get('Idempotency-Key', '')
+        if not key:
+            return super().post(request, *args, **kwargs)
+        if len(key) > 128:
+            return Response({'detail': 'Idempotency-Key must be at most 128 characters.'}, status=400)
+        from products.workspace import submission_fingerprint
+        from .services import audit
+        organization = resolve_integration_consumer(request).organization
+        fingerprint = submission_fingerprint(dict(request.data), {})
+        with transaction.atomic():
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            prior = AuditLog.objects.unscoped().filter(tenant=organization, actor=request.user,
+                action='inventory.product.api_submission', metadata__key=key).first()
+            if prior:
+                if prior.metadata.get('fingerprint') != fingerprint:
+                    return Response({'detail': 'Idempotency key was already used with different content.'}, status=409)
+                product = get_object_or_404(Product.objects.unscoped(), tenant=organization, pk=prior.object_id)
+                return Response(self.get_serializer(product).data, status=200)
+            response = super().post(request, *args, **kwargs)
+            product = Product.objects.unscoped().get(tenant=organization, pk=response.data['id'])
+            audit(organization=organization, actor=request.user, action='inventory.product.api_submission', obj=product,
+                  metadata={'key': key, 'fingerprint': fingerprint})
+            return response
 
 
 class ProductDetailAPI(generics.RetrieveUpdateAPIView):
@@ -213,7 +322,7 @@ class ProductDetailAPI(generics.RetrieveUpdateAPIView):
         return Product.objects.unscoped().filter(tenant=resolve_integration_consumer(self.request).organization)
 
     def update(self, request, *args, **kwargs):
-        if not user_has_permission(request.user, PermissionCode.PRODUCT_MANAGE):
+        if not _api_allowed(request, PermissionCode.PRODUCT_MANAGE):
             return Response({'detail': 'Product management permission is required.'}, status=403)
         return super().update(request, *args, **kwargs)
 
@@ -262,8 +371,8 @@ class InvoiceListCreateAPI(generics.ListCreateAPIView):
         return InvoiceCreateSerializer if self.request.method == 'POST' else InvoiceSerializer
 
     def get_queryset(self):
-        return BillingDocument.objects.unscoped().filter(
-            tenant=resolve_integration_consumer(self.request).organization,
+        organization = resolve_integration_consumer(self.request).organization
+        return sales_document_queryset_for(self.request.user, organization).filter(
             document_type=BillingDocument.DocumentType.INVOICE,
             inventory_sale__isnull=False,
         ).select_related('customer').prefetch_related('items__product')
@@ -281,6 +390,11 @@ class InvoicePaymentAPI(APIView):
 
     def post(self, request, pk):
         organization = resolve_integration_consumer(request).organization
+        invoice = sales_document_queryset_for(request.user, organization).filter(
+            pk=pk, document_type=BillingDocument.DocumentType.INVOICE
+        ).first()
+        if invoice is None:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         try:
             receipt = BillingService.create_receipt_from_invoice(
                 organization=organization, created_by=request.user, invoice_id=pk,

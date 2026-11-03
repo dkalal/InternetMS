@@ -12,3 +12,11 @@ class IsActiveIntegrationConsumer(BasePermission):
         consumer = resolve_integration_consumer(request)
         return consumer is not None
 
+
+class IsActiveIntegrationConsumerWriter(BasePermission):
+    """Allow an active, tenant-bound integration consumer to replace projections."""
+
+    message = 'A valid active integration consumer token is required.'
+
+    def has_permission(self, request, view):
+        return request.method in {'PUT', 'OPTIONS'} and resolve_integration_consumer(request) is not None

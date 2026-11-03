@@ -4,34 +4,62 @@ from decimal import Decimal
 
 from django import forms
 from django.forms import BaseInlineFormSet, inlineformset_factory
+from django.db.models import Q
 
 from internetservices.tailwind import apply_tailwind
+from customers.models import CustomerSite
+from customers.models import Customer
 
 from .models import BillingDocument, BillingItem, BillingLineItem, BillingSheet, CustomerSubscription, Promotion
 
 
 class BillingDocumentForm(forms.ModelForm):
+    site = forms.ModelChoiceField(
+        queryset=CustomerSite.objects.none(), required=False,
+        help_text="Optional when every line concerns one customer site. Leave blank for account-wide or multi-site documents.",
+    )
+
     class Meta:
         model = BillingDocument
-        fields = ["customer", "issue_date", "due_date", "status", "currency", "tax_rate", "notes"]
+        fields = ["customer", "site", "sale_pricing_category", "issue_date", "due_date", "status", "currency", "tax_rate", "notes"]
         widgets = {
             "issue_date": forms.DateInput(attrs={"type": "date"}),
             "due_date": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 3}),
         }
 
-    def __init__(self, *args, organization=None, doc_type=None, **kwargs):
+    def __init__(self, *args, organization=None, doc_type=None, walk_in_account_id=None, walk_in_name=None, **kwargs):
         super().__init__(*args, **kwargs)
         if organization is not None:
-            self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
+            if walk_in_account_id is not None:
+                self.fields["customer"].queryset = Customer.all_objects.filter(
+                    organization=organization, is_deleted=False,
+                ).filter(Q(is_pos_placeholder=False) | Q(pk=walk_in_account_id, is_pos_placeholder=True))
+                self.fields["customer"].label_from_instance = lambda obj: (
+                    f"Walk-in: {walk_in_name}" if obj.pk == walk_in_account_id else obj.name
+                )
+            else:
+                self.fields["customer"].queryset = self.fields["customer"].queryset.filter(organization=organization)
+            self.fields["site"].queryset = CustomerSite.objects.filter(organization=organization, is_active=True).select_related("customer").order_by("customer__name", "-is_primary", "name")
+            self.fields["site"].label_from_instance = lambda obj: f"{obj.customer.name} — {obj.name} ({obj.location})"
         if doc_type == BillingDocument.DocumentType.INVOICE:
             self.fields["status"].choices = BillingDocument.invoice_status_choices()
         elif doc_type == BillingDocument.DocumentType.QUOTATION:
             self.fields["status"].choices = BillingDocument.quotation_status_choices()
+        self.fields["notes"].label = "Internal notes"
+        self.fields["notes"].help_text = (
+            "Visible to authorized staff only. Internal notes are never printed on customer invoices or quotations."
+        )
         self.fields["currency"].widget.attrs.update({"placeholder": "TZS", "maxlength": 10})
+        self.fields["sale_pricing_category"].choices = [
+            choice for choice in BillingDocument.SalePricingCategory.choices
+            if choice[0] != BillingDocument.SalePricingCategory.LEGACY_RETAIL
+        ]
+        self.fields["sale_pricing_category"].label = "Customer category"
+        self.fields["sale_pricing_category"].help_text = "Use the customer's category automatically, or select an authorized transaction override."
         self.fields["tax_rate"].widget.attrs.update({"min": "0", "step": "0.01"})
         self.fields["notes"].widget.attrs.update(
-            {"rows": 4, "placeholder": "Add payment terms, installation notes, or any customer-facing remarks."}
+            {"rows": 4, "placeholder": "Add staff-only context, approval notes, or operational follow-up."}
         )
         apply_tailwind(self)
 
@@ -43,6 +71,7 @@ class BillingLineItemForm(forms.ModelForm):
             "product",
             "package",
             "description",
+            "unit_snapshot",
             "quantity",
             "unit_price",
             "billing_behavior",
@@ -54,8 +83,8 @@ class BillingLineItemForm(forms.ModelForm):
         widgets = {
             "description": forms.Textarea(
                 attrs={
-                    "rows": 3,
-                    "placeholder": "Item name or description (e.g. Network troubleshooting, Cable installation)",
+                    "rows": 1,
+                    "placeholder": "Item name or description",
                 }
             ),
         }
@@ -71,6 +100,9 @@ class BillingLineItemForm(forms.ModelForm):
         self.fields["product"].empty_label = "Select product"
         self.fields["package"].empty_label = "Select package"
         self.fields["quantity"].initial = Decimal("1.00")
+        self.fields["unit_snapshot"].label = "Unit"
+        self.fields["unit_snapshot"].required = False
+        self.fields["unit_snapshot"].widget.attrs.update({"maxlength": "50", "placeholder": "Unit"})
         self.fields["quantity"].widget.attrs.update({"min": "0.01", "step": "0.01"})
         self.fields["unit_price"].widget.attrs.update({"min": "0", "step": "0.01"})
         self.fields["discount_amount"].widget.attrs.update({"min": "0", "step": "0.01"})
@@ -81,10 +113,16 @@ class BillingLineItemForm(forms.ModelForm):
         product = cleaned.get("product")
         package = cleaned.get("package")
         description = (cleaned.get("description") or "").strip()
+        unit_snapshot = (cleaned.get("unit_snapshot") or "Unit").strip()
+        cleaned["unit_snapshot"] = unit_snapshot
         if product and package:
             raise forms.ValidationError("Select either a product or a package (not both).")
         if not product and not package and not description:
             raise forms.ValidationError("Provide a product, a package, or a description.")
+        if product and unit_snapshot and product.catalog_category_id:
+            allowed = {unit.label for unit in product.catalog_category.allowed_units.filter(is_active=True)}
+            if unit_snapshot not in allowed:
+                self.add_error("unit_snapshot", "Select a unit allowed by the product category.")
         return cleaned
 
 
@@ -147,7 +185,6 @@ class ReceiptCreateForm(forms.Form):
         ('cash', 'Cash'),
         ('bank', 'Bank'),
         ('mobile_money', 'Mobile money'),
-        ('card', 'Credit/Debit card'),
         ('other', 'Other'),
     ])
     payment_reference = forms.CharField(max_length=80, required=False, help_text="Optional transaction reference / idempotency key.")
@@ -157,14 +194,43 @@ class ReceiptCreateForm(forms.Form):
         self.organization = organization
         self.invoice = invoice
         super().__init__(*args, **kwargs)
-        self.has_inventory_items = bool(
-            invoice and invoice.items.filter(product__isnull=False).exists()
-        )
-        if self.has_inventory_items:
+        self.requires_full_payment = False
+        self.remaining_balance = None
+        if invoice is not None and organization is not None:
+            from .services import BillingService
+
+            policy = BillingService.invoice_payment_policy(organization=organization, invoice=invoice)
+            self.requires_full_payment = policy['requires_full_payment']
+            self.remaining_balance = policy['remaining_balance']
+            self.fields['amount_paid'].widget.attrs['max'] = str(self.remaining_balance)
+        self.has_inventory_items = self.requires_full_payment
+        if self.requires_full_payment:
             self.fields["amount_paid"].help_text = (
                 "Inventory invoices require one complete payment. Enter the full outstanding balance."
             )
         apply_tailwind(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        customer = cleaned.get("customer")
+        site = cleaned.get("site")
+        if site and customer and site.customer_id != customer.id:
+            self.add_error("site", "Select a site belonging to the document customer.")
+        return cleaned
+
+    def clean_amount_paid(self):
+        amount = self.cleaned_data.get('amount_paid')
+        if amount is None or self.remaining_balance is None:
+            return amount
+        if amount > self.remaining_balance:
+            raise forms.ValidationError(
+                f'Payment cannot exceed the remaining balance ({self.remaining_balance:,.2f}).'
+            )
+        if self.requires_full_payment and amount != self.remaining_balance:
+            raise forms.ValidationError(
+                f'Inventory sales require complete payment of {self.remaining_balance:,.2f}.'
+            )
+        return amount
 
     def clean_payment_reference(self):
         reference = (self.cleaned_data.get("payment_reference") or "").strip()
@@ -204,8 +270,18 @@ class DraftInvoiceEditForm(forms.Form):
 
 class SubscriptionRenewalForm(forms.Form):
     subscription = forms.ModelChoiceField(queryset=CustomerSubscription.objects.none())
-    period_start = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
-    months = forms.IntegerField(min_value=1, max_value=24, initial=1)
+    period_start = forms.DateField(
+        label="Coverage starts",
+        help_text="The system normalizes subscription coverage to the first day of this month.",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    months = forms.IntegerField(
+        min_value=1,
+        max_value=24,
+        initial=1,
+        label="Months to cover",
+        help_text="The invoice and billing period will automatically store the resulting coverage end date.",
+    )
     promotion = forms.ModelChoiceField(queryset=Promotion.objects.none(), required=False)
     due_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}), required=False)
     issue_invoice = forms.BooleanField(required=False, initial=True, label="Create invoice now")

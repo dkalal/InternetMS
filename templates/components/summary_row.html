@@ -1,0 +1,4 @@
+<div class="{% if row_class %}{{ row_class }}{% endif %}"{% if row_id %} id="{{ row_id }}"{% endif %}>
+    <dt class="text-xs font-medium text-slate-500">{{ label }}</dt>
+    <dd class="mt-1 text-sm font-medium text-slate-900{% if value_class %} {{ value_class }}{% endif %}"{% if value_id %} id="{{ value_id }}"{% endif %}{% if live %} aria-live="polite"{% endif %}>{{ value|default:"—" }}</dd>
+</div>

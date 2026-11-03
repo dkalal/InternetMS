@@ -18,12 +18,12 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
 from django.urls import path, include
-from django.views.generic import RedirectView
 from django.conf import settings
 from django.conf.urls.static import static
 # Add this import for auth_views
 from django.contrib.auth import views as auth_views
 from users.forms import TailwindAuthenticationForm
+from users.auth_views import WorkspaceLoginView
 from internetservices.health import health_check, readiness_check, liveness_check
 
 # Import views for test_email and test_email_multiple
@@ -58,18 +58,20 @@ urlpatterns = [
     path('inventory/', include('inventory.urls')),
     path('api/inventory/', include('inventory.api_urls')),
     path('users/', include('users.urls')),  # This includes the register URL
+    path('work-reports/', include('work_reports.urls')),
     
 
     # Authentication URLs
-    path('accounts/login/', auth_views.LoginView.as_view(template_name='auth/login.html', authentication_form=TailwindAuthenticationForm), name='login'),
+    path('accounts/login/', WorkspaceLoginView.as_view(template_name='auth/login.html', authentication_form=TailwindAuthenticationForm), name='login'),
     path('accounts/logout/', auth_views.LogoutView.as_view(template_name='auth/logout.html'), name='logout'),
     # path('logout/', auth_views.LogoutView.as_view(template_name='registration/logged_out.html'), name='logout'),
 
     # path('', include('accounts.urls')),
     # path('', RedirectView.as_view(url='customers/', permanent=True)),
 
-    # Redirect root URL to login page if needed
-    path('', RedirectView.as_view(url='/accounts/login/'), name='home'),
+    # The authenticated workspace landing is role-aware. Anonymous requests
+    # use Django's normal login redirect and retain a safe ``next`` value.
+    path('', include('main_app.urls')),
     # In your urls.py
     # path('test-email/', views.test_email, name='test_email'),
     # path('test-email-multiple/', views.test_email_multiple, name='test_email_multiple'),

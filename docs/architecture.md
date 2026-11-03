@@ -11,28 +11,45 @@ The repository root is the project boundary. The virtual environment is no longe
 ```text
 Browser
   -> internetservices.urls
+  -> ActiveOrganizationMiddleware
   -> app urls/views
+  -> permission + tenant policy checks
   -> forms/services/models
-  -> SQLite in development, PostgreSQL-ready dependencies for production
+  -> SQLite for simple local development or PostgreSQL via DATABASE_URL
 ```
 
-`users.middleware.ActiveOrganizationMiddleware` establishes tenant/organization context for requests. Apps that store tenant-owned data should continue to make tenancy explicit in models, forms, querysets, and tests.
+`users.middleware.ActiveOrganizationMiddleware` establishes tenant/organization context for requests. `TenantMembership` is the authoritative relationship used by request-time RBAC. Apps that store tenant-owned data must keep tenancy explicit in models, forms, querysets, services, audit events, and tests.
 
 ## App Responsibilities
 
 `internetservices` owns Django settings, root URL routing, ASGI/WSGI entrypoints, and global context processors.
 
-`users` owns authentication, organizations, active tenant selection, permissions, and tenant helper utilities.
+`main_app` owns the role-aware post-login workspace landing.
+
+`users` owns authentication, organizations, active tenant selection, memberships, permission grants, and audited support access.
 
 `customers` owns customer records, customer documents, customer lifecycle state, and customer-facing query rules.
 
 `services` owns internet service packages.
 
-`products` owns product catalog records.
+`products` owns product catalog records, categories, tenant units of measure, and pricing tiers.
+
+Product/service SKU identity is allocated only at persistence by the shared
+products creation service and a durable tenant counter. The
+[SKU allocation contract](sku_sequence_contract.md) defines normalization,
+historical compatibility, retries, entry points and deployment/backfill steps.
 
 `billing` owns billing documents, billing line items, numbering, printable templates, receipts, and PDF-related behavior.
 
 `audit` owns append-only audit records and audit metadata.
+
+`inventory` owns suppliers, purchases, balances, stock movements, serialized units, carts, imports, and inventory reports.
+
+`custom_fields` owns tenant-defined fields and values for supported domain records.
+
+`messaging` owns message templates, previews, and delivery workflows.
+
+`work_reports` owns technician work reports, approval transitions, manual Technician payment acknowledgements, and immutable report/payment history. It does not own billing, payroll, accounting, or money movement.
 
 `templates` owns shared templates and cross-app UI fragments.
 
@@ -52,11 +69,29 @@ Do not import across apps for convenience if the dependency is really a domain a
 
 Keep migrations committed with their app. Never edit old migrations after they have been applied outside your machine.
 
+Treat tenant identity as server-established state. Do not filter tenant-owned data using a tenant ID accepted directly from request data. Require an active membership, use tenant-scoped managers/querysets, and test cross-tenant denial paths.
+
+Permission codes in `users.permissions` are the stable authorization contract. Views and services should fail closed with `require_permission`; templates may hide unavailable actions, but UI visibility is never an authorization boundary.
+
+Invitation and password pages render through a standalone account-access layout, independent of any authenticated workspace shell. When a browser already has a different signed-in account, invitation acceptance requires an explicit POST sign-out in that browser before password setup; sessions on other devices remain independent. New invitees sign in with their own credentials after setup, and tenant membership permissions are enforced on every protected request.
+
+Account-access pages use an origin-only referrer policy. It keeps invitation bearer-token paths out of outbound `Referer` headers while allowing browsers to send their real `Origin` on form POSTs for Django's CSRF check. Do not use a page-wide `no-referrer` policy on these HTML forms or permit `Origin: null` in CSRF settings.
+
+Super Administrator access to tenant data requires an explicit support session with a reason. Preserve the audit trail when extending this workflow.
+
 ### Inventory boundaries
 
 `products.Product` remains the shared product/service catalog and `billing.BillingDocument` remains the only quotation, invoice, and receipt system. The `inventory` app owns suppliers, purchases, balances, immutable movements, serial units, carts, sale-cost records, reports, imports, and inventory APIs.
 
 All balance mutations go through `InventoryService` under `transaction.atomic()` with row locks. `BillingService.create_receipt_from_invoice()` locks the invoice and invokes inventory completion in the same transaction only for catalog/inventory sales. This makes retries idempotent and prevents negative stock or double-selling serialized units.
+
+Each product has one selected sales/stock unit. Its buying price, purchase quantity, purchase unit cost, stock balance, and selling prices all refer to that same unit. Purchasing in packages and converting into smaller stock units is intentionally deferred and is not an active workflow.
+
+Weighted-average inventory cost remains active for ordinary same-unit purchases at six-decimal precision and is the authoritative future-sale cost floor whenever positive movement-backed stock exists; otherwise the product buying price is used. Product-linked quotations, invoices, POS carts, APIs, discounts, and payment completion all enforce net pre-tax unit revenue strictly greater than that floor. Tax is excluded from the comparison, equality is prohibited, and receiving higher-cost stock remains allowed even when it creates a visible pricing warning. Confirmed financial and inventory records remain immutable. Package conversion may only return in a separately approved phase with an explicit historical-data migration plan.
+
+After any stock, purchase, cart, or billing history exists, a product's sales/stock unit is immutable across the catalog form, model validation, and admin. Adopting another unit creates a tenant-scoped successor product with a distinct SKU and zero opening stock, deactivates the old catalog identity, and records an idempotent audit event. No stock, cost, document, or historical line is reassigned or converted; physical stock must be counted and entered through an approved inventory reconciliation or receiving workflow. The read-only `audit_product_units` command reports historical billing snapshots whose unit differs from the current product identity and can fail a deployment gate with `--fail-on-drift`.
+
+The product pricing form shows the current cost floor to staff with stock-cost viewing permission. Its buying price may differ from the movement-backed weighted average; editing that default does not rewrite inventory cost. Selling tiers at or below the floor are rejected, and cost amounts are not disclosed to staff without the cost-view permission.
 
 Keep uploaded media and generated files out of source control. Use `.gitignore` for local artifacts and a real object store for production uploads when deploying.
 
@@ -79,7 +114,11 @@ The settings include WhiteNoise static-file support. For production, run:
 .\.venv\Scripts\python.exe manage.py collectstatic
 ```
 
-Use PostgreSQL for production rather than SQLite. The project already pins `psycopg2-binary`, but database URL parsing has not been introduced yet; add that when the deployment target is known.
+Use PostgreSQL for production rather than SQLite. `DATABASE_URL` is parsed by Django settings and production connections are reused with a finite connection age.
+
+The application enables secure cookies, HTTPS redirect, proxy TLS handling, HSTS, MIME sniffing protection, and frame denial when debug mode is disabled. HSTS preload remains opt-in because enabling it is a long-lived operational commitment.
+
+Filesystem media storage is suitable for a single persistent instance only. Use durable object storage before scaling across ephemeral or multiple application instances.
 
 ## Integration Contract
 
@@ -105,3 +144,22 @@ Deployment note:
 
 - In Docker, `localhost` inside a container refers to that same container, not the other service
 - Use the compose service name or network alias when the consumer runs in a different container
+
+Cart activity, scoped active/history lists, restoration, and maintenance follow [the cart lifecycle contract](cart_lifecycle.md). Cleanup is explicit maintenance with dry-run by default, never an HTTP list side effect.
+
+Exact-ID sample handover maintenance follows [the handover cleanup contract and runbook](handover_cleanup_runbook.md).
+Its signed, tenant/support-authorized offline plans are the narrow maintenance
+exception for explicitly approved sample inventory/POS history. Ordinary financial
+and inventory immutability remains in force. Registered-customer billing and
+internet subscription data are protected; customer cleanup uses a separate,
+dependency-blocking policy. Apply requires a database-wide write-quiescence window,
+verified backup/restore evidence and complete revalidation under PostgreSQL locks.
+Explicitly classified sample billing and the all-products-zero postcondition use
+the [v2 classified maintenance contract](handover_classified_cleanup_contract_v2.md).
+These are distinct offline operations; default inventory cleanup still blocks
+registered-customer and mixed billing, and normal financial immutability is unchanged.
+
+Inventory report selection, date boundaries, purchase totals, stock valuation,
+export and currency semantics follow [the inventory reports contract](inventory_reports_audit_2026-10-24.md).
+
+Search scope, valuation provenance, historical loss review and the reporting workspace follow [the reporting follow-up contract](inventory_reports_followup_2026-10-24.md).

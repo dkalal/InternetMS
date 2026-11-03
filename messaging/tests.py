@@ -43,6 +43,7 @@ class MessagingTestCase(TestCase):
             location="Arusha",
         )
         self.template = MessageTemplate.objects.create(
+            tenant=self.org1,
             name="INVOICE_NOTIFICATION",
             category=MessageTemplate.Category.INVOICE,
             content="Hello {{ customer_name }}, invoice {{ invoice_number }} is {{ amount }} due {{ due_date }}.",
@@ -77,7 +78,7 @@ class MessageBuilderServiceTests(MessagingTestCase):
 
         self.assertEqual(message, "Hello Asha, invoice INV-001 is 50,000 TZS due .")
 
-    def test_tenant_and_global_templates_can_share_catalog(self):
+    def test_templates_are_tenant_scoped(self):
         tenant_template = MessageTemplate.objects.create(
             tenant=self.org1,
             name="TENANT_FOLLOWUP",
@@ -85,7 +86,7 @@ class MessageBuilderServiceTests(MessagingTestCase):
             content="Hi {{ customer_name }}",
         )
 
-        self.assertIsNone(self.template.tenant_id)
+        self.assertEqual(self.template.tenant_id, self.org1.id)
         self.assertEqual(tenant_template.tenant_id, self.org1.id)
 
 
@@ -165,6 +166,7 @@ class MessagingViewTests(MessagingTestCase):
             status=BillingDocument.Status.ISSUED,
             total=Decimal("50000.00"),
             currency="TZS",
+            created_by=self.user,
         )
         self.quotation = BillingDocument.objects.create(
             organization=self.org1,
@@ -176,6 +178,7 @@ class MessagingViewTests(MessagingTestCase):
             status=BillingDocument.Status.DRAFT,
             total=Decimal("70000.00"),
             currency="TZS",
+            created_by=self.user,
         )
         self.receipt = BillingDocument.objects.create(
             organization=self.org1,
@@ -190,6 +193,7 @@ class MessagingViewTests(MessagingTestCase):
             invoice=self.invoice,
             payment_date=date(2026, 4, 2),
             payment_method="cash",
+            created_by=self.user,
         )
 
     def test_staff_can_fetch_preview_and_send(self):

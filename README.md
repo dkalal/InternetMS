@@ -1,6 +1,8 @@
-# JS Internet Services
+# JS Business Management System
 
-Django application for managing customers, services, products, billing, audit records, and tenant-aware user access for JS Internet Services.
+Django SaaS application for tenant-scoped customer, service, inventory, billing, messaging, technician work-report, and access management.
+
+The codebase is a modular monolith: one Django deployment and database, with domain boundaries enforced by app-level services, tenant-aware querysets, role-based permissions, and audit logs.
 
 ## Project Layout
 
@@ -9,29 +11,27 @@ JS-InternetServices/
   manage.py
   requirements.txt
   internetservices/     # Django project settings, URLs, ASGI/WSGI
+  main_app/             # Authenticated workspace landing and dashboard
   audit/                # Audit log domain
   billing/              # Documents, numbering, PDFs, billing workflows
   customers/            # Customer records and lifecycle
-  products/             # Product catalog
+  custom_fields/        # Tenant-defined fields for supported records
+  integrations/         # Token-authenticated external APIs
+  inventory/            # Stock, purchases, carts, serials, and reports
+  messaging/            # Message templates and delivery workflows
+  products/             # Product catalog, categories, and units
   services/             # Internet service packages
-  users/                # Auth, organizations, tenancy, permissions
+  users/                # Auth, tenants, memberships, RBAC, support access
+  work_reports/         # Technician reports and approval history
   templates/            # Shared and app-level templates
-  media/                # Local development uploads
   docs/                 # Architecture and onboarding notes
-  .venv/                # Local virtual environment only
 ```
 
-The application now runs from the repository root:
+Generated/local directories such as `.venv/`, `media/`, `staticfiles/`, `.env`, and `db.sqlite3` are intentionally excluded from Git.
+
+## Local Setup
 
 ```powershell
-cd C:\Users\JSSD\JS-InternetServices
-.\.venv\Scripts\python.exe manage.py runserver
-```
-
-## Setup
-
-```powershell
-cd C:\Users\JSSD\JS-InternetServices
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -39,7 +39,56 @@ py -m venv .venv
 .\.venv\Scripts\python.exe manage.py runserver
 ```
 
-For local configuration, copy values from `.env.example` into your environment variables or your deployment secret manager. Do not commit real secrets.
+Run these commands from the repository root. Copy `.env.example` to `.env` and replace placeholders for the environment you are running. Never commit `.env` or real credentials. With no usable `DATABASE_URL` in debug mode, local development falls back to SQLite.
+
+For a PostgreSQL-backed local environment, install Docker and run:
+
+```powershell
+docker compose up --build
+```
+
+The application is then available at `http://localhost:8000`; PostgreSQL is exposed locally on port `5434`.
+
+### PDF rendering on Windows
+
+The Docker runtime includes WeasyPrint's native Pango and HarfBuzz libraries. For
+native Windows development, install [MSYS2](https://www.msys2.org/) and install
+Pango through its UCRT64 shell, following the
+[official WeasyPrint Windows setup](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows):
+
+```text
+pacman -S mingw-w64-ucrt-x86_64-pango
+```
+
+Then set `WEASYPRINT_DLL_DIRECTORIES=C:\msys64\ucrt64\bin` in `.env`, restart the
+Django process, and verify the same virtual environment used by Django with:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py shell -c "from billing.pdf import _load_weasyprint; backend = _load_weasyprint(); assert backend is not None, 'PDF native libraries unavailable'; pdf = backend.HTML(string='<p>PDF runtime check</p>').write_pdf(); assert pdf.startswith(b'%PDF-'); print('PDF runtime OK:', backend.__version__, len(pdf), 'bytes')"
+```
+
+Use the Django command above when the DLL path is configured in `.env`: the
+standalone `python -m weasyprint` command does not load the project's `.env`.
+The check renders an actual PDF in memory without reading or changing business
+data. Before the release gate, also run the PDF regression test:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py test billing.tests.BillingListViewTests.test_annual_number_displays_in_list_detail_and_print_view --keepdb
+```
+
+When the PDF backend is unavailable, billing PDF routes deliberately return a
+printable HTML fallback with `X-PDF-Fallback: html` and log one concise warning
+per server process.
+
+## Tenancy and Access Control
+
+- `TenantMembership` is the authoritative user-to-tenant relationship.
+- The active tenant is established by `ActiveOrganizationMiddleware`; tenant-owned queries must never trust a tenant identifier supplied by the client.
+- Administrator/Manager, Sales, Technician, and Super Administrator roles map to explicit permission codes. Delegated grants are restricted to a safe allow-list.
+- Super Administrators enter an explicit, audited support session before accessing tenant data.
+- Financial documents and approved technician reports preserve immutable ownership/history data.
+
+See [architecture notes](docs/architecture.md), [RBAC and work-report audit](docs/multi_tenant_rbac_work_reports_audit.md), and [pricing compatibility notes](docs/technician_pricing_compatibility.md) before changing these boundaries.
 
 ## Customer Sync API
 
@@ -84,7 +133,7 @@ Only active, non-deleted customers from the integration consumer's organization 
 
 ## Inventory Module
 
-The tenant-scoped inventory module is available at `/inventory/`. It reuses JIMS customers, quotations, invoices, receipts, token authentication, permissions, and audit logs.
+The tenant-scoped inventory module is available at `/inventory/`. It reuses JBMS customers, quotations, invoices, receipts, token authentication, permissions, and audit logs.
 
 Key lifecycle rules:
 
@@ -102,8 +151,23 @@ Inventory API endpoints use the same active `IntegrationConsumer` token conventi
 
 ```powershell
 .\.venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 .\.venv\Scripts\python.exe manage.py test
 ```
+
+Before production deployment, also run `manage.py check --deploy` with production environment variables. HSTS preload is intentionally opt-in; enable it only after every subdomain is permanently HTTPS-only.
+
+## Deployment
+
+The Docker image runs as a non-root user, installs the native libraries required by WeasyPrint, and serves the app with Gunicorn. Production requires at least:
+
+- `DJANGO_SECRET_KEY` with a unique high-entropy value
+- `DJANGO_DEBUG=0`
+- `DJANGO_ALLOWED_HOSTS` and `DJANGO_CSRF_TRUSTED_ORIGINS`
+- `DATABASE_URL` for PostgreSQL
+- SMTP variables when outbound email is enabled
+
+Run migrations and `collectstatic` as release steps. Uploaded media currently uses filesystem storage; configure durable object storage before running multiple ephemeral application instances.
 
 ## Architecture Rules
 

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Add Internet service · {{ customer.name }}{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-5xl space-y-6 px-4 sm:px-0">
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <nav class="text-sm text-slate-500" aria-label="Breadcrumb"><a class="hover:underline" href="{{ customer.get_absolute_url }}">{{ customer.name }}</a><span class="px-1">/</span><span>Add Internet service</span></nav>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Add Internet service</h1>
+      <p class="mt-1 text-sm text-slate-600">Create the installed connection first, then optionally establish its initial package agreement.</p>
+    </div>
+    <a href="{{ customer.get_absolute_url }}" class="jims-btn jims-btn-secondary">Cancel</a>
+  </header>
+
+  <form method="post" class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]" data-unsaved-form>
+    {% csrf_token %}
+    <div class="space-y-6">
+      {% if form.non_field_errors %}<div class="jims-error-summary" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      <section class="rounded-lg border border-slate-200 bg-white p-5">
+        <h2 class="text-sm font-semibold text-slate-950">Connection identity</h2>
+        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.site %}</div>
+          {% include "components/form_field.html" with field=form.service_code %}
+          {% include "components/form_field.html" with field=form.name %}
+          {% include "components/form_field.html" with field=form.ip_address %}
+          {% include "components/form_field.html" with field=form.vlan_id %}
+          <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.installed_at %}</div>
+          <div class="sm:col-span-2">{% include "components/form_field.html" with field=form.technical_notes %}</div>
+        </div>
+      </section>
+      <section class="rounded-lg border border-slate-200 bg-white p-5">
+        <h2 class="text-sm font-semibold text-slate-950">Initial commercial agreement <span class="font-normal text-slate-500">· Optional</span></h2>
+        <p class="mt-1 text-sm text-slate-600">A package belongs to the subscription, not permanently to the customer or site.</p>
+        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {% include "components/form_field.html" with field=form.package %}
+          {% include "components/form_field.html" with field=form.subscription_start_date %}
+        </div>
+      </section>
+    </div>
+    <aside class="h-fit rounded-lg border border-slate-200 bg-slate-50 p-5 lg:sticky lg:top-24">
+      <h2 class="text-sm font-semibold text-slate-950">What will be created</h2>
+      <ul class="mt-3 space-y-2 text-sm text-slate-600"><li>One service at the selected site</li><li>Operational status starts as “Status unknown”</li><li>A subscription only when a package is selected</li><li>No historical records are replaced</li></ul>
+      <button class="jims-btn jims-btn-primary mt-5 w-full" type="submit">Create Internet service</button>
+    </aside>
+  </form>
+</div>
+{% endblock %}

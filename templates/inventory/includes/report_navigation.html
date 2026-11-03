@@ -1,0 +1,8 @@
+<nav aria-label="{{ nav_label }}" class="report-navigation">
+  {% for group in report_groups %}
+    <div class="report-nav-group">
+      <p class="report-nav-heading">{{ group.label }}</p>
+      {% for slug,label in group.links %}<a href="{% url 'inventory:report' slug %}" {% if slug == report_name %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+    </div>
+  {% endfor %}
+</nav>

@@ -1,0 +1,9 @@
+<article class="team-member-card">
+  <div class="flex items-start gap-3">
+    <span class="team-avatar" aria-hidden="true">{{ member.initials }}</span>
+    <div class="min-w-0 flex-1"><h2>{{ member.display_name }}</h2><p>{{ member.user.email|default:"No email address" }}</p></div>
+    {% include "users/includes/status_badge.html" with member=member %}
+  </div>
+  <div class="team-member-card__meta"><div><span>Role</span>{% include "users/includes/role_badge.html" with member=member %}</div><div><span>Access</span><strong>{{ member.access_summary }}</strong></div></div>
+  {% if member.can_manage %}<button type="button" class="jims-btn jims-btn-secondary w-full" data-team-drawer-open="{{ member.id }}">Manage access</button>{% elif member.id == ACTIVE_MEMBERSHIP.id %}<p class="text-xs text-slate-500">Your access cannot be changed here.</p>{% endif %}
+</article>

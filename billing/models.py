@@ -9,6 +9,13 @@ from users.tenant_models import TenantScopedManager
 
 
 class BillingDocument(models.Model):
+    class SalePricingCategory(models.TextChoices):
+        CUSTOMER_TIER = "customer_tier", "Customer category (automatic)"
+        STANDARD = "standard", "Standard"
+        TECHNICIAN = "technician", "Technician"
+        WHOLESALE = "wholesale", "Wholesale"
+        LEGACY_RETAIL = "retail", "Legacy Retail"
+
     class DocumentType(models.TextChoices):
         QUOTATION = "quotation", "Quotation"
         INVOICE = "invoice", "Invoice"
@@ -57,14 +64,23 @@ class BillingDocument(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_billing_documents",
-        null=True,
-        blank=True,
         db_index=True,
     )
     document_type = models.CharField(max_length=20, choices=DocumentType.choices, db_index=True)
     number = models.CharField(max_length=60)
 
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_documents")
+    is_walk_in_sale = models.BooleanField(default=False, editable=False)
+    walk_in_name_snapshot = models.CharField(max_length=200, blank=True, default='', editable=False)
+    shipping_address_snapshot = models.CharField(max_length=500, blank=True, default='', editable=False)
+    site = models.ForeignKey(
+        "customers.CustomerSite",
+        on_delete=models.PROTECT,
+        related_name="billing_documents",
+        null=True,
+        blank=True,
+        help_text="Optional when the whole document concerns one customer site.",
+    )
 
     issue_date = models.DateField(db_index=True)
     issued_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -96,6 +112,13 @@ class BillingDocument(models.Model):
     is_current_version = models.BooleanField(default=True, db_index=True)
 
     currency = models.CharField(max_length=10, default="TZS")
+    sale_pricing_category = models.CharField(
+        max_length=20,
+        choices=SalePricingCategory.choices,
+        default=SalePricingCategory.CUSTOMER_TIER,
+        db_index=True,
+        help_text="Select the customer pricing category intentionally for this transaction.",
+    )
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("18.00"))
@@ -115,6 +138,26 @@ class BillingDocument(models.Model):
         related_name="created_billing_documents",
         null=True,
         blank=True,
+    )
+    created_by_membership = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="created_billing_documents",
+    )
+    responsible_membership = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="responsible_billing_documents",
+    )
+    issued_by_membership = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="issued_billing_documents",
+    )
+    payment_recorded_by_membership = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="payment_recorded_billing_documents",
+    )
+    last_modified_by_membership = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="last_modified_billing_documents",
     )
 
     invoice = models.ForeignKey(
@@ -181,18 +224,18 @@ class BillingDocument(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "document_type", "number", "version_number"],
+                fields=["tenant", "document_type", "number", "version_number"],
                 condition=models.Q(document_type="quotation"),
-                name="uniq_quotation_version_number_per_org",
+                name="uniq_quotation_version_number_per_tenant",
             ),
             models.UniqueConstraint(
-                fields=["organization", "document_type", "number"],
+                fields=["tenant", "document_type", "number"],
                 condition=~models.Q(document_type="quotation"),
-                name="uniq_non_quotation_number_per_org",
+                name="uniq_non_quotation_number_per_tenant",
             ),
             models.UniqueConstraint(
-                fields=["organization", "payment_reference"],
-                name="uniq_payment_reference_per_org",
+                fields=["tenant", "payment_reference"],
+                name="uniq_payment_reference_per_tenant",
                 condition=~models.Q(payment_reference=""),
             ),
         ]
@@ -212,6 +255,10 @@ class BillingDocument(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_document_type_display()} #{self.number}"
+
+    @property
+    def display_customer_name(self) -> str:
+        return self.walk_in_name_snapshot if self.is_walk_in_sale else self.customer.name
 
     @classmethod
     def invoice_status_choices(cls):
@@ -255,8 +302,10 @@ class BillingDocument(models.Model):
 
     def save(self, *args, **kwargs):
         if self.pk:
-            previous = type(self).objects.unscoped().filter(pk=self.pk).only("document_type", "status").first()
+            previous = type(self).objects.unscoped().filter(pk=self.pk).only("document_type", "status", "number").first()
             if previous is not None and not getattr(self, "_allow_direct_edit", False):
+                if previous.number != self.number:
+                    raise ValidationError({"number": "An assigned document number cannot be changed."})
                 if previous.document_type == self.DocumentType.QUOTATION:
                     raise ValidationError("Quotation versions are immutable. Create a new version instead.")
                 if previous.document_type == self.DocumentType.INVOICE and previous.status in {
@@ -276,6 +325,44 @@ class BillingDocument(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValidationError({"customer": "Customer must belong to the document tenant."})
+        if self.site_id and (
+            self.site.tenant_id != self.tenant_id or self.site.customer_id != self.customer_id
+        ):
+            raise ValidationError({"site": "Site must belong to the document customer and tenant."})
+        if self.created_by_membership_id is None and self.created_by_id and self.tenant_id:
+            from users.models import TenantMembership
+
+            inferred = TenantMembership.objects.filter(
+                tenant_id=self.tenant_id, user_id=self.created_by_id, is_active=True
+            ).first()
+            if inferred is not None:
+                self.created_by_membership = inferred
+                if self.responsible_membership_id is None:
+                    self.responsible_membership = inferred
+                if self.status != self.Status.DRAFT and self.issued_by_membership_id is None:
+                    self.issued_by_membership = inferred
+                if self.document_type == self.DocumentType.RECEIPT and self.payment_recorded_by_membership_id is None:
+                    self.payment_recorded_by_membership = inferred
+                if self.last_modified_by_membership_id is None:
+                    self.last_modified_by_membership = inferred
+        for field_name in (
+            "created_by_membership", "responsible_membership", "issued_by_membership",
+            "payment_recorded_by_membership", "last_modified_by_membership",
+        ):
+            membership = getattr(self, field_name, None)
+            if membership is not None and membership.tenant_id != self.tenant_id:
+                raise ValidationError({field_name: "Membership must belong to the document tenant."})
+        if self.pk and previous is not None and previous.status != self.Status.DRAFT:
+            stored = type(self).objects.unscoped().filter(pk=self.pk).values(
+                "created_by_membership_id", "responsible_membership_id"
+            ).first()
+            if stored and (
+                stored["created_by_membership_id"] != self.created_by_membership_id
+                or stored["responsible_membership_id"] != self.responsible_membership_id
+            ) and not getattr(self, "_allow_manager_reassignment", False):
+                raise ValidationError("Issued financial document ownership is immutable.")
         super().save(*args, **kwargs)
 
 
@@ -285,6 +372,8 @@ class BillingLineItem(models.Model):
         RECURRING_MONTHLY = "recurring_monthly", "Recurring monthly"
 
     class PricingMode(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        TECHNICIAN = "technician", "Technician"
         RETAIL = "retail", "Retail"
         WHOLESALE = "wholesale", "Wholesale"
         PROMOTION = "promotion", "Promotion"
@@ -300,17 +389,34 @@ class BillingLineItem(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_billing_line_items",
-        null=True,
-        blank=True,
         db_index=True,
     )
     document = models.ForeignKey(BillingDocument, on_delete=models.CASCADE, related_name="items")
 
     product = models.ForeignKey("products.Product", on_delete=models.PROTECT, null=True, blank=True)
     package = models.ForeignKey("services.Package", on_delete=models.PROTECT, null=True, blank=True)
+    internet_service = models.ForeignKey(
+        "customers.InternetService",
+        on_delete=models.PROTECT,
+        related_name="billing_line_items",
+        null=True,
+        blank=True,
+    )
+    subscription = models.ForeignKey(
+        "CustomerSubscription",
+        on_delete=models.PROTECT,
+        related_name="billing_line_items",
+        null=True,
+        blank=True,
+    )
     description = models.TextField(blank=True, default="")
 
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1.00"))
+    unit_snapshot = models.CharField(
+        max_length=50,
+        default="Unit",
+        help_text="Immutable display unit captured when the document line is saved.",
+    )
     base_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
@@ -364,8 +470,33 @@ class BillingLineItem(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if document is not None and document.tenant_id != self.tenant_id:
+            raise ValidationError("Line item and document must belong to the same tenant.")
+        if self.product_id and self.product.tenant_id != self.tenant_id:
+            raise ValidationError("Product belongs to another tenant.")
+        if self.package_id and self.package.tenant_id != self.tenant_id:
+            raise ValidationError("Package belongs to another tenant.")
+        if self.promotion_id and self.promotion.tenant_id != self.tenant_id:
+            raise ValidationError("Promotion belongs to another tenant.")
+        if self.internet_service_id:
+            if self.internet_service.tenant_id != self.tenant_id:
+                raise ValidationError("Internet service belongs to another tenant.")
+            if document is not None and self.internet_service.customer_id != document.customer_id:
+                raise ValidationError("Internet service belongs to another customer.")
+            if document is not None and document.site_id and self.internet_service.site_id != document.site_id:
+                raise ValidationError("Internet service belongs to another document site.")
+        if self.subscription_id:
+            if self.subscription.tenant_id != self.tenant_id:
+                raise ValidationError("Subscription belongs to another tenant.")
+            if document is not None and self.subscription.customer_id != document.customer_id:
+                raise ValidationError("Subscription belongs to another customer.")
+            if document is not None and document.site_id and self.subscription.site_id != document.site_id:
+                raise ValidationError("Subscription belongs to another document site.")
+            if self.internet_service_id and self.subscription.internet_service_id != self.internet_service_id:
+                raise ValidationError("Line service and subscription context must agree.")
         if self.base_unit_price == Decimal("0.00"):
             self.base_unit_price = self.unit_price
+        self.unit_snapshot = (self.unit_snapshot or "Unit").strip()
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -399,29 +530,38 @@ class DocumentSequence(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_billing_sequences",
-        null=True,
-        blank=True,
         db_index=True,
     )
     document_type = models.CharField(max_length=20, choices=DocumentType.choices)
-    sequence_date = models.DateField()
+    sequence_date = models.DateField(null=True, blank=True)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
     last_number = models.PositiveIntegerField(default=0)
     objects = TenantScopedManager()
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
+                fields=["tenant", "document_type", "year"],
+                name="uniq_billing_sequence_per_tenant_year",
+            ),
+            models.UniqueConstraint(
                 fields=["tenant", "document_type", "sequence_date"],
-                name="uniq_billing_sequence_per_tenant_day",
-            )
+                condition=models.Q(document_type=BillingDocument.DocumentType.CREDIT_NOTE),
+                name="uniq_credit_sequence_per_tenant_day",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "document_type", "sequence_date"]),
             models.Index(fields=["tenant", "document_type", "sequence_date"]),
+            models.Index(
+                fields=["tenant", "document_type", "year"],
+                name="bill_seq_tenant_type_year_idx",
+            ),
         ]
 
     def __str__(self) -> str:
-        return f"{self.tenant_id}:{self.document_type}:{self.sequence_date}:{self.last_number}"
+        period = self.year if self.year is not None else self.sequence_date
+        return f"{self.tenant_id}:{self.document_type}:{period}:{self.last_number}"
 
     def save(self, *args, **kwargs):
         if self.tenant_id is None and self.organization_id is not None:
@@ -450,8 +590,6 @@ class Promotion(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_promotions",
-        null=True,
-        blank=True,
         db_index=True,
     )
     name = models.CharField(max_length=160)
@@ -511,12 +649,17 @@ class CustomerSubscription(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_customer_subscriptions",
-        null=True,
-        blank=True,
         db_index=True,
     )
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="subscriptions")
     site = models.ForeignKey("customers.CustomerSite", on_delete=models.PROTECT, related_name="subscriptions", null=True, blank=True)
+    internet_service = models.ForeignKey(
+        "customers.InternetService",
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+    )
     package = models.ForeignKey("services.Package", on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
     start_date = models.DateField()
@@ -531,10 +674,19 @@ class CustomerSubscription(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "customer", "site", "package"],
-                condition=models.Q(status="active"),
-                name="uniq_active_subscription_per_customer_site_package",
-            )
+                fields=["tenant", "customer", "site", "package"],
+                condition=models.Q(status="active", internet_service__isnull=True),
+                name="uniq_active_subscription_per_tenant_site_package",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "internet_service"],
+                condition=models.Q(status="active", internet_service__isnull=False),
+                name="uniq_active_subscription_per_internet_service",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(end_date__isnull=True) | models.Q(end_date__gte=models.F("start_date")),
+                name="subscription_end_not_before_start",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "status"]),
@@ -555,6 +707,21 @@ class CustomerSubscription(models.Model):
             self.organization_id = self.tenant_id
         if self.organization_id and self.tenant_id and self.organization_id != self.tenant_id:
             self.organization_id = self.tenant_id
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            raise ValidationError("Subscription customer belongs to another tenant.")
+        if self.package_id and self.package.tenant_id != self.tenant_id:
+            raise ValidationError("Subscription package belongs to another tenant.")
+        if self.site_id and self.site.tenant_id != self.tenant_id:
+            raise ValidationError("Subscription site belongs to another tenant.")
+        if self.site_id and self.site.customer_id != self.customer_id:
+            raise ValidationError("Subscription site belongs to another customer.")
+        if self.internet_service_id:
+            if self.internet_service.tenant_id != self.tenant_id:
+                raise ValidationError("Subscription Internet service belongs to another tenant.")
+            if self.internet_service.customer_id != self.customer_id:
+                raise ValidationError("Subscription Internet service belongs to another customer.")
+            if self.site_id and self.internet_service.site_id != self.site_id:
+                raise ValidationError("Subscription Internet service belongs to another site.")
         if self.site_id is None and self.customer_id is not None:
             from customers.models import Customer
             from customers.services import CustomerService
@@ -580,8 +747,6 @@ class BillingSheet(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_billing_sheets",
-        null=True,
-        blank=True,
         db_index=True,
     )
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="billing_sheets")
@@ -611,8 +776,8 @@ class BillingSheet(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "reference_number"],
-                name="uniq_billing_sheet_ref_per_org",
+                fields=["tenant", "reference_number"],
+                name="uniq_billing_sheet_ref_per_tenant",
             )
         ]
         indexes = [
@@ -644,6 +809,10 @@ class BillingSheet(models.Model):
 
 
 class BillingItem(models.Model):
+    tenant = models.ForeignKey(
+        "users.Organization", on_delete=models.PROTECT, related_name="tenant_billing_items",
+        db_index=True,
+    )
     billing_sheet = models.ForeignKey(BillingSheet, on_delete=models.CASCADE, related_name="items")
     description = models.CharField(max_length=300)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1.00"))
@@ -652,6 +821,7 @@ class BillingItem(models.Model):
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
 
     class Meta:
         ordering = ["created_at"]
@@ -660,6 +830,8 @@ class BillingItem(models.Model):
         return self.description
 
     def save(self, *args, **kwargs):
+        if self.billing_sheet_id:
+            self.tenant_id = self.billing_sheet.tenant_id
         self.total_price = (self.quantity * self.unit_price).quantize(Decimal("0.01"))
         super().save(*args, **kwargs)
 
@@ -678,8 +850,6 @@ class SubscriptionPeriod(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_subscription_periods",
-        null=True,
-        blank=True,
         db_index=True,
     )
     subscription = models.ForeignKey(CustomerSubscription, on_delete=models.PROTECT, related_name="periods")

@@ -41,7 +41,11 @@ class CustomerQuerySet(models.QuerySet):
     
     def optimized_list(self):
         """Optimized query for list views"""
-        return self.select_related('internet_profile').prefetch_related('packages', 'sites__packages')
+        return self.select_related('internet_profile').prefetch_related(
+            'packages',
+            'sites__packages',
+            'sites__internet_services',
+        )
     
     def search(self, query):
         """Search customers by name, email, phone, location"""
@@ -64,7 +68,7 @@ class CustomerManager(models.Manager):
     """Custom manager for Customer model"""
     
     def get_queryset(self):
-        queryset = CustomerQuerySet(self.model, using=self._db).alive()
+        queryset = CustomerQuerySet(self.model, using=self._db).alive().filter(is_pos_placeholder=False)
         return scope_queryset(queryset, field_name="tenant")
 
     def with_deleted(self):

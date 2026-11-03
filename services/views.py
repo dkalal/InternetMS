@@ -9,8 +9,8 @@ from custom_fields.mixins import CustomFieldPageContextMixin
 from custom_fields.services import CustomFieldService
 from .models import Package
 from .forms import PackageForm
-from billing.models import CustomerSubscription, SubscriptionPeriod
-from users.permissions import PermissionCode, require_permission
+from billing.models import BillingDocument, CustomerSubscription, SubscriptionPeriod
+from users.permissions import PermissionCode, has_tenant_permission, require_permission
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
 
@@ -56,18 +56,14 @@ class PackageListView(LoginRequiredMixin, ListView):
         if max_price is not None:
             queryset = queryset.filter(monthly_fee__lte=max_price)
 
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
         queryset = queryset.annotate(
             active_subscribers=Count(
                 "subscriptions",
                 filter=Q(subscriptions__status=CustomerSubscription.Status.ACTIVE),
-                distinct=True,
-            ),
-            unpaid_periods=Count(
-                "subscriptions__periods",
-                filter=Q(subscriptions__periods__status__in=[
-                    SubscriptionPeriod.Status.INVOICED,
-                    SubscriptionPeriod.Status.OVERDUE,
-                ]),
                 distinct=True,
             ),
         )
@@ -76,11 +72,22 @@ class PackageListView(LoginRequiredMixin, ListView):
             queryset = queryset.filter(active_subscribers__gt=0)
         elif subscriber_state == "none":
             queryset = queryset.filter(active_subscribers=0)
-        unpaid_state = self.request.GET.get("unpaid_state")
-        if unpaid_state == "has":
-            queryset = queryset.filter(unpaid_periods__gt=0)
-        elif unpaid_state == "none":
-            queryset = queryset.filter(unpaid_periods=0)
+        if finance_all:
+            queryset = queryset.annotate(
+                unpaid_periods=Count(
+                    "subscriptions__periods",
+                    filter=Q(subscriptions__periods__status__in=[
+                        SubscriptionPeriod.Status.INVOICED,
+                        SubscriptionPeriod.Status.OVERDUE,
+                    ]),
+                    distinct=True,
+                ),
+            )
+            unpaid_state = self.request.GET.get("unpaid_state")
+            if unpaid_state == "has":
+                queryset = queryset.filter(unpaid_periods__gt=0)
+            elif unpaid_state == "none":
+                queryset = queryset.filter(unpaid_periods=0)
         queryset, self.active_sort = apply_sort(queryset, self.request.GET.get("sort"), self.sort_options, "name")
         return queryset
 
@@ -105,17 +112,31 @@ class PackageDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, DetailV
         context = super().get_context_data(**kwargs)
         package = self.object
         organization = require_organization(self.request)
+        finance_all = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
+            membership=self.request.membership,
+        )
         subscriptions = CustomerSubscription.objects.filter(
             organization=organization,
             package=package,
-        ).select_related("customer", "site")
+        ).select_related("customer", "site", "internet_service").order_by("-status", "customer__name", "site__name", "-start_date")
         context["subscriptions"] = subscriptions
         context["active_subscriber_count"] = subscriptions.filter(status=CustomerSubscription.Status.ACTIVE).count()
-        periods = SubscriptionPeriod.objects.filter(organization=organization, subscription__package=package)
-        context["unpaid_period_count"] = periods.filter(
-            status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
-        ).count()
-        context["collected_amount"] = periods.filter(status=SubscriptionPeriod.Status.PAID).aggregate(total=Sum("final_amount"))["total"] or 0
+        context["active_customer_count"] = subscriptions.filter(
+            status=CustomerSubscription.Status.ACTIVE,
+        ).values("customer_id").distinct().count()
+        context["finance_all"] = finance_all
+        if finance_all:
+            periods = SubscriptionPeriod.objects.filter(organization=organization, subscription__package=package)
+            context["unpaid_period_count"] = periods.filter(
+                status__in=[SubscriptionPeriod.Status.INVOICED, SubscriptionPeriod.Status.OVERDUE]
+            ).count()
+            subscription_invoice_ids = periods.exclude(invoice_id=None).values("invoice_id")
+            context["collected_amount"] = BillingDocument.objects.filter(
+                organization=organization,
+                document_type=BillingDocument.DocumentType.RECEIPT,
+                invoice_id__in=subscription_invoice_ids,
+            ).aggregate(total=Sum("total"))["total"] or 0
         context.update(self.get_custom_field_modal_context(target_model="package"))
         context["custom_fields"] = CustomFieldService.get_custom_field_values(package)
         return context
@@ -198,7 +219,13 @@ class PackageDeleteView(LoginRequiredMixin, DeleteView):
         # Add any additional context if needed
         return context
     
-    def delete(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):
         package = self.get_object()
-        messages.success(self.request, f'Package {package.name} deleted successfully.')
-        return super().delete(request, *args, **kwargs)
+        if package.subscriptions.exists() or package.billinglineitem_set.exists():
+            messages.error(
+                request,
+                "This package has subscription or financial history and cannot be deleted. Mark it inactive instead.",
+            )
+            return render(request, self.template_name, {"package": package, "object": package, "protected_history": True})
+        messages.success(request, f'Package {package.name} deleted successfully.')
+        return super().post(request, *args, **kwargs)

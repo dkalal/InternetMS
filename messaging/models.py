@@ -20,10 +20,7 @@ class MessageTemplate(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="message_templates",
-        null=True,
-        blank=True,
         db_index=True,
-        help_text="Leave blank for a global reusable template.",
     )
     name = models.CharField(max_length=120, db_index=True)
     category = models.CharField(max_length=20, choices=Category.choices, db_index=True)
@@ -41,11 +38,6 @@ class MessageTemplate(models.Model):
                 fields=["tenant", "name"],
                 condition=models.Q(is_active=True),
                 name="uniq_active_template_name_per_tenant",
-            ),
-            models.UniqueConstraint(
-                fields=["name"],
-                condition=models.Q(tenant__isnull=True, is_active=True),
-                name="uniq_active_global_template_name",
             ),
         ]
         indexes = [

@@ -39,3 +39,22 @@ class IntegrationCustomerSerializer(serializers.ModelSerializer):
         if obj.address:
             contact_bits.append(f"Address: {obj.address}")
         return ' | '.join(contact_bits) if contact_bits else ''
+
+
+class ExternalAssetAttributeSerializer(serializers.Serializer):
+    label = serializers.CharField(max_length=100)
+    value = serializers.CharField(max_length=500)
+
+
+class ExternalAssetSnapshotSerializer(serializers.Serializer):
+    external_uuid = serializers.UUIDField()
+    display_name = serializers.CharField(max_length=200, allow_blank=True, required=False, default='')
+    asset_tag = serializers.CharField(max_length=100, allow_blank=True, required=False, default='')
+    serial_number = serializers.CharField(max_length=100, allow_blank=True, required=False, default='')
+    category_name = serializers.CharField(max_length=200)
+    branch_name = serializers.CharField(max_length=200, allow_blank=True, required=False, default='')
+    status = serializers.CharField(max_length=32)
+    description = serializers.CharField(allow_blank=True, required=False, default='')
+    custom_attributes = ExternalAssetAttributeSerializer(many=True, required=False, default=list)
+    source_url = serializers.URLField(allow_blank=True, required=False, default='')
+    source_updated_at = serializers.DateTimeField()

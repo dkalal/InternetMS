@@ -5,6 +5,7 @@
     {% if custom_field_modal_open %}open{% endif %}
     aria-labelledby="custom-field-definition-modal-title"
     data-custom-field-modal
+    {% if custom_field_grid %}data-custom-field-grid{% endif %}
 >
     <form
         method="post"
@@ -26,7 +27,7 @@
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Quick action</p>
                     <h3 id="custom-field-definition-modal-title" class="mt-1 text-lg font-semibold text-slate-900">Add custom field</h3>
-                    <p class="mt-1 text-sm text-slate-600">Create a reusable metadata field without leaving this page.</p>
+                    <p class="mt-1 text-sm text-slate-600">{% if custom_field_grid %}This field will be available to products throughout this business. Your unsaved rows stay on this page.{% else %}Create a reusable metadata field without leaving this page.{% endif %}</p>
                 </div>
                 <button type="button" class="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" data-custom-field-close aria-label="Close dialog">
                     &times;
@@ -96,7 +97,7 @@
                 <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
                     <div class="flex items-center justify-between gap-3">
                         <div>
-                            <h4 class="text-sm font-semibold text-slate-900">Preview in customer profile</h4>
+                            <h4 class="text-sm font-semibold text-slate-900">{% if custom_field_grid %}Preview in product details{% else %}Preview in customer profile{% endif %}</h4>
                             <p class="mt-1 text-xs text-slate-500">A live sample of what staff will see.</p>
                         </div>
                         <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600" data-custom-field-preview-badge>Text</span>
@@ -336,7 +337,11 @@
       return body;
     }
 
-    function appendField(html, fieldName) {
+    function appendField(html, fieldName, definition) {
+      if (dialog.hasAttribute('data-custom-field-grid')) {
+        document.dispatchEvent(new CustomEvent('custom-field:grid-created', {detail: {html: html, fieldName: fieldName, definition: definition}}));
+        return;
+      }
       if (!fieldList || !html) return;
       var wrapper = document.createElement('div');
       wrapper.innerHTML = html.trim();
@@ -361,7 +366,7 @@
     }
 
     function saveAndUseNow() {
-      if (!saveNowButton) return;
+      if (!saveNowButton || saveNowButton.disabled) return;
       clearErrors();
       saveNowButton.disabled = true;
       saveNowButton.textContent = 'Saving...';
@@ -387,7 +392,7 @@
           }
 
           if (payload.data.definition && payload.data.definition.field_html) {
-            appendField(payload.data.definition.field_html, 'cf_' + payload.data.definition.key);
+            appendField(payload.data.definition.field_html, 'cf_' + payload.data.definition.key, payload.data.definition);
           }
 
           closeDialog();
@@ -448,6 +453,12 @@
     }
     if (saveNowButton) {
       saveNowButton.addEventListener('click', saveAndUseNow);
+    }
+    if (dialog.hasAttribute('data-custom-field-grid')) {
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        saveAndUseNow();
+      });
     }
 
     dialog.addEventListener('click', function (event) {

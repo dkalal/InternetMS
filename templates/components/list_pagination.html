@@ -20,26 +20,26 @@
       {% if page_obj.has_previous %}
         {% page_url 1 as first_url %}
         {% page_url page_obj.previous_page_number as previous_url %}
-        <a href="{{ first_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">First</a>
-        <a href="{{ previous_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Previous</a>
+        <a href="{{ first_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">First<span class="sr-only"> page</span></a>
+        <a href="{{ previous_url }}" rel="prev" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Previous<span class="sr-only"> page</span></a>
       {% endif %}
 
       {% for page_number in page_range %}
         {% if page_number == page_obj.paginator.ELLIPSIS %}
           <span class="px-2 py-1 text-xs text-slate-400">{{ page_number }}</span>
         {% elif page_number == page_obj.number %}
-          <span class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white">{{ page_number }}</span>
+          <span class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white" aria-current="page"><span class="sr-only">Page </span>{{ page_number }}</span>
         {% else %}
           {% page_url page_number as numbered_url %}
-          <a href="{{ numbered_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{{ page_number }}</a>
+          <a href="{{ numbered_url }}" aria-label="Page {{ page_number }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{{ page_number }}</a>
         {% endif %}
       {% endfor %}
 
       {% if page_obj.has_next %}
         {% page_url page_obj.next_page_number as next_url %}
         {% page_url page_obj.paginator.num_pages as last_url %}
-        <a href="{{ next_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Next</a>
-        <a href="{{ last_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Last</a>
+        <a href="{{ next_url }}" rel="next" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Next<span class="sr-only"> page</span></a>
+        <a href="{{ last_url }}" class="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Last<span class="sr-only"> page</span></a>
       {% endif %}
     </nav>
   {% endif %}

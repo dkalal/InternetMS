@@ -1,388 +1,70 @@
-🧠 CORE ARCHITECTURE PRINCIPLES
-1️⃣ Tenant-First Architecture (Always)
+# JIMS engineering and delivery rules — v2.0
 
-Every core model MUST include tenant_id.
+## Architecture
 
-All queries MUST be tenant-scoped.
+- Maintain a modular Django monolith until measured needs justify another boundary.
+- Domain-owning apps own their models, services, validation, tests, and documentation.
+- Views coordinate HTTP concerns, forms, messages, redirects, and service calls; they do not implement financial or inventory mutations directly.
+- Models hold state, relationships, simple invariants, and compatibility properties. Multi-record workflows belong in services.
+- Avoid cross-app imports made only for convenience; expose a small service in the owning domain when an actual domain action is required.
 
-No cross-tenant data access. Ever.
+## Tenant and permission implementation
 
-Enforce tenant isolation at:
+- Use the request's authenticated active organization/membership.
+- Scope form choices, object lookup, services, APIs, imports, exports, and background work.
+- Use permission codes in `users.permissions`; do not invent ad-hoc role-name checks when a permission exists.
+- Test allowed and denied paths, including crafted cross-tenant identifiers.
 
-ORM level
+## Database and transaction discipline
 
-Service layer
+- Use PostgreSQL semantics as the production reference.
+- Use `transaction.atomic()` and row locks at mutation boundaries where concurrency matters.
+- Add constraints and indexes for demonstrated integrity/query needs, not speculative architecture.
+- Use `select_related`/`prefetch_related` deliberately and paginate growing user-facing collections.
+- Never load a full growing catalog into the browser when server-side search/pagination is appropriate.
+- Background work is justified by measured latency, reliability, retry, or scheduling needs; it is not mandatory for every PDF or report.
 
-Database constraints (where possible)
+## Forms, APIs, and errors
 
-If a query does not filter by tenant, it is wrong.
+- Validate input in forms/serializers and re-check critical invariants at the service boundary.
+- Preserve submitted values on HTML validation errors and render field/non-field errors accessibly.
+- APIs use consistent status codes and structured error payloads.
+- Unknown actions and unsupported transitions fail safely and never fall through to a destructive default.
 
-2️⃣ Separation of Concerns
+## UI and accessibility
 
-Strict layers:
+- Use the existing Tailwind design system and shared components.
+- Prefer compact, task-oriented screens with clear hierarchy and minimal scrolling.
+- Controls require labels, keyboard access, visible focus, adequate contrast, and non-color state cues.
+- Show current state, stock/financial impact, validation feedback, and irreversible consequences before confirmation.
+- Do not introduce React, Vue, or another frontend framework without a demonstrated requirement and explicit approval.
+- JavaScript may improve interaction but cannot own authorization, authoritative totals, or domain state.
 
-Presentation (Views / Controllers / API)
+## Performance
 
-Service layer (Business logic)
+- Optimize for realistic catalog/tenant growth and measured query behavior.
+- Avoid N+1 queries, unbounded lists, cross-tenant scans, and large serialized metadata blobs.
+- Add caching only where invalidation is safe and benefit is measurable. Never cache mutation authorization or mutable financial truth as the source of record.
 
-Domain models
+## Tests
 
-Infrastructure (DB, cache, queue)
+- Prefer focused domain contracts plus service/view regression tests.
+- Every bug fix needs a regression test that fails before the fix.
+- A removed/deferred workflow receives replacement tests for the supported workflow; do not simply delete its safety net.
+- Preserve tests for tenant isolation, permissions, atomic rollback, idempotency, serial uniqueness, historical snapshots, and immutable confirmed records.
+- Run focused tests during development and the full suite before handoff.
 
-Views must not contain business logic.
-Models must not contain UI logic.
+## Migrations and compatibility
 
-3️⃣ Modular Domain Structure
+- Explain schema changes before implementation when they affect persisted business data.
+- Commit migrations with their owning app and never edit applied migrations.
+- Prefer additive/reversible transitions. Preserve historical reads while disabling new writes to a deferred legacy feature.
+- Remove legacy columns only after data audit, verified archive, approval, and a tested rollback/compatibility plan.
 
-Organize by business domain, not by file type.
+## Scope, Git, and handoff
 
-Bad:
-
-models.py
-views.py
-utils.py
-
-Good:
-
-customers/
-billing/
-notifications/
-tenancy/
-
-Each module must:
-
-Own its models
-
-Own its services
-
-Own its validations
-
-Avoid circular dependencies
-
-📈 SCALABILITY RULES
-4️⃣ Horizontal Scalability Ready
-
-No global state.
-
-No in-memory session dependency.
-
-Background jobs for heavy tasks.
-
-Idempotent operations.
-
-Design as if it will serve 10,000 tenants. Even if it won’t.
-
-5️⃣ Database Discipline
-
-Add indexes on:
-
-tenant_id
-
-foreign keys
-
-frequently filtered fields
-
-Use pagination everywhere.
-
-Never load full tables.
-
-Avoid N+1 queries (use select_related / prefetch).
-
-If query complexity grows linearly with tenants, redesign it.
-
-🔒 SECURITY RULES (Non-Negotiable)
-6️⃣ Strong Access Control
-
-Role-based access (RBAC).
-
-Principle of least privilege.
-
-All endpoints require authentication.
-
-Object-level permission checks.
-
-No “hidden button” security. Backend enforces everything.
-
-7️⃣ Input Validation Everywhere
-
-Validate at serializer/form level.
-
-Re-validate at service level.
-
-Sanitize user inputs.
-
-Protect against:
-
-SQL injection
-
-XSS
-
-CSRF
-
-IDOR
-
-Assume user input is hostile.
-
-8️⃣ Audit Trail
-
-Critical actions must be logged:
-
-Invoice creation
-
-Payment registration
-
-Status change
-
-User role change
-
-Audit logs are immutable.
-
-⚙️ ROBUSTNESS & RELIABILITY
-9️⃣ Idempotency
-
-Financial operations must be idempotent.
-
-If a payment request is retried:
-
-It must not double charge.
-
-It must not duplicate receipt.
-
-Use unique transaction references.
-
-🔟 Graceful Failure
-
-System must:
-
-Fail safely
-
-Not corrupt data
-
-Not expose stack traces
-
-Return meaningful errors
-
-Never leave partial writes. Use transactions.
-
-🧹 CLEAN CODE & MAINTAINABILITY
-11️⃣ Naming Discipline
-
-Use business language.
-
-Avoid generic names like data, info, manager.
-
-Function names must describe intent.
-
-Readable code > clever code.
-
-12️⃣ No Fat Views / No Fat Models
-
-Business logic lives in services.
-
-Example:
-
-InvoiceService.create_invoice()
-PaymentService.register_payment()
-
-Models are data containers + simple invariants only.
-
-13️⃣ Consistency Rules
-
-One coding style.
-
-One validation strategy.
-
-One error response format.
-
-One notification pattern.
-
-Inconsistency kills maintainability.
-
-14️⃣ Documentation is Mandatory
-
-Every:
-
-Service
-
-Complex method
-
-Domain rule
-
-Must explain:
-
-Why it exists
-
-Business rule enforced
-
-Side effects
-
-If it’s not documented, it will be misused.
-
-🚀 PERFORMANCE RULES
-15️⃣ Cache Strategically
-
-Cache:
-
-Dashboard aggregates
-
-Frequently accessed lists
-
-Tenant settings
-
-Do NOT cache financial mutations.
-
-16️⃣ Async Everything Heavy
-
-Move to background:
-
-Notifications
-
-Report generation
-
-PDF generation
-
-Email sending
-
-UI must feel instant.
-
-♿ BUILT-IN ACCESSIBILITY
-17️⃣ Accessibility by Default
-
-Proper semantic HTML.
-
-Labels for all inputs.
-
-Keyboard navigation works.
-
-Sufficient color contrast.
-
-No color-only meaning.
-
-Accessibility is not a plugin.
-
-🎯 UX/UI WORLD CLASS SIMPLICITY RULES
-18️⃣ Minimal Surface Area
-
-No feature without clear business value.
-
-No field without purpose.
-
-No setting without usage.
-
-Complexity must earn its place.
-
-19️⃣ Smart Defaults
-
-Pre-fill tenant settings.
-
-Intelligent due dates.
-
-Suggested values.
-
-Good UX predicts user behavior.
-
-20️⃣ Clear System State
-
-Always visible:
-
-Payment status
-
-Subscription status
-
-Expiry alerts
-
-System notifications
-
-User must never guess.
-
-21️⃣ Feedback Discipline
-
-Every action must return:
-
-Success confirmation
-
-Clear error reason
-
-Undo where possible
-
-No silent failures.
-
-🧠 SMART MANAGEMENT FEATURES
-22️⃣ Observability
-
-Built-in:
-
-Error logging
-
-Performance monitoring hooks
-
-Tenant usage metrics
-
-You can’t scale what you can’t measure.
-
-23️⃣ Feature Flags
-
-New features must:
-
-Be toggleable
-
-Be tenant-specific if needed
-
-No risky global rollouts.
-
-24️⃣ Data Integrity Enforcement
-
-Examples:
-
-No overlapping active subscriptions.
-
-No receipt without invoice.
-
-No invoice without customer.
-
-No cross-tenant references.
-
-Enforce at:
-
-DB constraints
-
-Service layer
-
-🏗 DEVELOPMENT DISCIPLINE
-25️⃣ Tests Required For
-
-Financial flows
-
-Permission rules
-
-Multi-tenancy isolation
-
-Expiry logic
-
-No test = no merge.
-
-26️⃣ Backward Compatibility
-
-Never break:
-
-API contracts
-
-Database migrations
-
-Existing tenant data
-
-Migration scripts must be safe and reversible.
-
-🏁 FINAL NON-NEGOTIABLE RULE
-
-If a change:
-
-Reduces clarity
-
-Breaks isolation
-
-Adds complexity without value
-
-Sacrifices security for speed
-
-It is rejected.
+- Work one approved phase at a time and record intentional deferrals.
+- Do not mix unrelated global formatting, dependencies, domain changes, and UI redesigns in one commit.
+- Preserve dirty-worktree user changes and untracked files.
+- Do not commit or push without explicit authorization.
+- Handoff reports include branch/base, files changed, migrations, commands/results, security review, known risks, deferred work, and recommended commit split.

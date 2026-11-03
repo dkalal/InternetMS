@@ -1,23 +1,55 @@
 {% extends "base.html" %}
+{% block topbar_new_invoice %}{% if doc_type != "invoice" %}{{ block.super }}{% endif %}{% endblock %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+<div class="jims-document-builder mx-auto max-w-[1400px] space-y-3">
+  <header class="jims-page-header">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ doc_type_display }}</h1>
-      <p class="mt-1 max-w-3xl text-sm text-slate-600">Build the document line by line and keep totals visible while you work.</p>
+      <p class="jims-page-eyebrow"><a href="{% url 'billing:document_list' doc_type=doc_type %}">{{ doc_type|capfirst }}s</a> / {% if document %}Edit{% else %}New{% endif %}</p>
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="jims-page-title">{% if document %}{{ doc_type_display }}{% else %}New {{ doc_type_display|lower }}{% endif %}</h1>
+        <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{{ form.status.value|default:'Draft'|capfirst }}</span>
+      </div>
+      {% if document %}<p class="jims-page-subtitle">{{ document.number }}</p>{% endif %}
     </div>
-  </div>
+  </header>
 
-  <form method="post" class="space-y-6" id="document-form">
+  {% if doc_type == 'invoice' %}
+  <div class="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+    <svg viewBox="0 0 20 20" fill="currentColor" class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true"><path fill-rule="evenodd" d="M8.485 3.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.88c.673 1.166-.17 2.625-1.515 2.625H3.72c-1.345 0-2.188-1.459-1.515-2.625l6.28-10.88ZM10 6.25a.75.75 0 0 1 .75.75v3.25a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75Zm0 7.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>
+    <div><div class="font-semibold">Recurring Internet packages must use Renew.</div>
+    <details class="mt-1"><summary class="cursor-pointer text-xs font-semibold">Details</summary><p class="mt-1 leading-5">If the customer already has an active package subscription, open the customer account and use <strong>Renew</strong>. That workflow records exact coverage dates and prevents duplicate monthly charges. Use New invoice for products, installation, and genuine one-time or non-subscription charges.</p></details></div>
+  </div>
+  {% endif %}
+
+  <form method="post" class="space-y-4" id="document-form" aria-label="{{ doc_type_display }} editor">
     {% csrf_token %}
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-      <div class="space-y-6">
-        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div class="mb-4">
+    {% if form.errors or formset.errors %}
+      <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert" tabindex="-1" id="document-error-summary">
+        <div class="font-semibold">Review the highlighted fields before saving.</div>
+        <p class="mt-1 text-rose-700">Your entries are preserved. Correct the errors below and submit again.</p>
+      </div>
+    {% endif %}
+
+    <div class="flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm" aria-live="polite">
+      <div class="min-w-[12rem] flex-1"><span class="block text-xs text-slate-500">Customer</span><strong id="document-customer-summary">{% if document %}{{ document.display_customer_name }}{% else %}Select a customer{% endif %}</strong><span class="block text-xs text-slate-500" id="document-site-summary">{% if document.site %}{{ document.site.name }}{% else %}No site selected{% endif %}</span></div>
+      <div><span class="block text-xs text-slate-500">Issued</span><strong id="document-issue-summary">{% if document %}{{ document.issue_date|date:'d M Y' }}{% else %}Not set{% endif %}</strong></div>
+      <div><span class="block text-xs text-slate-500">Due date</span><strong id="document-due-summary">{% if document.due_date %}{{ document.due_date|date:'d M Y' }}{% else %}Not set{% endif %}</strong></div>
+      <a href="#document-details-panel" id="document-edit-details" class="jims-btn jims-btn-secondary jims-btn-compact">Edit details</a>
+    </div>
+
+    <nav class="hidden flex-wrap gap-5 border-b border-slate-200 text-sm font-semibold" id="document-editor-tabs" aria-label="Document editor">
+      <button type="button" data-document-tab="items" class="border-b-2 border-brand-600 px-2 py-2 text-brand-700" aria-controls="document-items-panel">Items</button>
+      <button type="button" data-document-tab="details" class="border-b-2 border-transparent px-2 py-2 text-slate-600" aria-controls="document-details-panel">Document details</button>
+      {% if notes_field %}<button type="button" data-document-tab="notes" class="border-b-2 border-transparent px-2 py-2 text-slate-600" aria-controls="document-notes-panel">Internal notes</button>{% endif %}
+    </nav>
+
+    <div class="min-w-0 space-y-4">
+        <section id="document-details-panel" data-document-panel="details" class="jims-form-section p-4 sm:p-5">
+          <div class="mb-4 border-b border-slate-100 pb-3">
             <h2 class="text-base font-semibold text-slate-900">Document details</h2>
           </div>
 
@@ -29,27 +61,32 @@
             </div>
           {% endif %}
 
-          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-            {% include "billing/includes/document_meta_fields.html" with primary_fields=primary_fields notes_field=notes_field secondary_fields=secondary_fields %}
+          {% if document and doc_type == 'invoice' %}
+            <dl class="mb-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</dt><dd class="mt-1 font-semibold text-slate-900">{{ document.display_customer_name }}</dd></div>
+              <div><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Issue date</dt><dd class="mt-1 font-semibold text-slate-900">{{ document.issue_date|date:"d M Y" }}</dd></div>
+              <div><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Currency</dt><dd class="mt-1 font-semibold text-slate-900">{{ document.currency|upper }}</dd></div>
+              <div><dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current status</dt><dd class="mt-1 font-semibold text-slate-900">{{ document.get_status_display }}</dd></div>
+            </dl>
+          {% endif %}
+
+          <div class="flex flex-wrap items-start gap-4">
+            {% include "billing/includes/document_meta_fields.html" with primary_fields=primary_fields secondary_fields=secondary_fields %}
           </div>
         </section>
 
-        <section class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div class="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
+        {% if notes_field %}<section id="document-notes-panel" data-document-panel="notes" class="jims-form-section p-4 sm:p-5"><h2 class="mb-3 text-base font-semibold text-slate-900">Internal notes <span class="text-sm font-normal text-slate-500">Staff only</span></h2>{% include "components/form_field.html" with field=notes_field %}</section>{% endif %}
+
+        <section id="document-items-panel" data-document-panel="items" class="jims-form-section overflow-visible">
+          <div class="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="text-base font-semibold text-slate-900">Line items</h2>
+              <p class="mt-1 text-sm text-slate-600">Add products, packages, or custom charges.</p>
             </div>
-            <div class="relative flex flex-wrap items-center justify-end gap-2">
-              <button type="button" class="js-toggle-item-menu inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-lg leading-none text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-600/30" aria-expanded="false" aria-label="Choose line item type" title="Add line item">
-                +
-              </button>
-              <div class="js-add-item-menu hidden flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-white p-1 shadow-sm">
-                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="custom">Custom</button>
-                <span class="text-slate-300" aria-hidden="true">|</span>
-                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="product">Product</button>
-                <span class="text-slate-300" aria-hidden="true">|</span>
-                <button type="button" class="js-add-item rounded px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50" data-kind="package">Package</button>
-              </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Pricing: <span id="items-pricing-label">{% if document %}{{ document.get_sale_pricing_category_display }}{% else %}Automatic{% endif %}</span></span>
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Currency: <span id="items-currency-label">{% if document %}{{ document.currency }}{% else %}{{ form.currency.value|default:'TZS' }}{% endif %}</span></span>
+              <span class="rounded-lg border border-slate-200 bg-white px-3 py-2">Tax: <span id="items-tax-label">{{ form.tax_rate.value|default:'0' }}%</span></span>
             </div>
           </div>
 
@@ -61,55 +98,59 @@
             </div>
           {% endif %}
 
-          <div class="mt-5">
+          <div>
             {{ formset.management_form }}
-            <div class="space-y-4" id="line-items-container">
-              {% for item_form in formset %}
+            <div class="jims-line-item-grid jims-line-item-header border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">
+              <div class="sr-only">Add below</div><div>Item / description</div><div>Qty</div><div>Unit</div><div>Unit price</div><div>Billing</div><div class="text-right">Total</div><div class="text-right">Actions</div>
+            </div>
+            <div id="line-items-container">
+              {% for item_form in display_item_forms %}
                 {% include "billing/includes/document_line_item_form.html" with item_form=item_form %}
               {% endfor %}
             </div>
 
-            <div id="line-items-empty" class="mt-4 hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-              No active line items yet. Add a product, package, or custom item to continue.
+            <div id="line-items-empty" class="hidden border-t border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              No active line items. <button type="button" class="js-add-item font-semibold text-brand-700 underline" data-kind="custom">Add a row</button>
             </div>
           </div>
         </section>
-      </div>
 
-      <aside class="space-y-6 xl:sticky xl:top-6 xl:self-start">
-        <section class="rounded-lg border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+      <div class="jims-document-summary px-4 py-3" aria-labelledby="document-summary-title">
+        <section>
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold">Document summary</h2>
+              <p class="text-xs font-bold uppercase tracking-[0.12em] text-brand-700">{{ doc_type_display }}</p>
+              <h2 class="mt-1 text-base font-semibold" id="document-summary-title">Financial summary</h2>
             </div>
-            <span class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200" id="summary-currency">{{ form.currency.value|default:"TZS"|upper }}</span>
+            <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-brand-700" id="summary-currency">{% if document %}{{ document.currency|upper }}{% else %}{{ form.currency.value|default:"TZS"|upper }}{% endif %}</span>
           </div>
 
-          <dl class="mt-5 space-y-3 text-sm">
-            <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Active items</dt>
-              <dd class="font-semibold text-white" id="summary-count">0</dd>
+          <dl class="mt-3 flex flex-wrap items-center justify-end gap-x-8 gap-y-3 text-sm">
+            <div class="flex items-center gap-2">
+              <dt class="text-slate-600">Active items</dt>
+              <dd class="font-semibold text-slate-950" id="summary-count">0</dd>
             </div>
-            <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Subtotal</dt>
-              <dd class="font-semibold text-white" id="summary-subtotal">0.00</dd>
+            <div class="flex items-center gap-2">
+              <dt class="text-slate-600">Subtotal</dt>
+              <dd class="font-semibold text-slate-950" id="summary-subtotal">0</dd>
             </div>
-            <div class="flex items-center justify-between">
-              <dt class="text-slate-300">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0.00" }}%)</span></dt>
-              <dd class="font-semibold text-white" id="summary-tax">0.00</dd>
+            <div class="flex items-center gap-2">
+              <dt class="text-slate-600">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0" }}%)</span></dt>
+              <dd class="font-semibold text-slate-950" id="summary-tax">0</dd>
             </div>
-            <div class="flex items-center justify-between border-t border-white/10 pt-3 text-base">
-              <dt class="font-medium text-white">Grand total</dt>
-              <dd class="font-semibold text-white" id="summary-total">0.00</dd>
+            <div class="flex items-end gap-3 border-l border-slate-200 pl-4">
+              <dt class="font-semibold text-slate-950">Grand total</dt>
+              <dd class="text-2xl font-extrabold leading-none tabular-nums text-brand-700" id="summary-total">0</dd>
             </div>
           </dl>
+          <p class="mt-2 text-right text-xs text-slate-500">Preview only. Saved totals are calculated on the server.</p>
         </section>
-      </aside>
+      </div>
     </div>
 
-    <div class="flex items-center justify-end gap-2">
-      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
-      <button type="submit" class="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30">
+    <div class="jims-form-actions">
+      <a href="{% url 'billing:document_list' doc_type=doc_type %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <button type="submit" class="jims-btn jims-btn-primary">
         {% if document %}Save changes{% else %}Create {{ doc_type_display|lower }}{% endif %}
       </button>
     </div>
@@ -125,7 +166,7 @@
 <script id="product-catalog-data" type="application/json">
 [
   {% for product in product_catalog %}
-    {"id":"{{ product.id }}","name":"{{ product.name|escapejs }}","description":"{{ product.description|default_if_none:''|escapejs }}","price":"{{ product.retail_price|default:product.selling_price }}","wholesale_price":"{{ product.wholesale_price|default_if_none:'' }}","wholesale_min_quantity":"{{ product.wholesale_min_quantity }}","allow_wholesale":{% if product.allow_wholesale %}true{% else %}false{% endif %}}{% if not forloop.last %},{% endif %}
+    {"id":"{{ product.id }}","name":"{{ product.name|escapejs }}","description":"{{ product.description|default_if_none:''|escapejs }}","unit":"{{ product.get_measure_unit_display|escapejs }}","allowed_units":[{% if product.catalog_category %}{% for unit in product.catalog_category.allowed_units.all %}"{{ unit.label|escapejs }}"{% if not forloop.last %},{% endif %}{% endfor %}{% else %}"{{ product.get_measure_unit_display|escapejs }}"{% endif %}],"selling_price":"{{ product.selling_price }}","retail_price":"{{ product.retail_price|default:product.selling_price }}","technician_price":"{{ product.technician_price|default:product.selling_price }}","wholesale_price":"{{ product.wholesale_price|default_if_none:'' }}","wholesale_min_quantity":"{{ product.wholesale_min_quantity }}","allow_wholesale":{% if product.allow_wholesale %}true{% else %}false{% endif %},"tax_eligible":{% if product.tax_eligible %}true{% else %}false{% endif %}}{% if not forloop.last %},{% endif %}
   {% endfor %}
 ]
 </script>
@@ -162,6 +203,7 @@
     const customerCatalog = new Map((JSON.parse(document.getElementById('customer-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
     const promotionCatalog = new Map((JSON.parse(document.getElementById('promotion-catalog-data').textContent || '[]') || []).map((item) => [item.id, item]));
     const customerField = document.getElementById('id_customer');
+    const pricingCategoryField = document.getElementById('id_sale_pricing_category');
     const currencyField = document.getElementById('id_currency');
     const taxRateField = document.getElementById('id_tax_rate');
     const summaryCurrency = document.getElementById('summary-currency');
@@ -170,19 +212,83 @@
     const summaryTax = document.getElementById('summary-tax');
     const summaryTotal = document.getElementById('summary-total');
     const summaryTaxRateLabel = document.getElementById('summary-tax-rate-label');
+    const submitButton = form?.querySelector('[type="submit"]');
+    const savedDocumentCurrency = '{% if document %}{{ document.currency|escapejs }}{% else %}TZS{% endif %}';
+    const tabs = document.getElementById('document-editor-tabs');
+    const editorPanels = [...document.querySelectorAll('[data-document-panel]')];
+
+    const showPanel = (name) => {
+      editorPanels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.documentPanel !== name));
+      tabs?.querySelectorAll('[data-document-tab]').forEach((tab) => {
+        const active = tab.dataset.documentTab === name;
+        tab.setAttribute('aria-selected', String(active));
+        tab.classList.toggle('border-brand-600', active);
+        tab.classList.toggle('text-brand-700', active);
+        tab.classList.toggle('border-transparent', !active);
+        tab.classList.toggle('text-slate-600', !active);
+      });
+    };
+
+    const selectedLabel = (field, fallback) => field?.selectedOptions?.[0]?.textContent?.trim() || fallback;
+    const syncMetaSummary = () => {
+      const setText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
+      if (customerField) setText('document-customer-summary', customerField.value ? selectedLabel(customerField, 'Select a customer') : 'Select a customer');
+      const site = document.getElementById('id_site');
+      if (site) setText('document-site-summary', site.value ? selectedLabel(site, 'No site selected') : 'No site selected');
+      const issue = document.getElementById('id_issue_date');
+      const due = document.getElementById('id_due_date');
+      if (issue) setText('document-issue-summary', issue.value || 'Not set');
+      if (due) setText('document-due-summary', due.value || 'Not set');
+      if (pricingCategoryField) setText('items-pricing-label', selectedLabel(pricingCategoryField, 'Automatic'));
+      if (currencyField) setText('items-currency-label', currencyField.value || 'Not set');
+      if (taxRateField) setText('items-tax-label', `${taxRateField.value || '0'}%`);
+    };
 
     if (!form || !container || !emptyState || !totalForms || !template) {
       return;
     }
+    tabs?.classList.remove('hidden');
+    tabs?.classList.add('flex');
+    tabs?.querySelectorAll('[data-document-tab]').forEach((tab) => tab.addEventListener('click', () => showPanel(tab.dataset.documentTab)));
+    document.getElementById('document-edit-details')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      showPanel('details');
+      document.getElementById('document-details-panel')?.querySelector('input:not([type="hidden"]), select, textarea')?.focus();
+    });
+    form.addEventListener('invalid', (event) => {
+      const panel = event.target.closest('[data-document-panel]');
+      if (panel) showPanel(panel.dataset.documentPanel);
+    }, true);
+    const erroredPanel = editorPanels.find((panel) => panel.querySelector('[role="alert"], .text-rose-600'));
+    showPanel(erroredPanel?.dataset.documentPanel || (customerField && !customerField.value ? 'details' : 'items'));
+    form.addEventListener('input', syncMetaSummary);
+    form.addEventListener('change', syncMetaSummary);
+    syncMetaSummary();
 
     const parseMoney = (value) => {
       const parsed = Number.parseFloat(value || '0');
       return Number.isFinite(parsed) ? parsed : 0;
     };
 
-    const formatMoney = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatMoney = (value) => value.toLocaleString('en-TZ', { maximumFractionDigits: 2 });
+    const formatMoneyInput = (value) => Number.isFinite(Number(value)) ? String(Number(value)) : '';
 
     const getSelectedCustomer = () => customerCatalog.get(customerField?.value || '');
+
+    const productPriceForCategory = (product, quantity) => {
+      let category = pricingCategoryField?.value || 'customer_tier';
+      if (category === 'customer_tier') {
+        const tier = getSelectedCustomer()?.pricing_tier || 'retail';
+        category = tier === 'technician' ? 'technician' : (tier === 'wholesale' ? 'wholesale' : 'standard');
+      }
+      if (category === 'technician') return parseMoney(product.technician_price || product.selling_price);
+      if (category === 'wholesale') {
+        const qualifies = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
+        return qualifies ? parseMoney(product.wholesale_price) : parseMoney(product.selling_price);
+      }
+      if (category === 'retail') return parseMoney(product.retail_price || product.selling_price);
+      return parseMoney(product.selling_price);
+    };
 
     const promotionApplies = (promotion, productId, packageId, quantity, gross) => {
       if (!promotion) return false;
@@ -214,8 +320,9 @@
       promotionCatalog.forEach((promotion) => {
         if (!promotionApplies(promotion, productId, packageId, quantity, gross)) return;
         const product = productCatalog.get(productId);
-        const result = calculatePromotion(promotion, product, quantity, parseMoney(product?.price), gross);
-        const value = result.discount || Math.max(0, parseMoney(product?.price) - result.unitPrice) * quantity;
+        const catalogPrice = product ? productPriceForCategory(product, quantity) : 0;
+        const result = calculatePromotion(promotion, product, quantity, catalogPrice, gross);
+        const value = result.discount || Math.max(0, catalogPrice - result.unitPrice) * quantity;
         if (value > bestValue) {
           best = promotion;
           bestValue = value;
@@ -228,6 +335,7 @@
       product: row.querySelector('[name$="-product"]'),
       package: row.querySelector('[name$="-package"]'),
       description: row.querySelector('[name$="-description"]'),
+      unit: row.querySelector('[name$="-unit_snapshot"]'),
       quantity: row.querySelector('[name$="-quantity"]'),
       unitPrice: row.querySelector('[name$="-unit_price"]'),
       discount: row.querySelector('[name$="-discount_amount"]'),
@@ -238,7 +346,12 @@
       deleteBox: row.querySelector('[name$="-DELETE"]'),
       productWrap: row.querySelector('.js-product-wrap'),
       packageWrap: row.querySelector('.js-package-wrap'),
+      descriptionWrap: row.querySelector('.js-description-wrap'),
+      descriptionToggle: row.querySelector('.js-toggle-description'),
       summary: row.querySelector('.js-selection-summary'),
+      advancedSummary: row.querySelector('.js-advanced-summary'),
+      details: row.querySelector('.js-line-details'),
+      detailsToggle: row.querySelector('.js-toggle-line-details'),
       lineTotal: row.querySelector('.js-line-total'),
       label: row.querySelector('.js-item-label'),
     });
@@ -273,6 +386,10 @@
     };
 
     const refreshLabels = () => {
+      [...container.querySelectorAll('.js-line-item')].forEach((row, index) => {
+        const orderField = row.querySelector('.js-ui-order');
+        if (orderField) orderField.value = String(index);
+      });
       const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
       activeRows.forEach((row, index) => {
         const label = row.querySelector('.js-item-label');
@@ -289,21 +406,42 @@
     const refreshSummary = () => {
       refreshLabels();
       const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
+      let taxableSubtotal = 0;
       const subtotal = activeRows.reduce((sum, row) => {
         const controls = getRowControls(row);
         const line = (parseMoney(controls.quantity?.value) * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value);
-        return sum + Math.max(line, 0);
+        const normalizedLine = Math.max(line, 0);
+        const product = productCatalog.get(controls.product?.value || '');
+        if (!product || product.tax_eligible) taxableSubtotal += normalizedLine;
+        return sum + normalizedLine;
       }, 0);
       const taxRate = parseMoney(taxRateField?.value);
-      const taxAmount = subtotal * (taxRate / 100);
+      const taxAmount = taxableSubtotal * (taxRate / 100);
       const total = subtotal + taxAmount;
-      const currency = (currencyField?.value || 'TZS').toUpperCase();
+      const currency = (currencyField?.value || savedDocumentCurrency || 'TZS').toUpperCase();
 
       if (summaryCurrency) summaryCurrency.textContent = currency;
-      if (summaryTaxRateLabel) summaryTaxRateLabel.textContent = `(${taxRate.toFixed(2)}%)`;
+      if (summaryTaxRateLabel) summaryTaxRateLabel.textContent = `(${formatMoney(taxRate)}%)`;
       if (summarySubtotal) summarySubtotal.textContent = formatMoney(subtotal);
       if (summaryTax) summaryTax.textContent = formatMoney(taxAmount);
       if (summaryTotal) summaryTotal.textContent = formatMoney(total);
+    };
+
+    const setLineDetailsState = (row, isOpen) => {
+      const controls = getRowControls(row);
+      controls.details?.classList.toggle('hidden', !isOpen);
+      controls.detailsToggle?.setAttribute('aria-expanded', String(isOpen));
+    };
+
+    const updateAdvancedSummary = (controls) => {
+      if (!controls.advancedSummary) return;
+      const details = [];
+      const discount = parseMoney(controls.discount?.value);
+      if (discount > 0) details.push(`Discount ${formatMoney(discount)}`);
+      if (controls.promotion?.value) details.push('Promotion');
+      if (controls.pricingMode?.value === 'manual') details.push('Manual price');
+      controls.advancedSummary.textContent = details.join(' · ');
+      controls.advancedSummary.classList.toggle('hidden', details.length === 0);
     };
 
     const syncRow = (row) => {
@@ -313,39 +451,41 @@
       const activeType = productId ? 'product' : packageId ? 'package' : (row.dataset.itemType || 'custom');
       const product = productCatalog.get(productId);
       const packageItem = packageCatalog.get(packageId);
-      const customer = getSelectedCustomer();
       const quantity = parseMoney(controls.quantity?.value);
 
-      const catalogCol = row.querySelector('.js-catalog-col');
       const isCustom = activeType === 'custom';
-      if (catalogCol) {
-        catalogCol.classList.toggle('hidden', isCustom);
-      }
-
       controls.productWrap?.classList.toggle('hidden', activeType !== 'product');
       controls.packageWrap?.classList.toggle('hidden', activeType !== 'package');
+      const descriptionHasErrors = controls.descriptionWrap?.dataset.hasErrors === 'true';
+      const showDescription = isCustom || row.dataset.descriptionOpen === 'true' || descriptionHasErrors;
+      controls.descriptionWrap?.classList.toggle('hidden', !showDescription);
+      controls.descriptionToggle?.classList.toggle('hidden', isCustom);
+      if (controls.descriptionToggle) {
+        controls.descriptionToggle.textContent = showDescription ? 'Hide custom description' : 'Customize description';
+      }
 
       if (activeType === 'product' && product) {
-        const tierWantsWholesale = ['wholesale', 'corporate', 'vip'].includes(customer?.pricing_tier || '');
         const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
         if (controls.pricingMode?.value !== 'manual') {
-          if ((controls.pricingMode?.value === 'wholesale' || tierWantsWholesale) && qualifiesWholesale) {
-            controls.unitPrice.value = Number(parseMoney(product.wholesale_price)).toFixed(2);
-            if (controls.pricingMode) controls.pricingMode.value = 'wholesale';
-          } else {
-            controls.unitPrice.value = Number(parseMoney(product.price)).toFixed(2);
-            if (controls.pricingMode) controls.pricingMode.value = 'retail';
+          let category = pricingCategoryField?.value || 'customer_tier';
+          if (category === 'customer_tier') {
+            const tier = getSelectedCustomer()?.pricing_tier || 'retail';
+            category = tier === 'technician' ? 'technician' : (tier === 'wholesale' ? 'wholesale' : 'standard');
           }
+          controls.unitPrice.value = formatMoneyInput(productPriceForCategory(product, quantity));
+          if (controls.pricingMode) controls.pricingMode.value = category === 'wholesale' && qualifiesWholesale ? 'wholesale' : (category === 'wholesale' ? 'standard' : category);
         }
-        controls.summary.textContent = qualifiesWholesale ? `${product.name} selected - wholesale available` : `${product.name} selected`;
+        controls.summary.textContent = 'Product';
+        if (controls.unit && (!controls.unit.value || !product.allowed_units.includes(controls.unit.value))) controls.unit.value = product.unit;
       } else if (activeType === 'package' && packageItem) {
         if (controls.pricingMode?.value !== 'manual') {
           const packagePrice = controls.billingBehavior?.value === 'recurring_monthly' ? packageItem.monthly_fee : packageItem.price;
-          controls.unitPrice.value = Number(parseMoney(packagePrice)).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(parseMoney(packagePrice));
         }
-        controls.summary.textContent = `${packageItem.name} selected`;
+        controls.summary.textContent = 'Service package';
+        if (controls.unit) controls.unit.value = controls.billingBehavior?.value === 'recurring_monthly' ? 'Month' : 'Installation';
       } else {
-        controls.summary.textContent = activeType === 'product' ? 'Select a product.' : activeType === 'package' ? 'Select a package.' : 'Custom line';
+        controls.summary.textContent = activeType === 'product' ? 'Product' : activeType === 'package' ? 'Service package' : 'Custom item';
       }
 
       const gross = quantity * parseMoney(controls.unitPrice?.value);
@@ -357,9 +497,9 @@
         if (selectedPromotion && promotionApplies(selectedPromotion, productId, packageId, quantity, gross)) {
           const promotionResult = calculatePromotion(selectedPromotion, product, quantity, parseMoney(controls.unitPrice?.value), gross);
           if (promotionResult.unitPrice !== parseMoney(controls.unitPrice?.value)) {
-            controls.unitPrice.value = Number(promotionResult.unitPrice).toFixed(2);
+            controls.unitPrice.value = formatMoneyInput(promotionResult.unitPrice);
           }
-          if (controls.discount) controls.discount.value = Number(promotionResult.discount).toFixed(2);
+          if (controls.discount) controls.discount.value = formatMoneyInput(promotionResult.discount);
           if (controls.discountReason && (!controls.discountReason.value || controls.discountReason.dataset.autofilled === '1')) {
             controls.discountReason.value = selectedPromotion.name;
             controls.discountReason.dataset.autofilled = '1';
@@ -369,12 +509,14 @@
       }
       const total = Math.max((quantity * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value), 0);
       controls.lineTotal.textContent = formatMoney(total);
+      updateAdvancedSummary(controls);
       refreshSummary();
     };
 
     const activateType = (row, type, options = {}) => {
       const controls = getRowControls(row);
       row.dataset.itemType = type;
+      if (type !== 'custom') row.dataset.descriptionOpen = 'false';
       const clearOther = options.clearOther !== false;
       if (type === 'product' && clearOther && controls.package) {
         controls.package.value = '';
@@ -398,8 +540,8 @@
         }
         const product = productCatalog.get(String(itemId));
         if (product) {
-          controls.unitPrice.value = product.price;
-          if (controls.pricingMode) controls.pricingMode.value = 'retail';
+          controls.unitPrice.value = formatMoneyInput(productPriceForCategory(product, parseMoney(controls.quantity?.value)));
+          if (controls.pricingMode) controls.pricingMode.value = pricingCategoryField?.value || 'standard';
           setDescriptionIfSuggested(controls.description, product.description || product.name);
         }
       }
@@ -411,7 +553,7 @@
         const packageItem = packageCatalog.get(String(itemId));
         if (packageItem) {
           if (controls.billingBehavior) controls.billingBehavior.value = 'recurring_monthly';
-          controls.unitPrice.value = Number(parseMoney(packageItem.monthly_fee)).toFixed(2);
+          controls.unitPrice.value = formatMoneyInput(parseMoney(packageItem.monthly_fee));
           setDescriptionIfSuggested(controls.description, packageItem.description || packageItem.name);
         }
       }
@@ -422,18 +564,18 @@
       const controls = getRowControls(row);
       if (controls.product?.value) row.dataset.itemType = 'product';
       if (controls.package?.value) row.dataset.itemType = 'package';
-      if (controls.pricingMode?.value && !['retail', ''].includes(controls.pricingMode.value)) {
-        row.querySelector('[data-cell="pricing"]')?.classList.remove('hidden');
-      }
-      if (parseMoney(controls.discount?.value) > 0) {
-        row.querySelector('[data-cell="discount"]')?.classList.remove('hidden');
-      }
-      if (controls.promotion?.value) {
-        row.querySelector('[data-cell="promotion"]')?.classList.remove('hidden');
-      }
-      if ((controls.discountReason?.value || '').trim()) {
-        row.querySelector('[data-cell="reason"]')?.classList.remove('hidden');
-      }
+      const hasAdvancedValue = parseMoney(controls.discount?.value) > 0
+        || Boolean(controls.promotion?.value)
+        || Boolean((controls.discountReason?.value || '').trim())
+        || ['manual', 'promotion'].includes(controls.pricingMode?.value || '');
+      const hasServerError = controls.detailsToggle?.getAttribute('aria-expanded') === 'true';
+      setLineDetailsState(row, hasAdvancedValue || hasServerError);
+
+      controls.descriptionToggle?.addEventListener('click', () => {
+        row.dataset.descriptionOpen = row.dataset.descriptionOpen === 'true' ? 'false' : 'true';
+        syncRow(row);
+        if (row.dataset.descriptionOpen === 'true') controls.description?.focus();
+      });
 
       row.querySelectorAll('.js-clear-selection').forEach((button) => {
         button.addEventListener('click', () => {
@@ -473,11 +615,19 @@
           controls.discountReason.dataset.autofilled = '0';
         });
       }
-      [controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
+      [controls.unit, controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
         if (field) {
           field.addEventListener('input', () => syncRow(row));
           field.addEventListener('change', () => syncRow(row));
         }
+      });
+      controls.detailsToggle?.addEventListener('click', () => {
+        const isOpen = controls.detailsToggle.getAttribute('aria-expanded') === 'true';
+        setLineDetailsState(row, !isOpen);
+      });
+      row.querySelector('.js-close-line-details')?.addEventListener('click', () => {
+        setLineDetailsState(row, false);
+        controls.detailsToggle?.focus();
       });
       row.querySelector('.js-remove-item')?.addEventListener('click', () => {
         if (controls.deleteBox) {
@@ -514,20 +664,19 @@
     };
 
     document.addEventListener('click', (event) => {
-      const toggleItemMenuButton = event.target.closest('.js-toggle-item-menu');
-      if (toggleItemMenuButton) {
-        const menu = toggleItemMenuButton.parentElement?.querySelector('.js-add-item-menu');
-        if (menu) {
-          const isOpening = menu.classList.contains('hidden');
-          document.querySelectorAll('.js-add-item-menu').forEach((otherMenu) => {
-            if (otherMenu !== menu) {
-              otherMenu.classList.add('hidden');
-              otherMenu.classList.remove('flex');
-            }
-          });
-          menu.classList.toggle('hidden', !isOpening);
-          menu.classList.toggle('flex', isOpening);
-          toggleItemMenuButton.setAttribute('aria-expanded', String(isOpening));
+      const belowButton = event.target.closest('.js-add-below');
+      if (belowButton) {
+        createRow('custom', belowButton.closest('.js-line-item'));
+        return;
+      }
+
+      const kindButton = event.target.closest('.js-row-kind');
+      if (kindButton) {
+        const row = kindButton.closest('.js-line-item');
+        if (row) {
+          activateType(row, kindButton.dataset.kind || 'custom');
+          kindButton.closest('details')?.removeAttribute('open');
+          row.querySelector(kindButton.dataset.kind === 'product' ? '[name$="-product"]' : kindButton.dataset.kind === 'package' ? '[name$="-package"]' : '[name$="-description"]')?.focus();
         }
         return;
       }
@@ -536,38 +685,7 @@
       if (addButton) {
         const afterRow = addButton.closest('.js-line-item');
         createRow(addButton.dataset.kind || 'custom', afterRow);
-        const menu = addButton.closest('.js-add-item-menu');
-        menu?.classList.add('hidden');
-        menu?.classList.remove('flex');
         return;
-      }
-
-      const toggleCellMenuButton = event.target.closest('.js-toggle-cell-menu');
-      if (toggleCellMenuButton) {
-        const menu = toggleCellMenuButton.parentElement?.querySelector('.js-cell-menu');
-        if (menu) {
-          const isOpening = menu.classList.contains('hidden');
-          document.querySelectorAll('.js-cell-menu').forEach((otherMenu) => {
-            if (otherMenu !== menu) otherMenu.classList.add('hidden');
-          });
-          menu.classList.toggle('hidden', !isOpening);
-          toggleCellMenuButton.setAttribute('aria-expanded', String(isOpening));
-        }
-        return;
-      }
-
-      const showCellButton = event.target.closest('.js-show-cell');
-      if (showCellButton) {
-        const row = showCellButton.closest('.js-line-item');
-        row?.querySelector(`[data-cell="${showCellButton.dataset.target}"]`)?.classList.remove('hidden');
-        showCellButton.closest('.js-cell-menu')?.classList.add('hidden');
-        return;
-      }
-
-      const hideCellButton = event.target.closest('.js-hide-cell');
-      if (hideCellButton) {
-        const row = hideCellButton.closest('.js-line-item');
-        row?.querySelector(`[data-cell="${hideCellButton.dataset.target}"]`)?.classList.add('hidden');
       }
     });
 
@@ -587,9 +705,23 @@
     if (taxRateField) {
       taxRateField.addEventListener('input', refreshSummary);
     }
+    if (pricingCategoryField) {
+      pricingCategoryField.addEventListener('change', () => {
+        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row));
+        refreshSummary();
+      });
+    }
+
+    form.addEventListener('submit', () => {
+      if (!submitButton) return;
+      submitButton.disabled = true;
+      submitButton.setAttribute('aria-disabled', 'true');
+      submitButton.textContent = 'Saving…';
+    });
 
     container.querySelectorAll('.js-line-item').forEach((row) => bindRow(row));
     refreshSummary();
+    document.getElementById('document-error-summary')?.focus();
   })();
 </script>
 {% endblock %}

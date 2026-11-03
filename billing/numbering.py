@@ -21,10 +21,15 @@ class GeneratedDocumentNumber:
 
 class DocumentNumberService:
     PREFIX = {
-        BillingDocument.DocumentType.QUOTATION: "QUO",
+        BillingDocument.DocumentType.QUOTATION: "QTN",
         BillingDocument.DocumentType.INVOICE: "INV",
-        BillingDocument.DocumentType.RECEIPT: "REC",
+        BillingDocument.DocumentType.RECEIPT: "RCT",
         BillingDocument.DocumentType.CREDIT_NOTE: "CRN",
+    }
+    ANNUAL_DOCUMENT_TYPES = {
+        BillingDocument.DocumentType.QUOTATION,
+        BillingDocument.DocumentType.INVOICE,
+        BillingDocument.DocumentType.RECEIPT,
     }
 
     @classmethod
@@ -44,7 +49,7 @@ class DocumentNumberService:
             counter.last_number += 1
             counter.save(update_fields=["last_number"])
 
-        tenant_code = cls.get_tenant_code(organization)
+        tenant_code = "JS" if document_type in cls.ANNUAL_DOCUMENT_TYPES else cls.get_tenant_code(organization)
         return GeneratedDocumentNumber(
             value=cls._format_number(
                 document_type=document_type,
@@ -88,6 +93,8 @@ class DocumentNumberService:
     @classmethod
     def _format_number(cls, *, document_type: str, tenant_code: str, issue_date: date, sequence_number: int) -> str:
         prefix = cls.PREFIX[document_type]
+        if document_type in cls.ANNUAL_DOCUMENT_TYPES:
+            return f"{prefix}-JS-{issue_date:%Y}-{sequence_number:04d}"
         return f"{prefix}-{tenant_code}-{issue_date:%Y%m%d}-{sequence_number:04d}"
 
     @classmethod
@@ -102,8 +109,13 @@ class DocumentNumberService:
             "organization": organization,
             "tenant": organization,
             "document_type": document_type,
-            "sequence_date": issue_date,
         }
+        if document_type in cls.ANNUAL_DOCUMENT_TYPES:
+            lookup.update(year=issue_date.year, sequence_date=None)
+        else:
+            # Credit-note numbering is outside the annual-numbering change and
+            # intentionally retains its existing daily allocation behavior.
+            lookup.update(year=None, sequence_date=issue_date)
         try:
             return DocumentSequence.objects.select_for_update().get(**lookup)
         except DocumentSequence.DoesNotExist:
@@ -114,3 +126,16 @@ class DocumentNumberService:
                     return DocumentSequence.objects.create(last_number=0, **lookup)
             except IntegrityError:
                 return DocumentSequence.objects.select_for_update().get(**lookup)
+
+
+def generate_document_number(
+    tenant: Organization,
+    document_type: str,
+    document_date: date,
+) -> str:
+    """Allocate the next official number for a tenant and business date."""
+    return DocumentNumberService.next_number(
+        organization=tenant,
+        document_type=document_type,
+        issue_date=document_date,
+    ).value

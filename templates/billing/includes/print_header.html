@@ -57,7 +57,7 @@
   <div class="header-right">
     <div class="meta-card">
       <h2 class="document-title{% if document.document_type == "invoice" %} invoice-title{% endif %}">
-        {% if document.document_type == "invoice" %}Proforma Invoice{% else %}{{ document.get_document_type_display }}{% endif %}
+        {% if document.document_type == "invoice" %}Invoice{% else %}{{ document.get_document_type_display }}{% endif %}
       </h2>
       <div class="meta-grid">
         <div class="meta-row">

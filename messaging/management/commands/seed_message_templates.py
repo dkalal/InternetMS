@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from messaging.models import MessageTemplate
+from users.models import Organization
 
 
 DEFAULT_TEMPLATES = [
@@ -64,25 +65,26 @@ DEFAULT_TEMPLATES = [
 
 
 class Command(BaseCommand):
-    help = "Seed global WhatsApp message templates."
+    help = "Seed tenant-scoped WhatsApp message templates."
 
     @transaction.atomic
     def handle(self, *args, **options):
         created = 0
         updated = 0
-        for template_data in DEFAULT_TEMPLATES:
-            template, was_created = MessageTemplate.objects.unscoped().update_or_create(
-                tenant=None,
-                name=template_data["name"],
-                defaults={
-                    "category": template_data["category"],
-                    "content": template_data["content"],
-                    "variables_schema": template_data["variables_schema"],
-                    "is_active": True,
-                },
-            )
-            if was_created:
-                created += 1
-            else:
-                updated += 1
+        for tenant in Organization.objects.filter(is_active=True):
+            for template_data in DEFAULT_TEMPLATES:
+                template, was_created = MessageTemplate.objects.unscoped().update_or_create(
+                    tenant=tenant,
+                    name=template_data["name"],
+                    defaults={
+                        "category": template_data["category"],
+                        "content": template_data["content"],
+                        "variables_schema": template_data["variables_schema"],
+                        "is_active": True,
+                    },
+                )
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
         self.stdout.write(self.style.SUCCESS(f"Seeded message templates. Created: {created}. Updated: {updated}.")) 

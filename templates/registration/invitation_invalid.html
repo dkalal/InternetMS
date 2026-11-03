@@ -1,0 +1,10 @@
+{% extends "auth/standalone_base.html" %}
+{% block title %}Invitation unavailable{% endblock %}
+{% block intro_title %}Your account stays protected.{% endblock %}
+{% block intro_copy %}Invitation links can be used once and are available only for a limited time.{% endblock %}
+{% block auth_content %}
+  <span class="auth-step">Invitation status</span>
+  <h1 id="auth-title">Invitation unavailable</h1>
+  <p class="auth-lede">This link has expired, was revoked, or has already been used. Ask your administrator to send a new invitation.</p>
+  <a class="auth-button auth-button-secondary" href="{% url 'login' %}">Go to sign in</a>
+{% endblock %}

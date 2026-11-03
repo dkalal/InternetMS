@@ -1,109 +1,127 @@
 {% extends 'base.html' %}
-{% block title %}Receive stock{% endblock %}
+{% load static humanize number_display %}
+{% block title %}{{ workspace_title }}{% endblock %}
+{% block body_class %}jims-purchase-workspace{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/purchase-workspace.css' %}">{% endblock %}
 {% block content %}
+<noscript><div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="alert"><strong>JavaScript is required for product search.</strong> Enable JavaScript to add or change purchase products safely. Existing draft data remains unchanged.</div></noscript>
 {% include "inventory/includes/module_nav.html" %}
 {{ product_meta|json_script:"purchase-product-meta" }}
 
-<div class="space-y-5">
-  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-      <p class="text-sm font-semibold text-brand-700">Purchasing</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Receive stock</h1>
-      <p class="mt-1 text-sm text-slate-600">Capture a supplier delivery as a draft. Live stock changes only after a separate confirmation.</p>
-    </div>
-  </header>
+<div data-purchase-workspace>
+  <form method="post" class="purchase-workspace-form" data-unsaved-form data-submit-lock data-serial-validation-url="{% url 'inventory:serial_check' %}" data-serial-mode="purchase" data-product-search-url="{{ product_search_url }}" data-purchase-rows-preview-url="{{ purchase_rows_preview_url }}" data-can-create-import-product="{{ can_create_import_product|yesno:'true,false' }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}" data-product-quick-create-url="{{ product_quick_create_url }}" data-category-quick-create-url="{{ category_quick_create_url }}">
+    {% csrf_token %}{{ form.auto_generated_reference }}
+    <input type="hidden" name="import_token" value="{{ import_token }}">
+    <input type="hidden" name="import_rows" value="{{ import_rows }}" data-import-rows>
+    <div class="purchase-workspace-columns" data-purchase-grid-layout>
+      <div class="purchase-workspace-main">
+        <p class="purchase-breadcrumb"><a href="{% if INVENTORY_CAN_VIEW_PURCHASES %}{% url 'inventory:purchase_list' %}{% else %}{% url 'inventory:dashboard' %}{% endif %}">{% if INVENTORY_CAN_VIEW_PURCHASES %}Purchases{% else %}Inventory{% endif %}</a> / {{ workspace_title }}</p>
+        <header class="purchase-heading">
+          <h1>{{ workspace_title }}</h1>
+          <span class="purchase-draft-status">{% if purchase.pk %}{{ purchase.get_status_display }}{% else %}Unsaved draft{% endif %}</span>
+          <p class="purchase-stock-message">Saving a draft does not change stock.</p>
+        </header>
+        {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><p class="font-semibold">The purchase could not be saved.</p>{{ form.non_field_errors }}</div>{% endif %}
 
-  <form method="post" class="space-y-5" data-unsaved-form data-submit-lock>
-    {% csrf_token %}
-    <section class="jims-panel">
-      <div class="jims-panel-header">
-        <h2 class="font-semibold text-slate-950">Purchase details</h2>
-        <p class="mt-1 text-sm text-slate-600">Use the supplier’s reference so this delivery is easy to trace.</p>
-      </div>
-      <div class="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="lg:col-span-2">{% include "components/form_field.html" with field=form.supplier %}</div>
-        {% include "components/form_field.html" with field=form.reference_number %}
-        {% include "components/form_field.html" with field=form.purchase_date %}
-        <div class="sm:col-span-2 lg:col-span-4">{% include "components/form_field.html" with field=form.notes %}</div>
-      </div>
-    </section>
+        <section class="purchase-metadata" aria-label="Purchase information">
+          <div class="purchase-supplier-control">
+            <div>{% include "components/form_field.html" with field=form.supplier hide_help=True %}</div>
+            {% if INVENTORY_CAN_MANAGE_SUPPLIERS %}
+              <a href="{% url 'inventory:supplier_create' %}" data-open-quick-supplier data-create-record-url="{% url 'inventory:supplier_create' %}?purchase_modal=1" data-create-record-kind="supplier" class="jims-btn jims-btn-secondary purchase-supplier-create" aria-label="New supplier" title="New supplier">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2m4-14v8m-4-4h8"/></svg>
+              </a>
+            {% endif %}
+          </div>
+          <div class="purchase-reference-field">
+            <label for="{{ form.reference_number.id_for_label }}">Reference number <span class="text-rose-600">*</span></label>
+            <details class="purchase-reference-help"><summary aria-label="About the generated reference" title="About the generated reference">&#9432;</summary><p id="{{ form.reference_number.auto_id }}_helptext">{{ form.reference_number.help_text }}</p></details>
+            {{ form.reference_number }}
+            {% if form.reference_number.errors %}<div class="text-sm text-rose-700" role="alert">{{ form.reference_number.errors }}</div>{% endif %}
+          </div>
+          <div>{% include "components/form_field.html" with field=form.purchase_date hide_help=True %}</div>
+          <div>
+            <details class="purchase-notes" {% if form.notes.value or form.notes.errors %}open{% endif %}>
+              <summary>Notes</summary>
+              <label for="{{ form.notes.id_for_label }}" class="sr-only">Purchase notes</label>
+              {{ form.notes }}
+              {% if form.notes.errors %}<div class="text-sm text-rose-700" role="alert">{{ form.notes.errors }}</div>{% endif %}
+            </details>
+            <p class="purchase-notes-placeholder">Add notes (optional)</p>
+          </div>
+        </section>
 
-    <section class="jims-panel overflow-hidden">
-      <div class="jims-panel-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 class="font-semibold text-slate-950">Received items</h2>
-          <p class="mt-1 text-sm text-slate-600">Add one line per product, batch, or expiry date.</p>
-        </div>
-        <button type="button" class="jims-btn jims-btn-secondary" data-add-purchase-line>Add another line</button>
-      </div>
-
-      {{ formset.management_form }}
-      {% if formset.non_form_errors %}<div class="m-5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ formset.non_form_errors }}</div>{% endif %}
-
-      <div class="space-y-4 p-4 sm:p-5" data-purchase-formset>
-        {% for line_form in formset %}
-          <article class="rounded-xl border border-slate-200 bg-slate-50/60 p-4" data-purchase-line>
-            {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <h3 class="text-sm font-semibold text-slate-900">Item {{ forloop.counter }}</h3>
-                <p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p>
+        <section data-purchase-items-panel>
+          <div class="purchase-toolbar">
+            <button type="button" class="jims-btn jims-btn-secondary purchase-outline" data-add-purchase-line><span aria-hidden="true">+</span> Add row</button>
+            <button type="button" class="jims-btn jims-btn-primary" data-open-bulk-products><span aria-hidden="true">+</span> Add multiple products</button>
+            <details class="purchase-more">
+              <summary class="jims-btn jims-btn-secondary">More <span aria-hidden="true">&#8964;</span></summary>
+              <div class="purchase-more-menu">
+                <button type="button" class="jims-btn jims-btn-quiet" data-open-paste-rows>Import / paste rows</button>
+                {% if INVENTORY_CAN_MANAGE_PRODUCTS %}<a href="{% url 'product-create' %}" data-open-quick-product data-create-record-url="{% url 'product-create' %}?purchase_modal=1" data-create-record-kind="product" class="jims-btn jims-btn-quiet">New product</a>{% endif %}
               </div>
-              <button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button>
+            </details>
+          </div>
+          {{ formset.management_form }}
+          {% if formset.non_form_errors %}<div class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">{{ formset.non_form_errors }}</div>{% endif %}
+          <div class="purchase-grid">
+            <div class="purchase-grid-heading" aria-hidden="true"><span>#</span><span>Product</span><span>Quantity</span><span>Unit</span><span>Unit cost (TZS)</span><span>Amount (TZS)</span><span>Details</span><span></span></div>
+            <div data-purchase-formset>
+              {% for line_form in formset %}{% include "inventory/includes/purchase_grid_line.html" with line_form=line_form line_number=forloop.counter %}{% endfor %}
             </div>
-            <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {% for field in line_form.visible_fields %}
-                {% if field.name == "DELETE" %}
-                  <div class="hidden">{{ field }}</div>
-                {% elif field.name == "product" %}
-                  <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "serial_numbers" %}
-                  <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
-                {% elif field.name == "expiry_date" %}
-                  <div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
-                {% else %}
-                  {% include "components/form_field.html" with field=field %}
-                {% endif %}
-              {% endfor %}
-            </div>
-          </article>
-        {% endfor %}
+          </div>
+          <template id="purchase-line-template">{% include "inventory/includes/purchase_grid_line.html" with line_form=formset.empty_form %}</template>
+          <div class="hidden rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-950" data-import-applied role="status"><span data-import-applied-text></span> <button type="button" class="ml-2 font-semibold underline focus:outline-none focus:ring-2 focus:ring-brand-600" data-clear-import>Remove applied batch</button></div>
+        </section>
+
+        <section class="purchase-summary" aria-label="Purchase summary">
+          <p class="purchase-summary-count"><span data-purchase-line-count>{{ valid_line_count }}</span> item lines</p>
+          <div class="purchase-summary-total"><p>Estimated total (TZS)</p><p data-purchase-estimated-total>{{ authoritative_total|money_display }}</p><p>Final total calculated on save.</p></div>
+        </section>
       </div>
 
-      <template id="purchase-line-template">
-        <article class="rounded-xl border border-slate-200 bg-slate-50/60 p-4" data-purchase-line>
-          {% for hidden in formset.empty_form.hidden_fields %}{{ hidden }}{% endfor %}
-          <div class="flex items-center justify-between gap-3">
-            <div><h3 class="text-sm font-semibold text-slate-900">New item</h3><p class="mt-0.5 text-xs text-slate-500" data-product-hint>Choose a stock-tracked product.</p></div>
-            <button type="button" class="jims-btn jims-btn-quiet text-rose-700" data-remove-line>Remove</button>
-          </div>
-          <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {% for field in formset.empty_form.visible_fields %}
-              {% if field.name == "DELETE" %}
-                <div class="hidden">{{ field }}</div>
-              {% elif field.name == "product" %}
-                <div class="sm:col-span-2 lg:col-span-3">{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "serial_numbers" %}
-                <div class="hidden sm:col-span-2 lg:col-span-3" data-line-serials>{% include "components/form_field.html" with field=field %}</div>
-              {% elif field.name == "expiry_date" %}
-                <div class="hidden" data-line-expiry>{% include "components/form_field.html" with field=field %}</div>
-              {% else %}
-                {% include "components/form_field.html" with field=field %}
-              {% endif %}
-            {% endfor %}
-          </div>
-        </article>
-      </template>
-    </section>
-
-    <div class="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm text-brand-950">
-      Saving creates a <strong>draft only</strong>. Review quantities, costs, batches, expiry dates, and serials on the next screen before confirming the stock receipt.
+      <aside class="purchase-tracking" data-tracking-panel aria-label="Line tracking details" hidden>
+        <div class="purchase-tracking-heading"><h2 data-tracking-title>Tracking details</h2><button type="button" class="purchase-tracking-close" data-close-line-details aria-label="Close tracking details" title="Close tracking details">&#215;</button></div>
+        <div class="purchase-tracking-identity"><div><h3 data-tracking-product>Choose a product</h3><p data-tracking-sku></p></div><p data-tracking-quantity></p></div>
+        <div class="purchase-tracking-fields" data-tracking-fields></div>
+        <p class="purchase-tracking-status" data-tracking-status role="status"></p>
+        <div class="purchase-tracking-footer"><p>&#9432; Switch lines without losing entries.</p><p>Changes are included when saving the purchase.</p></div>
+      </aside>
     </div>
 
-    <div class="flex justify-end gap-2">
-      <a href="{% url 'inventory:purchase_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>
-      <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving draft…">Save purchase draft</button>
+    <div class="purchase-actions" aria-label="Purchase actions">
+      <a href="{% if purchase.pk %}{% url 'inventory:purchase_detail' purchase.pk %}{% elif INVENTORY_CAN_VIEW_PURCHASES %}{% url 'inventory:purchase_list' %}{% else %}{% url 'inventory:dashboard' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <div class="purchase-save-actions">
+        <button type="submit" name="action" value="save_continue" class="jims-btn jims-btn-secondary" data-loading-label="Saving&#8230;">Save Draft &amp; Continue</button>
+        <button type="submit" name="action" value="save_review" class="jims-btn jims-btn-primary" data-loading-label="Saving&#8230;">Save &amp; Review</button>
+        {% if can_confirm_purchase %}<div class="purchase-receive-action"><button type="submit" name="action" value="confirm_receive" class="jims-btn jims-btn-secondary purchase-outline" data-loading-label="Preparing review&#8230;">Confirm &amp; Receive</button><p>Opens confirmation review</p></div>{% endif %}
+      </div>
     </div>
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/60 p-2 sm:p-5" data-create-record-dialog data-quick-supplier-dialog role="dialog" aria-modal="true" aria-labelledby="create-record-title" aria-describedby="create-record-description">
+      <div class="flex h-[min(94dvh,58rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
+          <div><p class="text-xs font-bold uppercase tracking-wide text-brand-700">Purchase setup</p><h2 id="create-record-title" class="mt-1 text-lg font-bold text-slate-950" data-create-record-title></h2><p id="create-record-description" class="mt-1 text-sm text-slate-600">Complete the details, save, and return to this purchase.</p></div>
+          <button type="button" class="jims-btn jims-btn-secondary shrink-0" data-close-create-record aria-label="Close creation dialog">Close</button>
+        </div>
+        <p class="px-5 py-3 text-sm text-slate-600" data-create-record-loading role="status">Loading form...</p>
+        <iframe class="hidden min-h-0 w-full flex-1 border-0" title="Create record" data-create-record-frame></iframe>
+      </div>
+    </div>
+
+    {% include "inventory/includes/purchase_import_dialog.html" %}
+
+    <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-bulk-product-dialog role="dialog" aria-modal="true" aria-labelledby="bulk-product-title">
+      <div class="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 p-4 sm:p-5"><div><h2 id="bulk-product-title" class="text-lg font-bold text-slate-950">Add multiple products</h2><p class="mt-1 text-sm text-slate-600">Search and select products, then add them as purchase rows.</p></div><button type="button" class="jims-btn jims-btn-quiet" data-close-bulk-products aria-label="Close product picker">Close</button></div>
+        <div class="border-b border-slate-200 p-4"><label for="bulk-product-search" class="sr-only">Search products</label><input id="bulk-product-search" type="search" class="block min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/30" placeholder="Search name, SKU, brand or model…" data-bulk-product-search></div>
+        <div class="min-h-52 flex-1 overflow-y-auto p-3" data-bulk-product-results><p class="p-6 text-center text-sm text-slate-500">Start typing or browse available products.</p></div>
+        <div class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><p class="text-sm font-semibold text-slate-700"><span data-bulk-selected-count>0</span> selected</p><div class="flex gap-2"><button type="button" class="jims-btn jims-btn-secondary" data-clear-bulk-products>Clear</button><button type="button" class="jims-btn jims-btn-primary" data-add-bulk-products disabled>Add selected products</button></div></div>
+      </div>
+    </div>
+
   </form>
 </div>
+
 {% endblock %}
+
+{% block extra_js %}{{ block.super }}<script src="{% static 'inventory/js/purchase-import.js' %}" defer></script>{% endblock %}

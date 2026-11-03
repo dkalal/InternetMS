@@ -1,0 +1,34 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="origin">
+  <meta name="theme-color" content="#241f56">
+  <title>{% block title %}Account access{% endblock %} · JBMS</title>
+  <link rel="stylesheet" href="{% static 'users/css/auth-pages.css' %}">
+</head>
+<body>
+  <a class="auth-skip" href="#main">Skip to main content</a>
+  <div class="auth-page">
+    <header class="auth-header" aria-label="JBMS account access">
+      <div class="auth-brand-mark" aria-hidden="true">JS</div>
+      <div><strong>JBMS</strong><span>JS Business Management System</span></div>
+    </header>
+    <main id="main" class="auth-layout">
+      <aside class="auth-intro" aria-label="Account setup information">
+        <span class="auth-eyebrow">Secure account access</span>
+        <p class="auth-intro-heading">{% block intro_title %}Your workspace starts here.{% endblock %}</p>
+        <p>{% block intro_copy %}Use your own account to access only the work assigned to you.{% endblock %}</p>
+        {% block intro_extra %}{% endblock %}
+      </aside>
+      <section class="auth-card" aria-labelledby="auth-title">
+        {% if messages %}<div class="auth-messages" role="status">{% for message in messages %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
+        {% block auth_content %}{% endblock %}
+      </section>
+    </main>
+    <footer class="auth-footer">© {% now "Y" %} JS Business Management System</footer>
+  </div>
+</body>
+</html>

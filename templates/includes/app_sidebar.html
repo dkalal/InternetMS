@@ -1,0 +1,103 @@
+<aside id="primary-navigation" class="jims-sidebar hidden" data-nav-panel aria-label="Primary navigation">
+  <div class="jims-sidebar-inner">
+    <div class="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 px-4">
+      <a href="{% url 'main_app:workspace_home' %}" class="flex min-w-0 items-center gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-sm font-extrabold tracking-tight text-white shadow-sm">JS</span>
+        <span class="min-w-0">
+          <span class="block truncate text-sm font-extrabold tracking-tight text-slate-950">JBMS</span>
+          <span class="block max-w-40 truncate text-xs text-slate-500">{{ ACTIVE_ORGANIZATION.name|default:"Business workspace" }}</span>
+        </span>
+      </a>
+      <button type="button" class="jims-btn jims-btn-quiet jims-btn-compact lg:hidden" data-nav-dismiss aria-label="Close navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-width="2" d="m6 6 12 12M18 6 6 18"/>
+        </svg>
+      </button>
+    </div>
+
+    <nav class="flex-1 py-3" aria-label="Workspace">
+      <div class="jims-sidebar-section space-y-1">
+        {% if request.user_role == "SUPER_ADMIN" and not SUPPORT_ACCESS %}<a class="jims-sidebar-link" href="{% url 'start_support_access' %}"><span>Select tenant support context</span></a>{% endif %}
+        {% if "customers.view" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link" href="{% url 'customer-list' %}" {% if request.resolver_match.app_name == "customers" or request.resolver_match.url_name == "customer-list" or "customer-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20m9.5-12.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Zm2.5 2a3 3 0 0 1 0 5.8M19.5 20v-1.5a3.5 3.5 0 0 0-2-3.16"/></svg>
+          <span>Customers</span>
+        </a>{% endif %}
+        {% if "packages.view" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link" href="{% url 'package-list' %}" {% if request.resolver_match.app_name == "services" or "package-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 7.5 12 3l8 4.5-8 4.5-8-4.5Zm0 4.5 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>
+          <span>Services & packages</span>
+        </a>{% endif %}
+        {% if INVENTORY_CAN_VIEW_STOCK %}
+          <a class="jims-sidebar-link" href="{% url 'inventory:dashboard' %}" {% if request.resolver_match.app_name == "inventory" or "product-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m4 7 8-4 8 4-8 4-8-4Zm0 0v10l8 4 8-4V7M12 11v10"/></svg>
+            <span>Inventory</span>
+          </a>
+        {% endif %}
+        {% if "technician_work_reports.view_own" in ACTIVE_PERMISSIONS or "technician_work_reports.view_all" in ACTIVE_PERMISSIONS %}
+          <a class="jims-sidebar-link" href="{% url 'work_reports:list' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name != "approval_queue" %}aria-current="page"{% endif %}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 3h10a2 2 0 0 1 2 2v16H5V5a2 2 0 0 1 2-2Zm2 5h6m-6 4h6m-6 4h4"/></svg>
+            <span>{% if request.user_role == "TECHNICIAN" %}My Work Reports{% else %}Work Reports{% endif %}</span>
+          </a>
+        {% endif %}
+        {% if "technician_work_reports.view_all" in ACTIVE_PERMISSIONS %}
+          <a class="jims-sidebar-link" href="{% url 'work_reports:approval_queue' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name == "approval_queue" %}aria-current="page"{% endif %}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m5 12 4 4L19 6M5 21h14"/></svg>
+            <span class="flex-1">Work Approvals</span>{% if PENDING_WORK_APPROVALS %}<span class="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800">{{ PENDING_WORK_APPROVALS }}</span>{% endif %}
+          </a>
+        {% endif %}
+      </div>
+
+      {% if "sales_documents.view_own" in ACTIVE_PERMISSIONS or "finance.sales.view_all" in ACTIVE_PERMISSIONS %}<div class="jims-sidebar-label">Billing</div>
+      <div class="jims-sidebar-section space-y-1">
+        <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='invoice' %}" {% if request.resolver_match.app_name == "billing" and "invoice" in request.path %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 3h8l4 4v14H7V3Zm8 0v5h4M10 12h6m-6 4h6"/></svg>
+          <span>{% if request.user_role == "SALES" %}My Invoices{% else %}Invoices{% endif %}</span>
+        </a>
+        <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='quotation' %}" {% if request.resolver_match.app_name == "billing" and "quotation" in request.path %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 3h12v18H6V3Zm3 5h6m-6 4h6m-6 4h4"/></svg>
+          <span>{% if request.user_role == "SALES" %}My Quotations{% else %}Quotations{% endif %}</span>
+        </a>
+        <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='receipt' %}" {% if request.resolver_match.app_name == "billing" and "receipt" in request.path %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Zm3 5h6m-6 4h6"/></svg>
+          <span>{% if request.user_role == "SALES" %}My Receipts{% else %}Receipts{% endif %}</span>
+        </a>
+        {% if "finance.sales.view_all" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link" href="{% url 'billing:billing_sheet_list' %}" {% if request.resolver_match.url_name == "billing_sheet_list" or "billing_sheet" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5h16v14H4V5Zm0 5h16M9 5v14m6-9v9"/></svg>
+          <span>Billing sheets</span>
+        </a>{% endif %}
+      </div>
+      {% endif %}
+    </nav>
+
+    <div class="shrink-0 border-t border-slate-200 p-3">
+      {% if request.user_role == "SUPER_ADMIN" or request.user_role == "ADMIN_MANAGER" %}
+        <details class="jims-sidebar-management mb-2" {% if request.resolver_match.url_name == "branding_settings" or "custom-field" in request.resolver_match.url_name or request.resolver_match.url_name == "settings" %}open{% endif %}>
+          <summary class="jims-sidebar-link cursor-pointer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm7-3.5 2-1-2-3.46-2.2.64a8 8 0 0 0-1.6-.92L14.65 5h-4l-.55 2.26a8 8 0 0 0-1.6.92L6.3 7.54 4.3 11l2 1a8.1 8.1 0 0 0 0 1.85l-2 1 2 3.46 2.2-.64c.5.37 1.03.68 1.6.92l.55 2.26h4l.55-2.26a8 8 0 0 0 1.6-.92l2.2.64 2-3.46-2-1A8.1 8.1 0 0 0 19 12Z"/></svg>
+            <span class="flex-1">Management</span>
+            <svg viewBox="0 0 20 20" fill="currentColor" class="jims-sidebar-chevron h-4 w-4 text-slate-400" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.72a.75.75 0 0 1 1.06 0L10 11.44l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.78a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="mt-1 space-y-1 pl-8">
+            <a class="jims-sidebar-subLink" href="{% url 'branding_settings' %}" {% if request.resolver_match.url_name == "branding_settings" %}aria-current="page"{% endif %}>Organization settings</a>
+            <a class="jims-sidebar-subLink" href="{% url 'custom-field-list' %}" {% if "custom-field" in request.resolver_match.url_name %}aria-current="page"{% endif %}>Custom fields</a>
+            <a class="jims-sidebar-subLink" href="{% url 'inventory:settings' %}" {% if request.resolver_match.app_name == "inventory" and request.resolver_match.url_name == "settings" %}aria-current="page"{% endif %}>Inventory settings</a>
+            {% if "users.view" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-subLink" href="{% url 'team_access' %}">Team &amp; Access</a>{% endif %}
+            {% if user.is_superuser %}<a class="jims-sidebar-subLink" href="{% url 'admin:index' %}">Django admin</a>{% endif %}
+          </div>
+        </details>
+      {% endif %}
+      <div class="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-800">{{ user.username|slice:":1"|upper }}</span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm font-semibold text-slate-900">{{ user.get_short_name|default:user.username }}</span>
+          <span class="block truncate text-xs text-slate-500">{{ request.user_role|default:"Team member" }}</span>
+        </span>
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="rounded-md p-2 text-slate-500 hover:bg-white hover:text-slate-900" aria-label="Log out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 5H5v14h5m4-3 4-4-4-4m4 4H9"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</aside>

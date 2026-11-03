@@ -132,7 +132,7 @@ def send_whatsapp_message(
 
 
 def available_templates(*, organization, category: str | list[str] | tuple[str, ...] | None = None):
-    queryset = MessageTemplate.objects.unscoped().filter(is_active=True).filter(Q(tenant__isnull=True) | Q(tenant=organization))
+    queryset = MessageTemplate.objects.unscoped().filter(is_active=True, tenant=organization)
     if category:
         if isinstance(category, (list, tuple, set)):
             queryset = queryset.filter(category__in=category)
@@ -142,9 +142,7 @@ def available_templates(*, organization, category: str | list[str] | tuple[str, 
 
 
 def get_template_for_tenant(*, organization, template_id: int) -> MessageTemplate:
-    template = MessageTemplate.objects.unscoped().filter(pk=template_id, is_active=True).filter(
-        Q(tenant__isnull=True) | Q(tenant=organization)
-    ).first()
+    template = MessageTemplate.objects.unscoped().filter(pk=template_id, is_active=True, tenant=organization).first()
     if template is None:
         raise MessagingServiceError("Template not found.")
     return template

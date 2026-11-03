@@ -1,0 +1,10 @@
+{% extends "auth/standalone_base.html" %}
+{% block title %}Switch account{% endblock %}
+{% block intro_title %}One account at a time.{% endblock %}
+{% block intro_copy %}This browser is currently signed in to another account. Signing out here keeps your workspace access separate.{% endblock %}
+{% block auth_content %}
+  <span class="auth-step">Account safety</span>
+  <h1 id="auth-title">Sign out to continue</h1>
+  <p class="auth-lede">To accept the invitation for {{ tenant.name }}, sign out of the current account in this browser. Other devices stay signed in.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="sign_out"><button type="submit" class="auth-button">Sign out and continue</button></form>
+{% endblock %}

@@ -11,6 +11,8 @@ db.sqlite3
 email_debug.log
 staticfiles/
 media/
+.backups/
+*.dump
 
 .pytest_cache/
 .coverage

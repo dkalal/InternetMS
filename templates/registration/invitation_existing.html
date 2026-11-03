@@ -1,0 +1,14 @@
+{% extends "auth/standalone_base.html" %}
+{% block title %}Join workspace{% endblock %}
+{% block intro_title %}Join {{ tenant.name }}.{% endblock %}
+{% block intro_copy %}Accept this invitation using the account that received it. Your existing password stays the same.{% endblock %}
+{% block auth_content %}
+  <span class="auth-step">Workspace invitation</span>
+  <h1 id="auth-title">Accept workspace access</h1>
+  <p class="auth-lede">Sign in with the invited account, then return to this invitation link to accept it.</p>
+  {% if user.is_authenticated %}
+    <form method="post">{% csrf_token %}<button type="submit" class="auth-button">Accept invitation</button></form>
+  {% else %}
+    <a class="auth-button" href="{% url 'login' %}">Sign in</a>
+  {% endif %}
+{% endblock %}

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 
 from users.tenant_models import TenantScopedManager
@@ -108,6 +108,7 @@ class Purchase(TenantModel):
     def __str__(self):
         return self.reference_number
 
+
     def save(self, *args, **kwargs):
         self._sync_tenant()
         if self.supplier_id and self.supplier.tenant_id != self.tenant_id:
@@ -119,27 +120,94 @@ class Purchase(TenantModel):
         super().save(*args, **kwargs)
 
 
+class PurchaseProductProposal(TenantModel):
+    """Validated purchase input, deliberately outside the registered catalog."""
+    purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='product_proposals')
+    rows = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        if self.purchase.tenant_id != self.tenant_id or self.purchase.status != Purchase.Status.DRAFT:
+            raise ValidationError('Proposals require a draft purchase in the same tenant.')
+        super().save(*args, **kwargs)
+
+
+class PurchaseImportSubmission(TenantModel):
+    """Durable receipt for an applied workspace batch and its exact save request."""
+
+    token = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+    purchase = models.ForeignKey(Purchase, on_delete=models.PROTECT, related_name='import_submissions')
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tenant', 'token'], name='uniq_purchase_import_tenant_token')]
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        if self.purchase_id and self.purchase.tenant_id != self.tenant_id:
+            raise ValidationError('Import submission purchase must belong to the same tenant.')
+        super().save(*args, **kwargs)
+
+
+class PurchaseReferenceSequence(TenantModel):
+    """One locked counter per tenant for generated purchase references."""
+
+    last_number = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant'], name='uniq_purchase_reference_sequence_tenant'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self._sync_tenant()
+        super().save(*args, **kwargs)
+
+
 class PurchaseLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_purchase_lines', db_index=True)
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='purchase_lines')
-    quantity = models.DecimalField(max_digits=12, decimal_places=2)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    quantity = models.DecimalField(max_digits=16, decimal_places=6)
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6)
+    # Preservation-only legacy snapshot fields. New purchase lines use quantity
+    # and unit_cost in the product's selected sales/stock unit.
+    source_purchase_unit_label = models.CharField(max_length=50, null=True, blank=True)
+    source_purchase_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
+    conversion_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
+    source_purchase_unit_cost = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True)
+    authoritative_purchase_total = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True)
     batch_reference = models.CharField(max_length=100, blank=True, default='')
     expiry_date = models.DateField(null=True, blank=True)
     serial_numbers = models.TextField(blank=True, default='', help_text='One serial number per line for serialized products.')
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
 
     class Meta:
         ordering = ['id']
 
     @property
     def line_total(self):
+        # Preserve immutable totals captured by the earlier package-assisted
+        # workflow. New same-unit lines leave this null and use quantity × cost.
+        if self.authoritative_purchase_total is not None:
+            return self.authoritative_purchase_total
         return (self.quantity * self.unit_cost).quantize(Decimal('0.01'))
 
     def parsed_serial_numbers(self):
         return [value.strip() for value in self.serial_numbers.replace(',', '\n').splitlines() if value.strip()]
 
     def save(self, *args, **kwargs):
+        if self.purchase_id:
+            self.tenant_id = self.purchase.tenant_id
+        if self.product_id and self.product.tenant_id != self.tenant_id:
+            raise ValidationError('Purchase line product belongs to another tenant.')
         if self.purchase_id and self.purchase.status == Purchase.Status.CONFIRMED:
             raise ValidationError('Confirmed purchase lines are immutable.')
         super().save(*args, **kwargs)
@@ -152,8 +220,8 @@ class PurchaseLine(models.Model):
 
 class InventoryBalance(TenantModel):
     product = models.OneToOneField('products.Product', on_delete=models.PROTECT, related_name='inventory_balance')
-    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
-    average_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    quantity = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
+    average_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     updated_at = models.DateTimeField(auto_now=True)
     objects = TenantScopedManager()
 
@@ -212,9 +280,9 @@ class StockMovement(TenantModel):
 
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='stock_movements')
     movement_type = models.CharField(max_length=30, choices=MovementType.choices, db_index=True)
-    quantity = models.DecimalField(max_digits=14, decimal_places=2, help_text='Positive for stock in; negative for stock out.')
-    balance_after = models.DecimalField(max_digits=14, decimal_places=2)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    quantity = models.DecimalField(max_digits=16, decimal_places=6, help_text='Positive for stock in; negative for stock out.')
+    balance_after = models.DecimalField(max_digits=16, decimal_places=6)
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     purchase_line = models.ForeignKey(PurchaseLine, on_delete=models.PROTECT, null=True, blank=True, related_name='stock_movements')
     billing_line = models.ForeignKey('billing.BillingLineItem', on_delete=models.PROTECT, null=True, blank=True, related_name='stock_movements')
     adjustment = models.ForeignKey(StockAdjustment, on_delete=models.PROTECT, null=True, blank=True, related_name='movements')
@@ -247,7 +315,7 @@ class StockUnit(TenantModel):
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='stock_units')
     serial_number = models.CharField(max_length=160)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE, db_index=True)
-    unit_cost = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    unit_cost = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.000000'))
     batch_reference = models.CharField(max_length=100, blank=True, default='')
     expiry_date = models.DateField(null=True, blank=True)
     received_purchase_line = models.ForeignKey(PurchaseLine, on_delete=models.PROTECT, null=True, blank=True, related_name='stock_units')
@@ -272,6 +340,13 @@ class StockUnit(TenantModel):
 
 
 class Cart(TenantModel):
+    class SalePricingCategory(models.TextChoices):
+        CUSTOMER_TIER = 'customer_tier', 'Customer category (automatic)'
+        STANDARD = 'standard', 'Standard'
+        TECHNICIAN = 'technician', 'Technician'
+        WHOLESALE = 'wholesale', 'Wholesale'
+        LEGACY_RETAIL = 'retail', 'Legacy Retail'
+
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         CONVERTED = 'converted', 'Converted'
@@ -279,6 +354,13 @@ class Cart(TenantModel):
 
     customer = models.ForeignKey('customers.Customer', on_delete=models.PROTECT, null=True, blank=True, related_name='inventory_carts')
     walk_in_name = models.CharField(max_length=200, blank=True, default='')
+    shipping_address = models.CharField(max_length=500, blank=True, default='')
+    sale_pricing_category = models.CharField(
+        max_length=20,
+        choices=SalePricingCategory.choices,
+        default=SalePricingCategory.CUSTOMER_TIER,
+        db_index=True,
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
     discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
@@ -287,6 +369,11 @@ class Cart(TenantModel):
     invoice = models.OneToOneField('billing.BillingDocument', on_delete=models.PROTECT, null=True, blank=True, related_name='source_inventory_cart_invoice')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='inventory_carts')
     converted_at = models.DateTimeField(null=True, blank=True)
+    abandoned_at = models.DateTimeField(null=True, blank=True)
+    abandoned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='abandoned_inventory_carts')
+    abandonment_reason = models.CharField(max_length=500, blank=True, default='')
+    restored_at = models.DateTimeField(null=True, blank=True)
+    restored_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='restored_inventory_carts')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     objects = TenantScopedManager()
@@ -305,6 +392,7 @@ class Cart(TenantModel):
 
 
 class CartLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_cart_lines', db_index=True)
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='cart_lines')
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('1.00'))
@@ -312,6 +400,7 @@ class CartLine(models.Model):
     discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager()
 
     class Meta:
         ordering = ['id']
@@ -321,13 +410,49 @@ class CartLine(models.Model):
     def line_total(self):
         return max((self.quantity * self.unit_price - self.discount_amount).quantize(Decimal('0.01')), Decimal('0.00'))
 
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft cart items can be changed.')
+            self.tenant_id = cart.tenant_id
+            if self.product_id and self.product.tenant_id != self.tenant_id:
+                raise ValidationError('Cart line product belongs to another tenant.')
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft cart items can be removed.')
+            return super().delete(*args, **kwargs)
+
 
 class CartSerialSelection(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_cart_serial_selections', db_index=True)
     cart_line = models.ForeignKey(CartLine, on_delete=models.CASCADE, related_name='serial_selections')
     stock_unit = models.ForeignKey(StockUnit, on_delete=models.PROTECT, related_name='cart_selections')
+    objects = TenantScopedManager()
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['cart_line', 'stock_unit'], name='uniq_cart_line_serial')]
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_line.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft serial selections can be changed.')
+            self.tenant_id = cart.tenant_id
+            if self.stock_unit_id and (self.stock_unit.tenant_id != self.tenant_id or self.stock_unit.product_id != self.cart_line.product_id):
+                raise ValidationError('Serial unit does not belong to the cart product and tenant.')
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            cart = Cart.objects.unscoped().select_for_update().get(pk=self.cart_line.cart_id)
+            if cart.status != Cart.Status.DRAFT:
+                raise ValidationError('Only draft serial selections can be removed.')
+            return super().delete(*args, **kwargs)
 
 
 class InventorySale(TenantModel):
@@ -348,15 +473,24 @@ class InventorySale(TenantModel):
 
 
 class InventorySaleLine(models.Model):
+    tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_inventory_sale_lines', db_index=True)
     sale = models.ForeignKey(InventorySale, on_delete=models.PROTECT, related_name='lines')
     billing_line = models.OneToOneField('billing.BillingLineItem', on_delete=models.PROTECT, related_name='inventory_sale_line')
     cost_total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     net_revenue = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
 
     @property
     def gross_profit(self):
         return self.net_revenue - self.cost_total
+
+    def save(self, *args, **kwargs):
+        if self.sale_id:
+            self.tenant_id = self.sale.tenant_id
+        if self.billing_line_id and self.tenant_id != self.billing_line.tenant_id:
+            raise ValidationError('Billing line belongs to another tenant.')
+        super().save(*args, **kwargs)
 
 
 class DocumentSerialSelection(TenantModel):

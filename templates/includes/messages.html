@@ -1,0 +1,15 @@
+{% if messages %}
+  <div class="mb-6 space-y-2" role="status" aria-live="polite">
+    {% for message in messages %}
+      {% if 'error' in message.tags %}
+        <div class="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
+      {% elif 'success' in message.tags %}
+        <div class="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"><span class="font-bold" aria-hidden="true">✓</span><span>{{ message }}</span></div>
+      {% elif 'warning' in message.tags %}
+        <div class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"><span class="font-bold" aria-hidden="true">!</span><span>{{ message }}</span></div>
+      {% else %}
+        <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800">{{ message }}</div>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}

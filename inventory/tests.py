@@ -1,8 +1,10 @@
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from threading import Barrier, Lock, Thread
 
+from django.contrib.staticfiles import finders
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import close_old_connections, connection
@@ -13,10 +15,11 @@ from openpyxl import Workbook
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
+from audit.models import AuditLog
 from billing.models import BillingDocument, BillingLineItem
 from billing.services import BillingService, BillingServiceError, LineItemInput
 from customers.models import Customer
-from products.models import Product
+from products.models import Product, ProductCategory, UnitOfMeasure
 from services.models import Package
 from integrations.models import IntegrationConsumer
 from users.models import Organization, UserAccessProfile
@@ -25,6 +28,7 @@ from .imports import commit_import, validate_workbook
 from .models import (
     Cart,
     CartLine,
+    CartSerialSelection,
     DocumentSerialSelection,
     InventoryBalance,
     InventorySale,
@@ -35,10 +39,161 @@ from .models import (
     StockUnit,
     Supplier,
 )
+from .numbering import PurchaseReferenceNumberService
 from .services import CartService, InventoryError, InventoryService
+from .forms import PurchaseLineForm
 
 
 User = get_user_model()
+
+
+class SameUnitCostingTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Pack Tenant', slug='pack-tenant')
+        self.other = Organization.objects.create(name='Other Pack Tenant', slug='other-pack-tenant')
+        self.admin = User.objects.create_user(username='pack-admin', password='pass')
+        UserAccessProfile.objects.create(user=self.admin, tenant=self.org, role=UserAccessProfile.Role.TENANT_ADMIN)
+        self.staff = User.objects.create_user(username='pack-staff', password='pass')
+        UserAccessProfile.objects.create(user=self.staff, tenant=self.org, role=UserAccessProfile.Role.TENANT_STAFF)
+        self.customer = Customer.objects.create(
+            organization=self.org, tenant=self.org, name='Cable buyer', customer_type='random', location='Moshi',
+        )
+        self.meter = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Meter', symbol='m',
+        )
+        self.product = Product.objects.create(
+            organization=self.org, tenant=self.org, sku='UTP-305', name='UTP Cable',
+            quantity=Decimal('0'), stock=0, measure_unit='m', sales_unit=self.meter,
+            buying_price=Decimal('700.000000'), selling_price=Decimal('2000.00'),
+            technician_price=Decimal('1800.00'), wholesale_price=Decimal('1500.00'),
+            wholesale_min_quantity=Decimal('100'), allow_wholesale=True,
+        )
+        self.supplier = Supplier.objects.create(
+            organization=self.org, tenant=self.org, company_name='Cable Supplier', created_by=self.admin,
+        )
+
+    def draft_receipt(self, *, reference='PURCHASE-1', quantity='305', unit_cost='700'):
+        purchase = Purchase.objects.create(
+            organization=self.org, tenant=self.org, supplier=self.supplier,
+            reference_number=reference, purchase_date=date.today(), created_by=self.admin,
+        )
+        form = PurchaseLineForm(data={
+            'product': self.product.pk, 'quantity': quantity, 'unit_cost': unit_cost,
+            'batch_reference': '', 'expiry_date': '', 'serial_numbers': '',
+        }, organization=self.org)
+        self.assertTrue(form.is_valid(), form.errors)
+        line = form.save(commit=False)
+        line.purchase = purchase
+        line.save()
+        return purchase, line
+
+    def test_same_unit_receipt_posts_fractional_precision_and_total(self):
+        purchase, line = self.draft_receipt(quantity='305.5')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        line.refresh_from_db()
+        balance = InventoryBalance.objects.get(product=self.product)
+        self.assertEqual(line.quantity, Decimal('305.500000'))
+        self.assertEqual(line.unit_cost, Decimal('700.000000'))
+        self.assertEqual(line.line_total, Decimal('213850.00'))
+        self.assertEqual(balance.quantity, Decimal('305.500000'))
+        self.assertEqual(balance.average_cost, Decimal('700.000000'))
+        self.assertEqual(StockMovement.objects.get(purchase_line=line).quantity, Decimal('305.500000'))
+
+    def test_above_cost_sale_succeeds_and_at_or_below_cost_is_rejected(self):
+        purchase, _ = self.draft_receipt()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        ok = BillingService.create_document(
+            organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'))],
+        )
+        self.assertEqual(ok.items.get().unit_price, Decimal('2000.00'))
+        InventoryBalance.objects.filter(product=self.product).update(average_cost=Decimal('2000.000000'))
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'), preserve_unit_price=True)],
+            )
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.QUOTATION,
+                customer_id=self.customer.pk, items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
+            )
+
+    def test_payment_fails_safely_when_catalog_unit_no_longer_matches_invoice_snapshot(self):
+        purchase, _ = self.draft_receipt()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        invoice = BillingService.create_document(
+            organization=self.org, created_by=self.admin,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk, status=BillingDocument.Status.ISSUED,
+            items=[LineItemInput(
+                product_id=self.product.pk, quantity=Decimal('3'), unit_price=Decimal('2000'),
+            )],
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box',
+        )
+        # Simulate legacy data created before unit identity became immutable.
+        Product.objects.filter(pk=self.product.pk).update(sales_unit=box, measure_unit=box.label)
+
+        with self.assertRaisesMessage(
+            BillingServiceError,
+            'uses the historical unit m, but its current inventory unit is Box',
+        ):
+            BillingService.create_receipt_from_invoice(
+                organization=self.org, created_by=self.admin, invoice_id=invoice.pk,
+                amount_paid=invoice.total, payment_method='cash',
+            )
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
+        self.assertFalse(BillingDocument.objects.filter(
+            document_type=BillingDocument.DocumentType.RECEIPT, invoice=invoice,
+        ).exists())
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('305.000000'))
+
+    def test_discount_and_higher_weighted_cost_are_enforced_without_blocking_receipt(self):
+        first, _ = self.draft_receipt()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=first.pk, actor=self.admin)
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_document(
+                organization=self.org, created_by=self.admin, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk,
+                items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('2000'), discount_amount=Decimal('1400'))],
+            )
+        second, _ = self.draft_receipt(reference='PURCHASE-2', unit_cost='3000')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=second.pk, actor=self.admin)
+        balance = InventoryBalance.objects.get(product=self.product)
+        self.assertEqual(balance.quantity, Decimal('610.000000'))
+        self.assertEqual(balance.average_cost, Decimal('1850.000000'))
+        self.assertIn('Technician', self.product.pricing_warnings)
+        self.assertIn('Wholesale', self.product.pricing_warnings)
+
+    def test_confirmed_purchase_line_remains_immutable_after_product_cost_changes(self):
+        direct = Purchase.objects.create(
+            organization=self.org, tenant=self.org, supplier=self.supplier,
+            reference_number='DIRECT-1', purchase_date=date.today(), created_by=self.admin,
+        )
+        PurchaseLine.objects.create(purchase=direct, product=self.product, quantity=Decimal('2'), unit_cost=Decimal('700'))
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=direct.pk, actor=self.admin)
+        received, line = self.draft_receipt(reference='PURCHASE-SNAPSHOT')
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=received.pk, actor=self.admin)
+        snapshot = (line.quantity, line.unit_cost, line.line_total)
+        Product.objects.filter(pk=self.product.pk).update(buying_price=Decimal('800'))
+        line.refresh_from_db()
+        self.assertEqual(snapshot, (line.quantity, line.unit_cost, line.line_total))
+
+    def test_unauthorized_error_hides_cost(self):
+        purchase, _ = self.draft_receipt()
+        InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
+        with self.assertRaises(BillingServiceError) as error:
+            BillingService.create_document(
+                organization=self.org, created_by=self.staff, document_type=BillingDocument.DocumentType.INVOICE,
+                customer_id=self.customer.pk,
+                items=[LineItemInput(product_id=self.product.pk, quantity=Decimal('1'), unit_price=Decimal('500'), preserve_unit_price=True)],
+            )
+        self.assertIn('minimum allowed selling price', str(error.exception))
+        self.assertNotIn('700', str(error.exception))
 
 
 class InventoryAcceptanceTests(TestCase):
@@ -124,6 +279,29 @@ class InventoryAcceptanceTests(TestCase):
         self.assertEqual(balance.quantity, Decimal('10.00'))
         self.assertEqual(StockMovement.objects.get(product=self.product).quantity, Decimal('10.00'))
 
+    def test_quantity_views_hide_database_scale_but_preserve_fractional_meaning(self):
+        self.receive(quantity=Decimal('10.250000'))
+        self.client.login(username='inventory-admin', password='pass')
+
+        for url in (
+            reverse('inventory:dashboard'),
+            reverse('inventory:stock_list'),
+            reverse('inventory:movement_list'),
+            reverse('inventory:report', args=['stock-valuation']),
+            reverse('product-list'),
+            reverse('product-detail', args=[self.product.pk]),
+        ):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+            self.assertContains(response, '10.25')
+            self.assertNotContains(response, '10.250000')
+
+        invoice = self.invoice(quantity=Decimal('2.00'))
+        response = self.client.get(reverse('billing:document_detail', args=['invoice', invoice.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '>2</td>', html=False)
+        self.assertNotContains(response, '>2.00</td>', html=False)
+
     def test_02_full_payment_reduces_stock_from_ten_to_eight(self):
         self.receive(quantity=10)
         invoice = self.invoice(quantity=2)
@@ -169,6 +347,40 @@ class InventoryAcceptanceTests(TestCase):
             self.pay(invoice, amount=Decimal('1.00'))
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('10.00'))
 
+    def test_07b_mixed_product_and_package_invoice_still_requires_full_payment(self):
+        self.receive(quantity=10)
+        package = Package.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            name='Business Internet',
+            package_type='indoor',
+            speed='20 Mbps',
+            monthly_fee=Decimal('100000.00'),
+            setup_fee=Decimal('0.00'),
+            description='Internet subscription',
+            is_active=True,
+        )
+        invoice = BillingService.create_document(
+            organization=self.org,
+            created_by=self.admin,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk,
+            status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal('0.00'),
+            items=[
+                LineItemInput(product_id=self.product.pk, quantity=Decimal('1.00')),
+                LineItemInput(package_id=package.pk, quantity=Decimal('1.00')),
+            ],
+        )
+
+        with self.assertRaisesMessage(BillingServiceError, 'require complete payment'):
+            self.pay(invoice, amount=Decimal('50000.00'), reference='mixed-partial')
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, BillingDocument.Status.ISSUED)
+        self.assertFalse(invoice.receipts.exists())
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('10.00'))
+
     def test_08_draft_unpaid_and_void_invoice_do_not_deduct_stock(self):
         self.receive(quantity=10)
         draft = self.invoice(quantity=2, status=BillingDocument.Status.DRAFT)
@@ -196,6 +408,153 @@ class InventoryAcceptanceTests(TestCase):
         with self.assertRaisesMessage(InventoryError, 'Only draft purchases can be confirmed'):
             InventoryService.confirm_purchase(organization=self.org, purchase_id=purchase.pk, actor=self.admin)
 
+    def test_purchase_create_reuses_an_uncommitted_reference_preview(self):
+        self.client.login(username='inventory-admin', password='pass')
+
+        first = self.client.get(reverse('inventory:purchase_create'))
+        second = self.client.get(reverse('inventory:purchase_create'))
+
+        first_reference = first.context['form'].initial['reference_number']
+        second_reference = second.context['form'].initial['reference_number']
+        self.assertRegex(first_reference, r'^PUR-\d{4}-\d{5}$')
+        self.assertEqual(first_reference, second_reference)
+        self.assertNotIn('readonly', first.context['form'].fields['reference_number'].widget.attrs)
+        self.assertContains(first, 'Generated automatically')
+
+    def test_purchase_create_allocates_the_preview_only_when_the_draft_is_saved(self):
+        self.client.login(username='inventory-admin', password='pass')
+        response = self.client.get(reverse('inventory:purchase_create'))
+        preview = response.context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
+            'supplier': self.supplier.pk,
+            'reference_number': preview,
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': self.product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Purchase.objects.get().reference_number, preview)
+        self.assertEqual(
+            PurchaseReferenceNumberService.preview_next_number(organization=self.org),
+            f'PUR-{date.today():%Y}-00002',
+        )
+
+    def test_purchase_create_preserves_an_edited_supplier_reference(self):
+        self.client.login(username='inventory-admin', password='pass')
+        preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
+            'supplier': self.supplier.pk,
+            'reference_number': 'DELIVERY-INV-2048',
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': self.product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Purchase.objects.get().reference_number, 'DELIVERY-INV-2048')
+        self.assertEqual(
+            PurchaseReferenceNumberService.preview_next_number(organization=self.org),
+            f'PUR-{date.today():%Y}-00001',
+        )
+
+    def test_purchase_product_combobox_uses_remote_search_without_catalog_preload(self):
+        other_product = self.make_product('Tenant B Secret Switch', 'SECRET-B', organization=self.other_org)
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:purchase_create'))
+
+        self.assertEqual(response.status_code, 200)
+        product_field = response.context['formset'].forms[0].fields['product']
+        self.assertQuerySetEqual(product_field.queryset, [])
+        self.assertEqual(product_field.empty_label, 'Select a product')
+        self.assertEqual(product_field.label_from_instance(self.product), 'Router · RTR-001')
+        self.assertNotContains(response, self.product.name)
+        self.assertNotContains(response, other_product.name)
+        self.assertContains(response, 'data-purchase-product-select="true"')
+        self.assertContains(response, 'data-product-search-url=')
+        self.assertContains(response, '>Select a product</option>', html=False)
+
+    def test_purchase_create_rejects_a_product_from_another_tenant(self):
+        other_product = self.make_product('Tenant B Secret Switch', 'SECRET-B', organization=self.other_org)
+        self.client.login(username='inventory-admin', password='pass')
+        preview = self.client.get(reverse('inventory:purchase_create')).context['form'].initial['reference_number']
+
+        response = self.client.post(reverse('inventory:purchase_create'), {
+            'action': 'save_review',
+            'supplier': self.supplier.pk,
+            'reference_number': preview,
+            'auto_generated_reference': preview,
+            'purchase_date': date.today().isoformat(),
+            'notes': '',
+            'lines-TOTAL_FORMS': 1,
+            'lines-INITIAL_FORMS': 0,
+            'lines-MIN_NUM_FORMS': 0,
+            'lines-MAX_NUM_FORMS': 1000,
+            'lines-0-product': other_product.pk,
+            'lines-0-quantity': '1.00',
+            'lines-0-unit_cost': '100.00',
+            'lines-0-batch_reference': '',
+            'lines-0-expiry_date': '',
+            'lines-0-serial_numbers': '',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(Purchase.objects.filter(tenant=self.org, reference_number=preview).exists())
+
+    def test_searchable_select_uses_an_accessible_viewport_portal(self):
+        script_path = finders.find('inventory/js/jims-ui.js')
+        stylesheet_path = finders.find('inventory/css/jims-ui.css')
+        script = Path(script_path).read_text(encoding='utf-8')
+        stylesheet = Path(stylesheet_path).read_text(encoding='utf-8')
+
+        self.assertIn('document.body.appendChild(menu)', script)
+        self.assertIn('input.setAttribute("aria-labelledby", visibleLabel.id)', script)
+        self.assertIn('optionNode.setAttribute("role", "option")', script)
+        self.assertNotIn('button.setAttribute("role", "option")', script)
+        self.assertIn('openAbove = below < 176 && above > below', script)
+        self.assertIn('position: fixed;', stylesheet)
+        self.assertIn('.jims-combobox-option[aria-selected="true"]', stylesheet)
+
+    def test_generated_purchase_reference_skips_existing_manual_reference(self):
+        Purchase.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            supplier=self.supplier,
+            reference_number=f'PUR-{date.today():%Y}-00001',
+            purchase_date=date.today(),
+            created_by=self.admin,
+        )
+
+        reference = PurchaseReferenceNumberService.next_number(organization=self.org)
+
+        self.assertEqual(reference, f'PUR-{date.today():%Y}-00002')
+
     def test_draft_purchase_detail_uses_line_total_when_stored_total_is_stale(self):
         purchase = Purchase.objects.create(
             organization=self.org, tenant=self.org, supplier=self.supplier,
@@ -211,7 +570,7 @@ class InventoryAcceptanceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['line_items_total'], Decimal('1500000.00'))
-        self.assertContains(response, '1,500,000.00 TZS')
+        self.assertContains(response, '1,500,000 TZS')
 
     def test_cart_invoice_is_issued_and_can_create_a_receipt(self):
         self.receive(quantity=4)
@@ -242,12 +601,335 @@ class InventoryAcceptanceTests(TestCase):
         self.assertEqual(CartLine.objects.get(cart=cart, product=self.product).quantity, Decimal('1.00'))
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('2.00'))
 
-    def test_start_sale_opens_an_editable_pos_draft_immediately(self):
+    def test_pos_catalog_and_current_sale_render_product_photo(self):
+        self.receive(quantity=2)
+        self.product.image = f'product_images/tenant_{self.org.pk}/router.webp'
+        self.product.save(update_fields=['image'])
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(
+            cart=cart,
+            product=self.product,
+            quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
         self.client.login(username='inventory-admin', password='pass')
-        response = self.client.get(reverse('inventory:cart_create'))
+
+        response = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.product.image.url, count=2)
+        self.assertContains(response, f'data-pos-product-card="{self.product.pk}"')
+        self.assertContains(response, f'data-product-id="{self.product.pk}"')
+
+    def test_pos_catalog_keeps_registered_out_of_stock_products_visible(self):
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_detail', args=[cart.pk])
+        response = self.client.get(url)
+        self.assertIn(self.product.pk, [p.pk for p in response.context['catalog']])
+        self.receive(quantity=2)
+        response = self.client.get(url)
+        self.assertIn(self.product.pk, [p.pk for p in response.context['catalog']])
+
+    def test_start_sale_opens_workspace_and_saves_only_meaningful_details(self):
+        self.client.login(username='inventory-admin', password='pass')
+        response = self.client.post(reverse('inventory:cart_create'))
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Cart.objects.filter(created_by=self.admin).exists())
+        self.assertContains(self.client.get(response.url), 'A draft is saved when')
+        repeat_response = self.client.post(reverse('inventory:cart_create'))
+        self.assertEqual(repeat_response.status_code, 302)
+        self.assertFalse(Cart.objects.filter(created_by=self.admin).exists())
+        saved = self.client.post(response.url, {'notes': 'First saved sale', 'sale_pricing_category': 'customer_tier',
+                                               'discount_amount': '0', 'tax_rate': '0'})
         cart = Cart.objects.get(created_by=self.admin)
-        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertRedirects(saved, reverse('inventory:cart_detail', args=[cart.pk]))
         self.assertEqual(cart.status, Cart.Status.DRAFT)
+        self.assertEqual(Cart.objects.filter(created_by=self.admin, status=Cart.Status.DRAFT).count(), 1)
+        self.assertEqual(self.client.get(reverse('inventory:cart_create')).status_code, 404)
+
+    def test_cart_list_total_uses_existing_discount_and_tax_calculation(self):
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, created_by=self.admin,
+            tax_rate=Decimal('18.00'), discount_amount=Decimal('10.00'),
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('2.00'),
+            unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:cart_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['carts'][0].display_total, Decimal('342.20'))
+        self.assertContains(response, 'TZS 342.2')
+        self.assertContains(response, 'jims-cart-list-shell')
+        self.assertNotContains(response, 'jims-list-shell')
+
+    def test_discard_sale_is_soft_idempotent_audited_and_never_changes_stock(self):
+        self.receive(quantity=5)
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('2.00'), unit_price=Decimal('150.00')
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_abandon', args=[cart.pk])
+
+        response = self.client.post(url, follow=True)
+
+        self.assertRedirects(response, reverse('inventory:cart_list'))
+        self.assertContains(response, 'Sale discarded')
+        cart.refresh_from_db()
+        self.assertEqual(cart.status, Cart.Status.ABANDONED)
+        self.assertEqual(cart.lines.count(), 1)
+        self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('5.00'))
+        log = AuditLog.objects.get(action='inventory.cart.abandoned', object_id=str(cart.pk))
+        self.assertEqual(log.old_value['status'], Cart.Status.DRAFT)
+        self.assertEqual(log.new_value['status'], Cart.Status.ABANDONED)
+        self.assertEqual(log.metadata['stock_changed'], False)
+        self.assertEqual(log.metadata['financial_document_created'], False)
+
+        repeat = self.client.post(url, follow=True)
+        self.assertContains(repeat, 'already discarded')
+        self.assertEqual(
+            AuditLog.objects.filter(action='inventory.cart.abandoned', object_id=str(cart.pk)).count(),
+            1,
+        )
+
+    def test_discard_sale_rejects_get_converted_and_cross_tenant_carts(self):
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        CartLine.objects.create(cart=cart, product=self.product, quantity=1, unit_price=Decimal('150.00'))
+        quotation = CartService.convert(
+            organization=self.org,
+            cart_id=cart.pk,
+            target=BillingDocument.DocumentType.QUOTATION,
+            actor=self.admin,
+        )
+        other_cart = Cart.objects.create(
+            organization=self.other_org, tenant=self.other_org, created_by=self.admin
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        self.assertEqual(self.client.get(reverse('inventory:cart_abandon', args=[cart.pk])).status_code, 404)
+        response = self.client.post(reverse('inventory:cart_abandon', args=[cart.pk]), follow=True)
+        self.assertContains(response, 'Only an unconverted draft sale can be discarded')
+        cart.refresh_from_db()
+        self.assertEqual(cart.status, Cart.Status.CONVERTED)
+        self.assertEqual(cart.quotation_id, quotation.pk)
+        self.assertEqual(
+            self.client.post(reverse('inventory:cart_abandon', args=[other_cart.pk])).status_code,
+            404,
+        )
+
+    def test_pos_large_customer_and_category_sets_use_searchable_controls_without_category_chips(self):
+        Customer.objects.bulk_create([
+            Customer(
+                organization=self.org,
+                tenant=self.org,
+                name=f'Customer {index:03d}',
+                customer_type='random',
+                status=Customer.Status.ACTIVE,
+                location='Moshi',
+            )
+            for index in range(120)
+        ])
+        ProductCategory.objects.bulk_create([
+            ProductCategory(
+                organization=self.org,
+                tenant=self.org,
+                name=f'Category {index:03d}',
+            )
+            for index in range(120)
+        ])
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="id_customer"', html=False)
+        self.assertContains(response, 'data-searchable-select="true"', count=2, html=False)
+        self.assertContains(response, 'Customer 119')
+        self.assertContains(response, 'Category 119')
+        self.assertNotContains(response, 'href="?category=', html=False)
+
+    def test_confirmation_dialog_uses_scoped_hooks_that_cannot_match_action_forms(self):
+        script_path = finders.find('inventory/js/jims-ui.js')
+        self.assertIsNotNone(script_path)
+        script = Path(script_path).read_text(encoding='utf-8')
+        self.assertIn('confirmLayer.querySelector("[data-confirm-dialog-title]")', script)
+        self.assertNotIn('document.querySelector("[data-confirm-title]")', script)
+        self.assertIn('pendingForm.requestSubmit(pendingSubmitter || undefined)', script)
+
+    def test_serialized_cart_line_shows_searchable_available_serials_and_saves_selection(self):
+        serialized_product = self.make_product('Managed Router', 'SER-UI-001', serialized=True)
+        self.receive(product=serialized_product, quantity=2, serials='SN-UI-001\nSN-UI-002')
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        self.client.login(username='inventory-admin', password='pass')
+        url = reverse('inventory:cart_line_create', args=[cart.pk])
+
+        response = self.client.get(url, {'product': serialized_product.pk})
+
+        self.assertContains(response, 'SN-UI-001')
+        self.assertContains(response, 'data-serial-search')
+        serial = StockUnit.objects.get(product=serialized_product, serial_number='SN-UI-001')
+        response = self.client.post(url, {
+            'product': serialized_product.pk,
+            'quantity': '1.00',
+            'discount_amount': '0.00',
+            'serial_units': [serial.pk],
+        })
+        line = CartLine.objects.get(cart=cart, product=serialized_product)
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertTrue(CartSerialSelection.objects.filter(cart_line=line, stock_unit=serial).exists())
+
+    def test_serialized_cart_line_has_explicit_remove_action_and_zero_is_not_delete(self):
+        serialized_product = self.make_product('Removable Router', 'SER-REMOVE-001', serialized=True)
+        self.receive(product=serialized_product, quantity=1, serials='SN-REMOVE-001')
+        serial = StockUnit.objects.get(product=serialized_product)
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        line = CartLine.objects.create(
+            cart=cart, product=serialized_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        CartSerialSelection.objects.create(
+            tenant=self.org, cart_line=line, stock_unit=serial,
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        delete_url = reverse('inventory:cart_line_delete', args=[cart.pk, line.pk])
+
+        cart_page = self.client.get(reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertContains(cart_page, delete_url)
+        self.assertContains(cart_page, 'data-confirm-title="Remove item?"', html=False)
+        self.assertContains(cart_page, 'selected serial numbers will be cleared')
+        edit_page = self.client.get(
+            reverse('inventory:cart_line_edit', args=[cart.pk, line.pk]),
+        )
+        self.assertContains(edit_page, 'Remove this item')
+        self.assertContains(edit_page, delete_url)
+
+        invalid_update = self.client.post(
+            reverse('inventory:cart_line_edit', args=[cart.pk, line.pk]),
+            {
+                'product': serialized_product.pk,
+                'quantity': '0.00',
+                'discount_amount': '0.00',
+                'serial_units': [],
+            },
+        )
+        self.assertEqual(invalid_update.status_code, 200)
+        self.assertContains(invalid_update, 'Use “Remove item” to remove this line.')
+        self.assertTrue(CartLine.objects.filter(pk=line.pk).exists())
+
+    def test_serialized_cart_line_remove_is_atomic_audited_and_stock_neutral(self):
+        serialized_product = self.make_product('Audited Router', 'SER-AUDIT-001', serialized=True)
+        self.receive(product=serialized_product, quantity=2, serials='SN-AUDIT-001\nSN-AUDIT-002')
+        serial = StockUnit.objects.filter(product=serialized_product).order_by('pk').first()
+        cart = Cart.objects.create(organization=self.org, tenant=self.org, created_by=self.admin)
+        line = CartLine.objects.create(
+            cart=cart, product=serialized_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        selection = CartSerialSelection.objects.create(
+            tenant=self.org, cart_line=line, stock_unit=serial,
+        )
+        balance_before = InventoryBalance.objects.get(product=serialized_product).quantity
+        movements_before = StockMovement.objects.filter(product=serialized_product).count()
+        line_id = line.pk
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(
+            reverse('inventory:cart_line_delete', args=[cart.pk, line.pk]), follow=True,
+        )
+
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertContains(response, 'Item removed from the draft sale')
+        self.assertFalse(CartLine.objects.filter(pk=line_id).exists())
+        self.assertFalse(CartSerialSelection.objects.filter(pk=selection.pk).exists())
+        self.assertEqual(
+            InventoryBalance.objects.get(product=serialized_product).quantity,
+            balance_before,
+        )
+        self.assertEqual(
+            StockMovement.objects.filter(product=serialized_product).count(),
+            movements_before,
+        )
+        log = AuditLog.objects.get(
+            action='inventory.cart_line.removed', object_id=str(line_id),
+        )
+        self.assertEqual(log.organization_id, self.org.pk)
+        self.assertEqual(log.actor_id, self.admin.pk)
+        self.assertEqual(log.old_value['serial_unit_ids'], [serial.pk])
+        self.assertEqual(log.metadata['serialized'], True)
+        self.assertEqual(log.metadata['stock_changed'], False)
+
+    def test_cart_line_remove_rejects_get_non_draft_and_cross_tenant_ids(self):
+        local_cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, created_by=self.admin,
+        )
+        local_line = CartLine.objects.create(
+            cart=local_cart, product=self.product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        other_product = self.make_product(
+            'Other Tenant Router', 'OTHER-REMOVE-001', organization=self.other_org,
+        )
+        other_cart = Cart.objects.create(
+            organization=self.other_org, tenant=self.other_org, created_by=self.admin,
+        )
+        other_line = CartLine.objects.create(
+            cart=other_cart, product=other_product, quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        local_url = reverse(
+            'inventory:cart_line_delete', args=[local_cart.pk, local_line.pk],
+        )
+        self.assertEqual(self.client.get(local_url).status_code, 404)
+        local_cart.status = Cart.Status.CONVERTED
+        local_cart.save(update_fields=['status', 'updated_at'])
+        self.assertEqual(self.client.post(local_url).status_code, 404)
+        self.assertTrue(CartLine.objects.filter(pk=local_line.pk).exists())
+
+        other_url = reverse(
+            'inventory:cart_line_delete', args=[other_cart.pk, other_line.pk],
+        )
+        self.assertEqual(self.client.post(other_url).status_code, 404)
+        self.assertTrue(CartLine.objects.unscoped().filter(pk=other_line.pk).exists())
+
+    def test_serialized_walk_in_cart_uses_wholesale_price_at_product_threshold(self):
+        serialized_product = self.make_product('Bulk Router', 'BULK-SER-001', serialized=True)
+        serial_numbers = [f'BULK-SN-{number:03d}' for number in range(1, 6)]
+        self.receive(product=serialized_product, quantity=5, serials='\n'.join(serial_numbers))
+        serialized_product.allow_wholesale = True
+        serialized_product.wholesale_price = Decimal('120.00')
+        serialized_product.wholesale_min_quantity = Decimal('5.00')
+        serialized_product.save(update_fields=['allow_wholesale', 'wholesale_price', 'wholesale_min_quantity'])
+        cart = Cart.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            created_by=self.admin,
+            sale_pricing_category=Cart.SalePricingCategory.WHOLESALE,
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_line_create', args=[cart.pk]), {
+            'product': serialized_product.pk,
+            'quantity': '5.00',
+            'discount_amount': '0.00',
+            'serial_units': list(StockUnit.objects.filter(product=serialized_product).values_list('pk', flat=True)),
+        })
+
+        line = CartLine.objects.get(cart=cart, product=serialized_product)
+        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertEqual(line.unit_price, Decimal('120.00'))
+        invoice = CartService.convert(
+            organization=self.org, cart_id=cart.pk, target=BillingDocument.DocumentType.INVOICE, actor=self.admin,
+        )
+        self.assertEqual(invoice.items.get().unit_price, Decimal('120.00'))
+        self.assertEqual(invoice.items.get().pricing_mode, BillingLineItem.PricingMode.WHOLESALE)
 
     def test_pos_ajax_reprices_wholesale_customer_at_product_minimum(self):
         self.receive(quantity=5)
@@ -264,8 +946,9 @@ class InventoryAcceptanceTests(TestCase):
         for _ in range(2):
             response = self.client.post(url, {'product': self.product.pk, 'direction': 'add'}, **headers)
             self.assertEqual(response.status_code, 200)
-        self.assertIn('Continue to payment', response.json()['checkout_html'])
-        self.assertIn('300.00', response.json()['checkout_html'])
+        self.assertIn('Confirm payment &amp; view receipt', response.json()['checkout_html'])
+        self.assertIn(reverse('inventory:cart_checkout', args=[cart.pk]), response.json()['checkout_html'])
+        self.assertIn('data-pos-payment-total>300</span> TZS', response.json()['checkout_html'])
         line = CartLine.objects.get(cart=cart, product=self.product)
         self.assertEqual(line.unit_price, Decimal('150.00'))
         response = self.client.post(url, {'product': self.product.pk, 'direction': 'increase'}, **headers)
@@ -278,6 +961,58 @@ class InventoryAcceptanceTests(TestCase):
         )
         self.assertEqual(invoice.items.get().unit_price, Decimal('120.00'))
         self.assertEqual(invoice.items.get().pricing_mode, BillingLineItem.PricingMode.WHOLESALE)
+
+    def test_pos_ajax_saves_sale_details_and_returns_authoritative_checkout_total(self):
+        self.product.tax_eligible = False
+        self.product.save(update_fields=['tax_eligible'])
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, customer=self.customer, created_by=self.admin,
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('1.00'), unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_detail', args=[cart.pk]), {
+            'customer': self.customer.pk,
+            'walk_in_name': '',
+            'sale_pricing_category': Cart.SalePricingCategory.STANDARD,
+            'discount_amount': '10.00',
+            'tax_rate': '18.00',
+            'notes': '',
+        }, HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_ACCEPT='application/json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['taxable_subtotal'], '0.00')
+        self.assertEqual(response.json()['tax'], '0.00')
+        self.assertEqual(response.json()['grand_total'], '140.00')
+        self.assertIn('data-pos-payment-total>140</span> TZS', response.json()['checkout_html'])
+        cart.refresh_from_db()
+        self.assertEqual(cart.discount_amount, Decimal('10.00'))
+        self.assertEqual(cart.tax_rate, Decimal('18.00'))
+
+    def test_pos_ajax_rejects_cart_discount_above_repriced_subtotal_atomically(self):
+        cart = Cart.objects.create(
+            organization=self.org, tenant=self.org, customer=self.customer, created_by=self.admin,
+        )
+        CartLine.objects.create(
+            cart=cart, product=self.product, quantity=Decimal('1.00'), unit_price=Decimal('150.00'),
+        )
+        self.client.login(username='inventory-admin', password='pass')
+
+        response = self.client.post(reverse('inventory:cart_detail', args=[cart.pk]), {
+            'customer': self.customer.pk,
+            'walk_in_name': '',
+            'sale_pricing_category': Cart.SalePricingCategory.STANDARD,
+            'discount_amount': '151.00',
+            'tax_rate': '18.00',
+            'notes': '',
+        }, HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_ACCEPT='application/json')
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('discount_amount', response.json()['errors'])
+        cart.refresh_from_db()
+        self.assertEqual(cart.discount_amount, Decimal('0.00'))
 
     def test_09_same_invoice_cannot_deduct_stock_twice(self):
         self.receive(quantity=10)
@@ -373,7 +1108,7 @@ class InventoryAcceptanceTests(TestCase):
             commit_import(organization=self.org, actor=self.admin, job_id=job.pk)
         self.assertFalse(InventoryBalance.objects.filter(product=self.product).exists())
 
-    def test_17_existing_package_invoice_partial_payment_workflow_still_works(self):
+    def test_17_package_invoice_accepts_partial_payment_without_inventory_sale(self):
         package = Package.objects.create(
             organization=self.org, tenant=self.org, name='10 Mbps', package_type='indoor', speed='10 Mbps',
             monthly_fee=Decimal('100.00'), setup_fee=Decimal('0.00'), description='Internet package'
@@ -383,12 +1118,14 @@ class InventoryAcceptanceTests(TestCase):
             customer_id=self.customer.pk, status=BillingDocument.Status.ISSUED, tax_rate=0,
             items=[LineItemInput(package_id=package.pk, quantity=Decimal('1.00'), unit_price=package.monthly_fee)],
         )
-        BillingService.create_receipt_from_invoice(
+        receipt = BillingService.create_receipt_from_invoice(
             organization=self.org, created_by=self.admin, invoice_id=invoice.pk, amount_paid=Decimal('50.00'),
-            payment_method='cash', payment_reference='legacy-partial',
+            payment_method='cash', payment_reference='package-partial',
         )
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, BillingDocument.Status.PARTIALLY_PAID)
+        self.assertEqual(receipt.total, Decimal('50.00'))
+        self.assertEqual(BillingService.invoice_remaining_balance(organization=self.org, invoice=invoice), Decimal('50.00'))
         self.assertFalse(InventorySale.objects.filter(invoice=invoice).exists())
 
     def test_cart_calculation_order_and_fixed_price(self):
@@ -421,6 +1158,34 @@ class InventoryAcceptanceTests(TestCase):
         )
         self.assertEqual(direct.items.get().unit_price, Decimal('150.00'))
 
+    def test_cart_conversion_excludes_tax_exempt_product_from_vat(self):
+        self.product.tax_eligible = False
+        self.product.save(update_fields=['tax_eligible'])
+        self.receive(quantity=1)
+        cart = Cart.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            customer=self.customer,
+            created_by=self.admin,
+            tax_rate=Decimal('18.00'),
+        )
+        CartLine.objects.create(
+            cart=cart,
+            product=self.product,
+            quantity=Decimal('1.00'),
+            unit_price=Decimal('150.00'),
+        )
+
+        invoice = CartService.convert(
+            organization=self.org,
+            cart_id=cart.pk,
+            target=BillingDocument.DocumentType.INVOICE,
+            actor=self.admin,
+        )
+
+        self.assertEqual(invoice.tax_amount, Decimal('0.00'))
+        self.assertEqual(invoice.total, Decimal('150.00'))
+
     def test_inventory_pages_and_excel_export_render_for_admin(self):
         self.client.login(username='inventory-admin', password='pass')
         for url in [
@@ -437,6 +1202,108 @@ class InventoryAcceptanceTests(TestCase):
         export = self.client.get(reverse('inventory:report', args=['stock-valuation']), {'export': 'xlsx'})
         self.assertEqual(export.status_code, 200)
         self.assertEqual(export['Content-Type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    def test_category_editor_saves_icon_and_default_unit(self):
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+
+        response = self.client.get(create_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Category icon')
+        self.assertContains(response, 'Applied automatically to new products')
+
+        response = self.client.post(create_url, {
+            'name': 'Cables',
+            'description': 'Copper and fiber cabling.',
+            'measure_unit': 'Meter',
+            'icon': ProductCategory.Icon.CABLE,
+            'is_active': 'on',
+        })
+
+        self.assertRedirects(response, reverse('inventory:category_list'))
+        category = ProductCategory.objects.get(tenant=self.org, name='Cables')
+        self.assertEqual(category.measure_unit, 'Meter')
+        self.assertEqual(category.icon, ProductCategory.Icon.CABLE)
+
+    def test_category_unit_picker_is_semantic_tenant_scoped_and_saves_audited_rules(self):
+        piece = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Piece', symbol='pc',
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box', symbol='box',
+        )
+        foreign = UnitOfMeasure.objects.create(
+            organization=self.other_org, tenant=self.other_org, name='Foreign unit', symbol='x',
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+
+        response = self.client.get(create_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-choice-group', html=False)
+        self.assertContains(response, 'class="jims-choice-card"', html=False)
+        self.assertContains(response, 'data-category-unit-form', html=False)
+        self.assertContains(response, 'Piece (pc)')
+        self.assertNotContains(response, 'Foreign unit')
+
+        response = self.client.post(create_url, {
+            'name': 'Managed hardware',
+            'description': 'Tenant-safe category rules.',
+            'allowed_units': [piece.pk, box.pk],
+            'default_unit': box.pk,
+            'icon': ProductCategory.Icon.GENERIC,
+            'is_active': 'on',
+        })
+
+        self.assertRedirects(response, reverse('inventory:category_list'))
+        category = ProductCategory.objects.get(tenant=self.org, name='Managed hardware')
+        self.assertEqual(category.default_unit, box)
+        self.assertSetEqual(set(category.allowed_units.all()), {piece, box})
+        log = AuditLog.objects.get(action='inventory.category.saved', object_id=str(category.pk))
+        self.assertEqual(log.new_value['default_unit_id'], box.pk)
+        self.assertEqual(log.new_value['allowed_unit_ids'], sorted([piece.pk, box.pk]))
+        self.assertNotIn(foreign.pk, log.new_value['allowed_unit_ids'])
+
+    def test_category_unit_picker_rejects_cross_tenant_and_inconsistent_unit_ids(self):
+        piece = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Piece', symbol='pc',
+        )
+        box = UnitOfMeasure.objects.create(
+            organization=self.org, tenant=self.org, name='Box', symbol='box',
+        )
+        foreign = UnitOfMeasure.objects.create(
+            organization=self.other_org, tenant=self.other_org, name='Foreign unit', symbol='x',
+        )
+        self.client.login(username='inventory-admin', password='pass')
+        create_url = reverse('inventory:category_create')
+        common = {
+            'description': '', 'icon': ProductCategory.Icon.GENERIC, 'is_active': 'on',
+        }
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Forged allowed unit',
+            'allowed_units': [piece.pk, foreign.pk], 'default_unit': piece.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Forged allowed unit').exists())
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Forged default unit',
+            'allowed_units': [piece.pk], 'default_unit': foreign.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid choice')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Forged default unit').exists())
+
+        response = self.client.post(create_url, {
+            **common, 'name': 'Mismatched default unit',
+            'allowed_units': [piece.pk], 'default_unit': box.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Default unit must be selected in Allowed units.')
+        self.assertFalse(ProductCategory.objects.filter(tenant=self.org, name='Mismatched default unit').exists())
 
     def test_movement_list_renders_system_created_movements(self):
         StockMovement.objects.create(
@@ -493,14 +1360,37 @@ class InventoryAcceptanceTests(TestCase):
         dashboard = self.client.get(reverse('inventory:dashboard'))
         self.assertEqual(dashboard.status_code, 200)
         self.assertContains(dashboard, 'Catalog items')
-        self.assertContains(dashboard, 'Stock units')
+        self.assertContains(dashboard, 'Low stock')
         self.assertNotContains(dashboard, 'Stock value')
+        self.assertNotContains(dashboard, 'Total wholesale')
 
         stock = self.client.get(reverse('inventory:stock_list'), {'state': 'low'})
         self.assertEqual(stock.status_code, 200)
         self.assertContains(stock, 'Low stock')
         self.assertContains(stock, self.product.sku)
         self.assertNotContains(stock, 'Average cost')
+
+    def test_inventory_dashboard_values_current_stock_at_each_sale_price_category(self):
+        self.product.technician_price = Decimal('135.00')
+        self.product.allow_wholesale = True
+        self.product.wholesale_price = Decimal('120.00')
+        self.product.wholesale_min_quantity = Decimal('2.00')
+        self.product.save(update_fields=[
+            'technician_price', 'allow_wholesale', 'wholesale_price', 'wholesale_min_quantity',
+        ])
+        self.receive(quantity=2)
+        self.client.login(username='inventory-admin', password='pass')
+
+        dashboard = self.client.get(reverse('inventory:dashboard'))
+
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(dashboard.context['total_stock_value'], Decimal('200.00'))
+        self.assertEqual(dashboard.context['total_technician_value'], Decimal('270.00'))
+        self.assertEqual(dashboard.context['total_wholesale_value'], Decimal('240.00'))
+        self.assertEqual(dashboard.context['total_selling_value'], Decimal('300.00'))
+        self.assertContains(dashboard, 'Technician sales value')
+        self.assertContains(dashboard, 'Wholesale sales value')
+        self.assertContains(dashboard, 'Standard sales value')
 
     def test_stock_adjustment_ui_previews_balance_and_requires_confirmation(self):
         self.receive(quantity=3)
@@ -528,7 +1418,79 @@ class InventoryAcceptanceTests(TestCase):
         self.assertNotContains(response, 'you can register another payment later')
 
 
+class CartTechnicianPricingTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(name="POS Pricing", slug="pos-pricing")
+        self.user = User.objects.create_user(username="pos-pricing-user", password="pass")
+        self.product = Product.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name="Cable tester",
+            sku="TESTER-1",
+            item_type=Product.ItemType.SERVICE,
+            track_stock=False,
+            quantity=Decimal("0.00"),
+            buying_price=Decimal("100.00"),
+            selling_price=Decimal("150.00"),
+            technician_price=Decimal("125.00"),
+        )
+
+    def test_cart_category_controls_price_without_registered_technician(self):
+        cart = Cart.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            created_by=self.user,
+            walk_in_name="Independent installer",
+            sale_pricing_category=Cart.SalePricingCategory.TECHNICIAN,
+        )
+        unit_price, mode = CartService.line_pricing(
+            product=self.product,
+            quantity=Decimal("1.00"),
+            sale_pricing_category=cart.sale_pricing_category,
+        )
+        self.assertEqual(unit_price, Decimal("125.00"))
+        self.assertEqual(mode, BillingLineItem.PricingMode.TECHNICIAN)
+        self.assertIsNone(cart.customer)
+
+    def test_customer_tier_mode_uses_registered_technician_price(self):
+        customer = Customer.objects.create(
+            organization=self.organization,
+            tenant=self.organization,
+            name="Registered installer",
+            customer_type="random",
+            pricing_tier=Customer.PricingTier.TECHNICIAN,
+        )
+
+        unit_price, mode = CartService.line_pricing(
+            product=self.product,
+            quantity=Decimal("1.00"),
+            customer=customer,
+            sale_pricing_category=Cart.SalePricingCategory.CUSTOMER_TIER,
+        )
+
+        self.assertEqual(unit_price, Decimal("125.00"))
+        self.assertEqual(mode, BillingLineItem.PricingMode.TECHNICIAN)
+
+
 class InventoryAPITests(TestCase):
+    def test_auto_sku_api_replay_conflict_and_update_preservation(self):
+        payload = {'name': 'API automatic', 'buying_price': '10', 'selling_price': '20'}
+        url = '/api/inventory/products/'
+        response = self.client.post(url, payload, format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['sku'], 'PRD-000001')
+        replay = self.client.post(url, payload, format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay.data['id'], response.data['id'])
+        conflict = self.client.post(url, dict(payload, name='Changed'), format='json', HTTP_IDEMPOTENCY_KEY='sku-create')
+        self.assertEqual(conflict.status_code, 409)
+        update = self.client.patch(f"{url}{response.data['id']}/", {'sku': '', 'name': 'Renamed'}, format='json')
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(update.data['sku'], 'PRD-000001')
+        invalid = self.client.post(url, dict(payload, sku='prd-000002'), format='json')
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('sku', invalid.data)
+
     def setUp(self):
         self.org = Organization.objects.create(name='API Tenant', slug='api-inventory-tenant')
         self.other_org = Organization.objects.create(name='Other API Tenant', slug='other-api-inventory-tenant')
@@ -544,7 +1506,7 @@ class InventoryAPITests(TestCase):
         self.product = Product.objects.create(
             organization=self.org, tenant=self.org, sku='API-RTR', name='API Router', item_type='physical',
             track_stock=True, quantity=0, stock=0, measure_unit='Unit', buying_price=100, selling_price=150,
-            retail_price=150,
+            retail_price=150, technician_price=130,
         )
         InventoryService.adjust_stock(
             organization=self.org, product_id=self.product.pk, quantity_delta=5,
@@ -562,6 +1524,22 @@ class InventoryAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()['results']
         self.assertEqual([row['sku'] for row in payload], ['API-RTR'])
+        self.assertEqual(payload[0]['technician_price'], '130.00')
+
+    def test_restricted_api_user_cannot_see_buying_or_technician_configuration_prices(self):
+        sales_user = User.objects.create_user(username='inventory-api-sales', password='pass')
+        UserAccessProfile.objects.create(user=sales_user, tenant=self.org, role=UserAccessProfile.Role.TENANT_STAFF)
+        IntegrationConsumer.objects.create(user=sales_user, organization=self.org, name='Restricted Inventory API')
+        sales_token = Token.objects.create(user=sales_user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {sales_token.key}')
+
+        response = client.get('/api/inventory/products/')
+
+        self.assertEqual(response.status_code, 200)
+        product_data = response.json()['results'][0]
+        self.assertNotIn('buying_price', product_data)
+        self.assertNotIn('technician_price', product_data)
 
     def test_api_invoice_write_and_full_payment_use_inventory_service(self):
         invoice_response = self.client.post('/api/inventory/invoices/', {
@@ -584,9 +1562,40 @@ class InventoryAPITests(TestCase):
         self.assertEqual(paid.status_code, 201, paid.data)
         self.assertEqual(InventoryBalance.objects.get(product=self.product).quantity, Decimal('3.00'))
 
+    def test_api_walk_in_address_is_transaction_scoped_and_rejects_registered_customer(self):
+        payload = {
+            'status': BillingDocument.Status.DRAFT,
+            'tax_rate': '0.00',
+            'walk_in_name': 'Asha',
+            'shipping_address': 'Moshi, Shop 12',
+            'items': [{'product_id': self.product.pk, 'quantity': '1.00'}],
+        }
+        response = self.client.post('/api/inventory/invoices/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['shipping_address_snapshot'], 'Moshi, Shop 12')
+        rejected = self.client.post('/api/inventory/invoices/', {
+            **payload, 'customer_id': self.customer.pk,
+        }, format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn('shipping_address', rejected.data)
+        self.assertFalse(BillingDocument.objects.filter(customer=self.customer).exists())
+
+    def test_api_requires_explicit_technician_category_and_snapshots_its_price(self):
+        response = self.client.post('/api/inventory/invoices/', {
+            'customer_id': self.customer.pk,
+            'sale_pricing_category': BillingDocument.SalePricingCategory.TECHNICIAN,
+            'status': BillingDocument.Status.DRAFT,
+            'tax_rate': '0.00',
+            'items': [{'product_id': self.product.pk, 'quantity': '1.00', 'discount_amount': '0.00'}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['sale_pricing_category'], BillingDocument.SalePricingCategory.TECHNICIAN)
+        self.assertEqual(Decimal(response.data['items'][0]['unit_price']), Decimal('130.00'))
+
 
 class InventoryConcurrencyTests(TransactionTestCase):
-    reset_sequences = True
+    reset_sequences = False
 
     def setUp(self):
         if not connection.features.has_select_for_update:

@@ -13,17 +13,37 @@ load_dotenv(BASE_DIR / '.env')
 def env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-secret-key')
-
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '10.10.10.254,localhost,127.0.0.1')
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-secret-key')
+if not DEBUG and SECRET_KEY == 'dev-only-insecure-secret-key':
+    raise RuntimeError('DJANGO_SECRET_KEY is required when DJANGO_DEBUG=0.')
+
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'internet.home.arpa,10.10.10.254,localhost,127.0.0.1')
 
 # Always trust the Railway domain + any extra origins from env
 _extra_origins = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 CSRF_TRUSTED_ORIGINS = ['https://internetms.up.railway.app'] + _extra_origins
 
 USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Railway terminates TLS at the proxy. Keep local development convenient while
+# making secure transport and cookies the production default.
+SECURE_SSL_REDIRECT = not DEBUG and os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '1') == '1'
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+# Cookies are scoped by host and path, not by port. Application-specific
+# names prevent this service on :8000 from overwriting AssetMS on :8001.
+SESSION_COOKIE_NAME = os.environ.get('DJANGO_SESSION_COOKIE_NAME', 'jsinternet_sessionid')
+CSRF_COOKIE_NAME = os.environ.get('DJANGO_CSRF_COOKIE_NAME', 'jsinternet_csrftoken')
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_SECURE_HSTS_SECONDS', '31536000')) if not DEBUG else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+SECURE_HSTS_PRELOAD = not DEBUG and os.environ.get('DJANGO_SECURE_HSTS_PRELOAD', '0') == '1'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -46,6 +66,7 @@ INSTALLED_APPS = [
     'crispy_forms',
     'crispy_bootstrap5',
     'users',
+    'work_reports',
     'django.contrib.humanize',
 ]
 
@@ -75,6 +96,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'internetservices.context_processors.global_settings',
                 'users.context_processors.active_organization',
+                'work_reports.context_processors.work_report_navigation',
                 'inventory.context_processors.inventory_access',
             ],
         },
@@ -109,19 +131,30 @@ else:
         }
     }
 
-# Email Configuration
-if DEBUG:
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-else:
-    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-    EMAIL_HOST = 'smtp.gmail.com'
-    EMAIL_PORT = 587
-    EMAIL_USE_TLS = True
-    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+def env_bool(name, default=False):
+    value = os.environ.get(name, str(default)).strip().lower()
+    if value not in {'1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'}:
+        raise ValueError(f'{name} must be a boolean')
+    return value in {'1', 'true', 'yes', 'on'}
 
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'JS Internet Services <no-reply@example.com>')
-EMAIL_SUBJECT_PREFIX = '[JS Internet Services] '
+
+# Email transport is independent of debug mode.
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+EMAIL_USE_SSL = env_bool('EMAIL_USE_SSL', False)
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ValueError('EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '15'))
+APP_BASE_URL = os.environ.get('APP_BASE_URL', '').rstrip('/')
+INVITATION_EXPIRY_HOURS = int(os.environ.get('INVITATION_EXPIRY_HOURS', '48'))
+INVITATION_RESEND_COOLDOWN_SECONDS = int(os.environ.get('INVITATION_RESEND_COOLDOWN_SECONDS', '60'))
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'JS Business Management System <no-reply@example.com>')
+EMAIL_SUBJECT_PREFIX = '[JS Business Management System] '
 SERVER_EMAIL = os.environ.get('SERVER_EMAIL', '')
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -153,7 +186,7 @@ CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 LOGIN_URL = 'login'
-LOGIN_REDIRECT_URL = 'customer-list'
+LOGIN_REDIRECT_URL = 'main_app:workspace_home'
 LOGOUT_REDIRECT_URL = None
 
 MEDIA_URL = '/media/'
@@ -181,6 +214,7 @@ REST_FRAMEWORK = {
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {'redact_invitation_tokens': {'()': 'internetservices.log_filters.RedactInvitationTokens'}},
     'formatters': {
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
@@ -191,6 +225,7 @@ LOGGING = {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['redact_invitation_tokens'],
         },
     },
     'root': {

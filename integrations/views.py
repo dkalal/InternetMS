@@ -1,14 +1,19 @@
-from rest_framework import generics
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .permissions import IsActiveIntegrationConsumer
+from .permissions import IsActiveIntegrationConsumer, IsActiveIntegrationConsumerWriter
 from .pagination import IntegrationPagination
-from .serializers import IntegrationCustomerSerializer
+from .serializers import ExternalAssetSnapshotSerializer, IntegrationCustomerSerializer
 from .services import (
     IntegrationBurstThrottle,
     IntegrationSustainedThrottle,
     apply_customer_search,
+    build_customer_asset_target_queryset,
     build_customer_queryset,
     log_customer_api_access,
+    replace_customer_asset_snapshot,
     resolve_integration_consumer,
 )
 
@@ -64,3 +69,39 @@ class IntegrationCustomerDetailView(generics.RetrieveAPIView):
             customer_uuid=kwargs.get('uuid'),
         )
         return response
+
+
+class IntegrationCustomerAssetSnapshotView(APIView):
+    permission_classes = [IsActiveIntegrationConsumerWriter]
+    throttle_classes = [IntegrationBurstThrottle, IntegrationSustainedThrottle]
+    http_method_names = ['put', 'options']
+
+    def put(self, request, uuid):
+        consumer = resolve_integration_consumer(request)
+        customer = get_object_or_404(
+            build_customer_asset_target_queryset(consumer, customer_uuid=uuid)
+        )
+        raw_assets = request.data.get('assets') if isinstance(request.data, dict) else None
+        if not isinstance(raw_assets, list):
+            return Response({'assets': ['This field must be a list.']}, status=status.HTTP_400_BAD_REQUEST)
+        if len(raw_assets) > 1000:
+            return Response({'assets': ['A snapshot cannot exceed 1000 assets.']}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = ExternalAssetSnapshotSerializer(data=raw_assets, many=True)
+        serializer.is_valid(raise_exception=True)
+        external_ids = [asset['external_uuid'] for asset in serializer.validated_data]
+        if len(external_ids) != len(set(external_ids)):
+            return Response({'assets': ['Duplicate external_uuid values are not allowed.']}, status=status.HTTP_400_BAD_REQUEST)
+        result = replace_customer_asset_snapshot(
+            consumer=consumer,
+            customer=customer,
+            assets=serializer.validated_data,
+        )
+        log_customer_api_access(
+            request=request,
+            consumer=consumer,
+            action='integration.customer_assets.replace',
+            status_code=status.HTTP_200_OK,
+            record_count=result['total'],
+            customer_uuid=uuid,
+        )
+        return Response(result, status=status.HTTP_200_OK)

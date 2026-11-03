@@ -1,0 +1,123 @@
+{% load number_display %}
+        {% if subscriptions %}
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {% for subscription in subscriptions %}
+                    <div class="rounded-lg border border-slate-200 p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="text-sm font-semibold text-slate-900">{{ subscription.package.name }}</div>
+                                <div class="mt-1 text-xs text-slate-500">{{ subscription.site.name|default:"Main Office" }}{% if subscription.internet_service %} · <a class="font-mono text-brand-700 hover:underline" href="{% url 'internet-service-detail' subscription.internet_service_id %}">{{ subscription.internet_service.service_code }}</a>{% endif %}</div>
+                                <div class="mt-1 text-sm text-slate-600">{{ subscription.package.speed }} &middot; {{ subscription.monthly_fee_at_signup|money_display }} TZS / month</div>
+                                {% if subscription.latest_period and subscription.latest_billing_amount %}
+                                    <div class="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                        <div class="flex flex-wrap items-center justify-between gap-2">
+                                            <span class="font-semibold text-slate-800">Billed service period</span>
+                                            {% if subscription.latest_period.status == 'paid' %}
+                                                <span class="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">Paid</span>
+                                            {% elif subscription.latest_period.status == 'overdue' %}
+                                                <span class="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-800">Payment overdue</span>
+                                            {% elif subscription.latest_period.status == 'invoiced' %}
+                                                <span class="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900">Awaiting full payment</span>
+                                            {% else %}
+                                                <span class="rounded-full bg-slate-200 px-2 py-0.5 font-semibold text-slate-700">{{ subscription.latest_period.get_status_display }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="mt-1 tabular-nums text-slate-700">{{ subscription.latest_period.period_start|date:"d M Y" }} – {{ subscription.latest_period.period_end|date:"d M Y" }} &middot; {{ subscription.latest_billing_amount|money_display }} TZS</div>
+                                        {% if subscription.latest_period.status == 'invoiced' or subscription.latest_period.status == 'overdue' %}
+                                            <p class="mt-1 text-slate-500">This period becomes confirmed paid coverage only after the invoice is fully settled.</p>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                                <div class="mt-2 text-sm">
+                                    {% if subscription.latest_paid_coverage %}
+                                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Confirmed paid coverage {{ subscription.latest_paid_coverage.start|date:"M d, Y" }} – {{ subscription.latest_paid_coverage.end|date:"M d, Y" }}</span>
+                                    {% else %}
+                                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">No fully paid coverage recorded</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% if customer.status == 'active' %}
+                                <div class="flex shrink-0 flex-col gap-2">
+                                    <a href="{% url 'billing:renew_subscription' subscription.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
+                                        Renew
+                                    </a>
+                                    {% if subscription.status == 'active' %}
+                                        <a href="{% url 'billing:cancel_subscription' subscription.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
+                                            Cancel
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-slate-500">Customer not active</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-sm text-slate-600">No monthly subscriptions yet. Assign a service package to create one.</p>
+        {% endif %}
+        {% if subscription_periods %}
+            <div class="jims-scroll-region mt-5 rounded-lg border border-slate-200" tabindex="0" role="region" aria-label="Recent subscription billing">
+                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                    <caption class="sr-only">Recent subscription billing periods</caption>
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Coverage</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Package</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Amount</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Status</th>
+                            <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Document and actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        {% for period in subscription_periods %}
+                            <tr>
+                                <td class="px-3 py-2 text-slate-900"><span class="whitespace-nowrap">{{ period.period_start|date:"d M Y" }}</span><span class="block whitespace-nowrap text-xs text-slate-500">to {{ period.period_end|date:"d M Y" }}</span></td>
+                                <td class="px-3 py-2 text-slate-700">{{ period.subscription.package.name }}</td>
+                                <td class="px-3 py-2 text-slate-700">
+                                    {{ period.final_amount|money_display }} TZS
+                                    {% if period.discount_amount %}
+                                        <div class="text-xs text-emerald-700">Saved {{ period.discount_amount|money_display }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="px-3 py-2">
+                                    {% if period.status == 'paid' %}
+                                        <span class="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Paid</span>
+                                    {% elif period.status == 'invoiced' %}
+                                        <span class="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">Unpaid</span>
+                                    {% else %}
+                                        <span class="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{ period.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-3 py-2 text-right">
+                                    {% if period.invoice %}
+                                        <div>
+                                            <a class="font-medium text-slate-700 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=period.invoice.id %}">{{ period.invoice.number }}</a>
+                                        </div>
+                                        <div class="mt-2 flex flex-wrap justify-end gap-2">
+                                            {% if period.status == 'invoiced' or period.status == 'overdue' %}
+                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:create_receipt_from_invoice' pk=period.invoice.id %}">
+                                                    Register payment
+                                                </a>
+                                                <a class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100" href="{% url 'billing:resolve_subscription_invoice_issue' period_id=period.id %}">
+                                                    Resolve issue
+                                                </a>
+                                            {% elif period.status == 'paid' and period.receipt %}
+                                                <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:document_detail' doc_type='receipt' pk=period.receipt.id %}">
+                                                    View receipt
+                                                </a>
+                                            {% elif period.status == 'cancelled' %}
+                                                <span class="text-xs text-slate-500">Cancelled for audit</span>
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <span class="text-slate-400">&mdash;</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}

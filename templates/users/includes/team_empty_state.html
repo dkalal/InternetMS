@@ -1,0 +1,6 @@
+<section class="team-empty-state">
+  <span class="team-empty-state__icon" aria-hidden="true">♙</span>
+  <h2>No team members match these filters</h2>
+  <p>{% if team_counts.total %}Try a different name, role, or status filter.{% else %}Invite a colleague to begin managing this workspace together.{% endif %}</p>
+  {% if team_can_manage %}<button type="button" class="jims-btn jims-btn-primary" data-team-invite-open>{% if team_counts.total %}Invite member{% else %}Invite your first team member{% endif %}</button>{% endif %}
+</section>

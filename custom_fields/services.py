@@ -351,6 +351,8 @@ class CustomFieldService:
 
     @classmethod
     def render_custom_field_input_html(cls, definition: CustomFieldDefinition, *, initial=None) -> str:
+        if initial is None:
+            initial = cls._parse_default(definition)
         field_name = cls.get_field_name(definition)
         form = forms.Form()
         form.fields[field_name] = cls._build_form_field(definition, initial=initial)

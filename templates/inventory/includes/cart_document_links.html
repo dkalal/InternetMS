@@ -1,0 +1,2 @@
+{% if cart.quotation_id %}<a class="text-brand-700 underline" href="{% url 'billing:document_detail' doc_type='quotation' pk=cart.quotation_id %}">{{ cart.quotation.number }}</a>{% endif %}
+{% if cart.invoice_id %}<a class="text-brand-700 underline" href="{% url 'billing:document_detail' doc_type='invoice' pk=cart.invoice_id %}">{{ cart.invoice.number }}</a>{% endif %}

@@ -36,8 +36,6 @@ class CustomFieldDefinition(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_custom_field_definitions",
-        null=True,
-        blank=True,
         db_index=True,
     )
     target_model = models.CharField(max_length=50, choices=TargetModel.choices, db_index=True)
@@ -80,8 +78,8 @@ class CustomFieldDefinition(models.Model):
         ordering = ["target_model", "display_order", "label", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "target_model", "key"],
-                name="uniq_custom_field_key_per_target",
+                fields=["tenant", "target_model", "key"],
+                name="uniq_custom_field_key_per_tenant_target",
             ),
         ]
         indexes = [
@@ -135,8 +133,6 @@ class CustomFieldValue(models.Model):
         "users.Organization",
         on_delete=models.PROTECT,
         related_name="tenant_custom_field_values",
-        null=True,
-        blank=True,
         db_index=True,
     )
     field_definition = models.ForeignKey(

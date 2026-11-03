@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize number_display %}
 {% block title %}Suppliers{% endblock %}
 {% block body_class %}jims-list-shell{% endblock %}
 {% block content %}
@@ -30,7 +30,7 @@
                 <td>{{ supplier.contact_person|default:"—" }}{% if supplier.email %}<div class="mt-1 text-xs text-slate-500">{{ supplier.email }}</div>{% endif %}</td>
                 <td>{{ supplier.phone|default:"—" }}</td>
                 <td><span class="font-semibold">{{ supplier.confirmed_purchase_count }}</span> confirmed{% if supplier.last_purchase_date %}<div class="mt-1 text-xs text-slate-500">Last {{ supplier.last_purchase_date|date:"d M Y" }}</div>{% endif %}</td>
-                {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right font-semibold">{{ supplier.recorded_balance|intcomma }} TZS</td>{% endif %}
+                {% if INVENTORY_CAN_VIEW_COSTS %}<td class="text-right font-semibold">{{ supplier.recorded_balance|money_display }} TZS</td>{% endif %}
                 <td>{% if supplier.is_active %}{% include "components/status_badge.html" with value="active" label="Active" %}{% else %}{% include "components/status_badge.html" with value="inactive" label="Inactive" %}{% endif %}</td>
                 <td class="text-right">
                   <div class="jims-menu"><button type="button" class="jims-btn jims-btn-quiet px-2" data-menu-button aria-controls="supplier-actions-{{ supplier.pk }}" aria-expanded="false"><span class="sr-only">Actions for {{ supplier.company_name }}</span>•••</button><div id="supplier-actions-{{ supplier.pk }}" class="jims-menu-panel" data-menu-panel hidden><a href="{% url 'inventory:supplier_detail' supplier.pk %}">View supplier</a><a href="{% url 'inventory:supplier_edit' supplier.pk %}">Edit supplier</a>{% if INVENTORY_CAN_VIEW_COSTS %}<a href="{% url 'inventory:supplier_payment_create' supplier.pk %}">Record payment</a>{% endif %}</div></div>
