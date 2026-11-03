@@ -101,7 +101,7 @@ docker compose --project-directory $officeRoot --env-file "$officeRoot/.env" --e
 `--no-deps --no-build --pull never` prevents a DB restart, building dirty office
 source or fetching a moving image tag. The override removes automatic migrations
 from web startup. It preserves the existing office env/media/network/port and
-worker count. Health/readiness, login, permissions, tenant boundaries, POS first
+worker count and minimal access-log format (no request URL/token in access logs). Health/readiness, login, permissions, tenant boundaries, POS first
 write/checkout/print, receipt PDF/totals and stock invariants must pass. Use
 synthetic isolated fixtures for mutating tests; do not create test sales in office.
 A later explicit decision governs transitioning the dirty checkout; no stash,
@@ -140,7 +140,7 @@ attempt logs and restore evidence stay outside published documentation.
 - The exact currently running office image read the new synthetic invoice/receipt
   history and stock correctly under a READ ONLY transaction in staging.
 - Future office Compose was rendered only: existing web environment, media bind
-  and port were preserved; no live operation ran. Neither office container was
+  and port were preserved; no live operation ran. Existing minimal access-log formatting is preserved. Neither office container was
   restarted. The build image contains no local env, backup or Git artifacts.
 
 Private evidence retains an early failed synthetic seed attempt: an unsupported
