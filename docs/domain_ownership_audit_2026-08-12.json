@@ -60,7 +60,10 @@
 			"records": [
 				{
 					"conflicts": {
-						"address": "[redacted: original audit preserved privately]"
+						"address": {
+							"customer": "KCC Floor No: 2 & 3",
+							"site": "KCC Floor No: 2"
+						}
 					},
 					"customer_id": 5,
 					"site_id": 26
