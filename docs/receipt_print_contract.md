@@ -28,7 +28,9 @@ subtotal when item discounts exist. Each item retains its saved unit price,
 quantity, unit, item discount and net line amount. No discount is deducted twice;
 VAT is never recalculated at print time. Existing currency formatting applies.
 
-Zero discount and zero VAT remain visible. If this receipt's amount differs from
+Zero discount and zero VAT remain visible. Fully paid receipts show **TOTAL** once;
+the duplicate **TOTAL AMOUNT RECEIVED** section is omitted when both amounts match.
+If this receipt's amount differs from
 the sale total, the summary explicitly says **INVOICE TOTAL** and explains that
 **AMOUNT RECEIVED** refers only to this payment. Later installments do not alter
 that receipt's printed financial breakdown. No live account balances, later

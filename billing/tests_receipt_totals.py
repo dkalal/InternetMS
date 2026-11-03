@@ -51,8 +51,14 @@ class ReceiptTotalsTests(TestCase):
             [summary[key] for key in ('subtotal', 'discount', 'tax', 'total', 'amount_received')],
             [Decimal(value) for value in (subtotal, discount, tax, total, received)],
         )
-        for label in ('Subtotal (before discounts)', 'Discount', 'VAT (', 'AMOUNT RECEIVED'):
+        for label in ('Subtotal (before discounts)', 'Discount', 'VAT ('):
             self.assertContains(response, label)
+        if summary['payment_differs_from_total']:
+            self.assertContains(response, 'AMOUNT RECEIVED')
+            self.assertContains(response, 'INVOICE TOTAL')
+        else:
+            self.assertNotContains(response, 'AMOUNT RECEIVED')
+            self.assertContains(response, '<td class="label total-strong">TOTAL</td>', html=True)
 
     def test_ten_less_three_shows_full_breakdown_without_changing_history(self):
         invoice, receipt = self.sale()
@@ -130,8 +136,10 @@ class ReceiptTotalsTests(TestCase):
         self.assertTrue(response.content.startswith(b'%PDF'))
         self.assertIn('attachment;', response['Content-Disposition'])
         text = ' '.join(' '.join(page.extract_text().split()) for page in PdfReader(BytesIO(response.content)).pages)
-        for expected in ('Subtotal (before discounts) 20', 'Discount -5', 'VAT (18%) 2.7', 'TOTAL TZS 17.7', 'AMOUNT RECEIVED TZS 17.7'):
+        for expected in ('Subtotal (before discounts) 20', 'Discount -5', 'VAT (18%) 2.7', 'TOTAL TZS 17.7'):
             self.assertIn(expected, text)
+        self.assertNotIn('AMOUNT RECEIVED', text)
+        self.assertEqual(text.count('TOTAL TZS 17.7'), 1)
 
     @patch('billing.pdf._load_weasyprint', return_value=None)
     def test_html_fallback_has_same_breakdown(self, _loader):
