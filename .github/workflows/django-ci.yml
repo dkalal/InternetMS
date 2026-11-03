@@ -72,5 +72,9 @@ jobs:
         run: python manage.py test inventory.tests_cart_workspace inventory.tests_cart_lifecycle inventory.tests_cart_checkout inventory.tests_cart_line_merge inventory.tests_financial_controls inventory.tests_walk_in_identity billing.tests_receipt_totals --keepdb --noinput
       - name: Full Django suite
         run: python manage.py test --keepdb --noinput --parallel 4
+      - name: Cache the UI CDN script for browser routing
+        run: |
+          mkdir -p .backups/cart-checkout
+          curl --fail --location --retry 3 https://cdn.tailwindcss.com -o .backups/cart-checkout/tailwind.js
       - name: Browser workspace and checkout smoke checks
         run: python manage.py test inventory.browser_cart_workspace inventory.browser_cart_checkout --keepdb --noinput
