@@ -61,7 +61,7 @@ class CartCheckoutTests(TestCase):
                 **self.payload, 'amount_paid': '1', 'payment_date': '2000-01-01',
             })
         receipt = self.receipts().get()
-        self.assertRedirects(response, reverse('billing:document_detail', args=['receipt', receipt.pk]))
+        self.assertRedirects(response, reverse('billing:receipt_print', args=[receipt.pk]))
         self.assertEqual(receipt.total, Decimal('200'))
         self.assertEqual(receipt.payment_date, date(2026, 10, 29))
         self.assertEqual(receipt.payment_method, 'cash')
@@ -73,6 +73,7 @@ class CartCheckoutTests(TestCase):
         first = self.client.post(self.url, self.payload)
         second = self.client.post(self.url, {**self.payload, 'walk_in_name': 'Changed', 'payment_method': 'bank'})
         self.assertEqual(first.url, second.url)
+        self.assertEqual(second.url, reverse('billing:receipt_print', args=[self.receipts().get().pk]))
         self.assertEqual(self.receipts().count(), 1)
         self.assertEqual(StockMovement.objects.count(), 1)
         self.cart.refresh_from_db()

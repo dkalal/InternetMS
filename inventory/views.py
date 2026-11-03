@@ -12,7 +12,8 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import DecimalValidator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum
+from django.db.models import CharField, Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum
+from django.db.models.functions import Cast
 from django.http import Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
@@ -88,7 +89,7 @@ def _scope(request, permission):
 
 def _cart_workspace(cart):
     """Build the same pricing/totals data for HTML and POS JSON responses."""
-    lines = list(cart.lines.select_related('product').prefetch_related('serial_selections__stock_unit'))
+    lines = list(cart.lines.select_related('product').prefetch_related('serial_selections__stock_unit')) if cart.pk else []
     for line in lines:
         _, line.pos_pricing_mode = CartService.line_pricing(
             product=line.product, quantity=line.quantity, customer=cart.customer,
@@ -1230,6 +1231,7 @@ def stock_adjust(request):
 
 @login_required
 def cart_list(request):
+    from audit.models import AuditLog
     organization = _scope(request, PermissionCode.CART_MANAGE)
     base = visible_carts(organization=organization, actor=request.user, membership=request.membership)
     now = timezone.now()
@@ -1287,8 +1289,17 @@ def cart_list(request):
             except (ValueError, OverflowError):
                 filter_errors.append('Enter a valid last activity date (YYYY-MM-DD).')
                 carts = carts.none()
+    last_change = AuditLog.objects.unscoped().filter(
+        tenant=organization, organization=organization, object_type='Cart',
+        object_id=Cast(OuterRef('pk'), output_field=CharField()),
+        action__in=['inventory.cart.updated', 'inventory.cart.restored', 'inventory.cart.abandoned',
+                    'inventory.cart.converted_to_invoice', 'inventory.cart.converted_to_quotation'],
+    ).order_by('-created_at', '-pk')
+    completion = InventorySale.objects.unscoped().filter(tenant=organization, cart_id=OuterRef('pk'), stock_deducted=True)
     carts = carts.select_related('customer', 'created_by', 'quotation', 'invoice').annotate(
         item_count=Count('lines'),
+        last_updated_by=Subquery(last_change.values('actor__username')[:1]),
+        completed_by=Subquery(completion.values('receipt__created_by__username')[:1]),
         has_business_sale=Exists(InventorySale.objects.unscoped().filter(cart_id=OuterRef('pk'))),
     ).prefetch_related(Prefetch('lines', queryset=CartLine.objects.filter(tenant=organization).select_related('product'), to_attr='list_lines'))
     page = Paginator(carts.order_by('-updated_at', '-pk'), 25).get_page(request.GET.get('page'))
@@ -1320,8 +1331,71 @@ def cart_create(request):
     if request.method != 'POST':
         raise Http404
 
-    cart = CartService.start(organization=organization, actor=request.user, membership=request.membership)
-    return redirect('inventory:cart_detail', pk=cart.pk)
+    from .cart_workspace import new_token
+    return redirect('inventory:cart_workspace', token=new_token(organization=organization, actor=request.user))
+
+
+@login_required
+@ensure_csrf_cookie
+def cart_workspace(request, token):
+    from .cart_workspace import workspace_key, existing_cart, materialize
+    organization = _scope(request, PermissionCode.CART_MANAGE)
+    key = workspace_key(token=token, organization=organization, actor=request.user)
+    if request.method not in {'GET', 'POST'}:
+        raise Http404
+    saved = existing_cart(key=key, organization=organization, actor=request.user, membership=request.membership)
+    if saved is not None:
+        if _is_pos_request(request):
+            return JsonResponse({'ok': True, 'redirect_url': reverse('inventory:cart_detail', args=[saved.pk])})
+        return redirect('inventory:cart_detail', pk=saved.pk)
+    cart = Cart(tenant=organization, organization=organization, created_by=request.user)
+    line_mode = request.GET.get('line') == '1' or request.POST.get('workspace_action') == 'line'
+    form_class = CartLineForm if line_mode else CartForm
+    kwargs = {'organization': organization, 'membership': request.membership}
+    if line_mode:
+        kwargs.update(cart=cart, sale_pricing_category=cart.sale_pricing_category,
+                      initial={'product': request.GET.get('product')})
+    else:
+        kwargs['instance'] = cart
+    form = form_class(request.POST if request.method == 'POST' else None, **kwargs)
+    if request.method == 'POST':
+        try:
+            saved = materialize(token=token, organization=organization, actor=request.user,
+                                membership=request.membership, action=request.POST.get('workspace_action', 'details'),
+                                data=request.POST)
+        except (ValidationError, InventoryError, BillingServiceError) as exc:
+            form.is_valid()
+            if isinstance(exc, ValidationError) and hasattr(exc, 'message_dict'):
+                for field, errors in exc.message_dict.items():
+                    form.add_error(field if field in form.fields else None, errors)
+            else:
+                form.add_error(None, str(exc))
+            if _is_pos_request(request):
+                return JsonResponse({'ok': False, 'message': _form_error_summary(form),
+                                     'errors': form.errors.get_json_data()}, status=422)
+            # Bound ModelForms may mutate an unsaved instance during validation.
+            # Show a clean, stock-neutral summary while preserving bound inputs.
+            cart = Cart(tenant=organization, organization=organization, created_by=request.user)
+        else:
+            if _is_pos_request(request):
+                return JsonResponse({'ok': True, 'redirect_url': reverse('inventory:cart_detail', args=[saved.pk])})
+            return redirect('inventory:cart_detail', pk=saved.pk)
+    if line_mode:
+        product_id = request.POST.get('product') if request.method == 'POST' else request.GET.get('product')
+        product = (
+            Product.objects.filter(tenant=organization, pk=product_id).first()
+            if str(product_id).isascii() and str(product_id).isdecimal() and len(str(product_id)) <= 18
+            else None
+        )
+        response = render(request, 'inventory/cart_line_form.html', {
+            'cart': cart, 'form': form, 'title': 'Add cart item', 'selected_product': product,
+            'workspace_token': token,
+        })
+    else:
+        response = _render_cart_builder(request, organization, cart, form, CartPaymentForm(cart_id=None), workspace_token=token)
+    if request.method == 'POST':
+        response.status_code = 422
+    return response
 
 
 @login_required
@@ -1339,14 +1413,9 @@ def cart_detail(request, pk, *, checkout_forms=None):
         if cart_form.is_valid():
             try:
                 with transaction.atomic():
-                    cart_form.save()
-                    CartService.refresh_cart_prices(cart=cart)
-                    # Validate the persisted, repriced cart before committing.
-                    _cart_workspace(cart)
-                    CartService.validate_discount_authority(
-                        cart=cart, actor=request.user, membership=request.membership,
-                    )
-            except (BillingServiceError, InventoryError) as exc:
+                    cart = CartService.save_details(organization=organization, cart_id=cart.pk,
+                                                    data=request.POST, actor=request.user, membership=request.membership)
+            except (BillingServiceError, InventoryError, ValidationError) as exc:
                 cart.refresh_from_db()
                 cart_form.add_error('discount_amount', str(exc))
             else:
@@ -1366,11 +1435,15 @@ def cart_detail(request, pk, *, checkout_forms=None):
                 status=422,
                 errors=cart_form.errors.get_json_data(),
             )
+    return _render_cart_builder(request, organization, cart, cart_form, payment_form)
+
+
+def _render_cart_builder(request, organization, cart, cart_form, payment_form, workspace_token=None):
     workspace = _cart_workspace(cart)
     lines = workspace['lines']
     query = request.GET.get('q', '').strip()
     category_id = request.GET.get('category', '').strip()
-    existing_line = CartLine.objects.filter(cart=cart, product_id=OuterRef('pk'))
+    existing_line = CartLine.objects.filter(cart_id=cart.pk, product_id=OuterRef('pk'))
     cost_movement = StockMovement.objects.filter(tenant=organization, product_id=OuterRef('pk'))
     catalog = Product.objects.filter(tenant=organization, is_active=True).select_related(
         'catalog_category', 'inventory_balance'
@@ -1403,7 +1476,8 @@ def cart_detail(request, pk, *, checkout_forms=None):
         )
     return render(request, 'inventory/cart_detail.html', {
         'cart': cart, 'cart_form': cart_form, 'payment_form': payment_form, **workspace,
-        'is_stale': stale(cart),
+        'is_stale': bool(cart.pk) and stale(cart),
+        'workspace_token': workspace_token,
         'can_restore': cart.status == Cart.Status.ABANDONED and not cart.converted_at and not business_linked(cart) and has_tenant_permission(request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL, membership=request.membership),
         'can_apply_line_discount': has_tenant_permission(
             request.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=request.membership,
@@ -1518,69 +1592,22 @@ def cart_line_adjust(request, cart_pk):
     if direction not in {'add', 'increase', 'decrease'} or not product_id.isdigit():
         raise Http404
 
-    with transaction.atomic():
-        cart = get_object_or_404(
-            Cart.objects.select_for_update().filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk
-        )
-        product = get_object_or_404(Product.objects.select_for_update().filter(tenant=organization, is_active=True), pk=product_id)
-        if product.is_serialized:
-            if _is_pos_request(request):
-                return JsonResponse({
-                    'ok': False, 'message': 'This item needs serial-number selection before it can be added.',
-                    'redirect_url': f'/inventory/carts/{cart.pk}/items/new/?product={product.pk}',
-                }, status=422)
-            messages.info(request, 'Select serial numbers before adding this serialized product.')
-            return redirect('inventory:cart_line_create', cart_pk=cart.pk)
-        line = CartLine.objects.select_for_update().filter(cart=cart, product=product).first()
-        if direction == 'decrease':
-            if line is None:
-                return redirect('inventory:cart_detail', pk=cart.pk)
-            if line.quantity <= Decimal('1.00'):
-                line.delete()
-            else:
-                line.quantity -= Decimal('1.00')
-                line.unit_price, _ = CartService.line_pricing(product=product, quantity=line.quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
-                from products.pricing import BelowCostError, validate_net_unit_price
-                try:
-                    validate_net_unit_price(product=product, quantity=line.quantity, unit_price=line.unit_price,
-                                            line_discount=line.discount_amount, actor=request.user, organization=organization)
-                except BelowCostError as exc:
-                    if _is_pos_request(request):
-                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
-                    messages.error(request, str(exc))
-                    return redirect('inventory:cart_detail', pk=cart.pk)
-                line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
-        else:
-            quantity = (line.quantity if line else Decimal('0.00')) + Decimal('1.00')
-            if product.item_type == Product.ItemType.PHYSICAL and product.track_stock and quantity > product.available_stock:
-                if _is_pos_request(request):
-                    return _pos_response(request, cart, message=f'Only {format_quantity(product.available_stock)} {product.measure_unit} of {product.name} are available.', level='warning', status=409)
-                messages.warning(request, f'Only {format_quantity(product.available_stock)} {product.measure_unit} of {product.name} are available.')
-            elif line:
-                line.quantity = quantity
-                line.unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
-                from products.pricing import BelowCostError, validate_net_unit_price
-                try:
-                    validate_net_unit_price(product=product, quantity=quantity, unit_price=line.unit_price,
-                                            line_discount=line.discount_amount, actor=request.user, organization=organization)
-                except BelowCostError as exc:
-                    if _is_pos_request(request):
-                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
-                    messages.error(request, str(exc))
-                    return redirect('inventory:cart_detail', pk=cart.pk)
-                line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
-            else:
-                unit_price, _ = CartService.line_pricing(product=product, quantity=quantity, customer=cart.customer, sale_pricing_category=cart.sale_pricing_category)
-                from products.pricing import BelowCostError, validate_net_unit_price
-                try:
-                    validate_net_unit_price(product=product, quantity=quantity, unit_price=unit_price,
-                                            actor=request.user, organization=organization)
-                except BelowCostError as exc:
-                    if _is_pos_request(request):
-                        return _pos_response(request, cart, message=str(exc), level='error', status=422)
-                    messages.error(request, str(exc))
-                    return redirect('inventory:cart_detail', pk=cart.pk)
-                CartLine.objects.create(cart=cart, product=product, quantity=quantity, unit_price=unit_price)
+    cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
+    product = get_object_or_404(Product.objects.filter(tenant=organization, is_active=True), pk=product_id)
+    if product.is_serialized:
+        target = reverse('inventory:cart_line_create', args=[cart.pk]) + f'?product={product.pk}'
+        if _is_pos_request(request):
+            return JsonResponse({'ok': False, 'message': 'Select serial numbers before adding this product.',
+                                 'redirect_url': target}, status=422)
+        return redirect(target)
+    try:
+        cart = CartService.adjust_line(organization=organization, cart_id=cart.pk, product_id=product.pk,
+                                       direction=direction, actor=request.user, membership=request.membership)
+    except (InventoryError, ValidationError) as exc:
+        if _is_pos_request(request):
+            return _pos_response(request, cart, message=str(exc), level='warning', status=422)
+        messages.error(request, str(exc))
+        return redirect('inventory:cart_detail', pk=cart.pk)
     if _is_pos_request(request):
         return _pos_response(request, cart)
     return redirect('inventory:cart_detail', pk=cart.pk)
@@ -1592,45 +1619,10 @@ def cart_line_delete(request, cart_pk, line_pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     if request.method != 'POST':
         raise Http404
-    with transaction.atomic():
-        cart = get_object_or_404(
-            Cart.objects.select_for_update().filter(
-                tenant=organization, status=Cart.Status.DRAFT,
-            ),
-            pk=cart_pk,
-        )
-        line = get_object_or_404(
-            CartLine.objects.select_for_update().select_related('product'),
-            pk=line_pk,
-            cart=cart,
-            tenant=organization,
-        )
-        serial_unit_ids = list(
-            line.serial_selections.order_by('stock_unit_id').values_list(
-                'stock_unit_id', flat=True,
-            )
-        )
-        audit(
-            organization=organization,
-            actor=request.user,
-            action='inventory.cart_line.removed',
-            obj=line,
-            old_value={
-                'cart_id': cart.pk,
-                'product_id': line.product_id,
-                'product_name': line.product.name,
-                'quantity': str(line.quantity),
-                'unit_price': str(line.unit_price),
-                'discount_amount': str(line.discount_amount),
-                'serial_unit_ids': serial_unit_ids,
-            },
-            metadata={
-                'cart_status': cart.status,
-                'serialized': line.product.is_serialized,
-                'stock_changed': False,
-            },
-        )
-        line.delete()
+    cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
+    get_object_or_404(CartLine.objects.filter(tenant=organization, cart=cart), pk=line_pk)
+    cart = CartService.remove_line(organization=organization, cart_id=cart.pk, line_id=line_pk,
+                                   actor=request.user, membership=request.membership)
     if _is_pos_request(request):
         return _pos_response(
             request, cart, message='Item removed from the draft sale. Stock was not changed.',
@@ -1689,8 +1681,9 @@ def cart_convert(request, pk, target):
                 )
                 if not cart_form.is_valid():
                     raise InventoryError('Sale was not converted. ' + _form_error_summary(cart_form))
-                cart_form.save()
                 CartService.validate_restored(cart=cart)
+                cart = CartService.save_details(organization=organization, cart_id=cart.pk,
+                                                data=request.POST, actor=request.user, membership=request.membership)
                 CartService.refresh_cart_prices(cart=cart)
                 _cart_workspace(cart)
                 CartService.validate_discount_authority(
@@ -1703,7 +1696,7 @@ def cart_convert(request, pk, target):
         if target == BillingDocument.DocumentType.INVOICE and has_tenant_permission(request.user, organization, PermissionCode.PAYMENT_REGISTER, membership=request.membership):
             return redirect('billing:create_receipt_from_invoice', pk=document.pk)
         return redirect('billing:document_detail', doc_type=target, pk=document.pk)
-    except (InventoryError, BillingServiceError) as exc:
+    except (InventoryError, BillingServiceError, ValidationError) as exc:
         messages.error(request, str(exc))
         return redirect('inventory:cart_detail', pk=pk)
 
@@ -1726,7 +1719,9 @@ def cart_checkout(request, pk):
                 payment_valid = payment_form.is_valid()
                 if not details_valid or not payment_valid:
                     raise InventoryError('Check the sale and payment details below.')
-                cart_form.save()
+                CartService.validate_restored(cart=cart)
+                cart = CartService.save_details(organization=organization, cart_id=cart.pk,
+                                                data=request.POST, actor=request.user, membership=request.membership)
                 CartService.refresh_cart_prices(cart=cart)
                 _cart_workspace(cart)
             receipt = CartService.checkout(
@@ -1734,13 +1729,13 @@ def cart_checkout(request, pk):
                 payment_method=request.POST.get('payment_method', '').strip(),
                 payment_reference=request.POST.get('payment_reference', '').strip(),
             )
-    except (InventoryError, BillingServiceError) as exc:
+    except (InventoryError, BillingServiceError, ValidationError) as exc:
         cart_form.add_error(None, str(exc))
         response = cart_detail(request, pk=pk, checkout_forms=(cart_form, payment_form))
         response.status_code = 422
         return response
     messages.success(request, 'Payment recorded. Sale completed.')
-    return redirect('billing:document_detail', doc_type='receipt', pk=receipt.pk)
+    return redirect('billing:receipt_print', pk=receipt.pk)
 
 
 @login_required

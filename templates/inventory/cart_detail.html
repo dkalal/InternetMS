@@ -8,14 +8,15 @@
   <header class="jims-page-header pos-page-heading">
     <div>
       <p class="text-sm font-semibold text-brand-700">Point of sale</p>
-      <h1 class="text-2xl font-bold tracking-tight text-slate-950">New sale <span class="text-slate-400">#{{ cart.pk }}</span></h1>
+      <h1 class="text-2xl font-bold tracking-tight text-slate-950">New sale{% if cart.pk %} <span class="text-slate-400">#{{ cart.pk }}</span>{% endif %}</h1>
+      {% if not cart.pk %}<p class="mt-1 text-sm text-slate-500">A draft is saved when you add an item or save sale details.</p>{% endif %}
     </div>
-    {% if cart.status == "draft" %}
+    {% if cart.status == "draft" and cart.pk %}
       <form method="post" action="{% url 'inventory:cart_abandon' cart.pk %}" data-confirm="This will close the draft and remove it from active sales. The audit record will remain, and inventory will not change." data-confirm-title="Discard sale #{{ cart.pk }}?" data-confirm-action="Discard draft" data-confirm-tone="danger" data-submit-lock>
         <details class="mb-2 text-sm"><summary class="cursor-pointer text-slate-600">Optional reason</summary><label class="sr-only" for="abandon-reason">Reason for abandoning this draft</label><input id="abandon-reason" name="reason" maxlength="500" class="mt-2 min-h-10 rounded-lg border border-slate-300 px-3" placeholder="Why close this draft?"></details>
         {% csrf_token %}<button type="submit" class="jims-btn jims-btn-danger" data-loading-label="Discarding...">Discard sale</button>
       </form>
-    {% endif %}
+    {% elif not cart.pk %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:cart_list' %}">Back to sales</a>{% endif %}
   </header>
 
   {% if is_stale %}<p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Stale draft: no meaningful activity for at least 7 days.</p>{% endif %}
@@ -69,9 +70,10 @@
                   <div class="mt-2 flex justify-end">
                   {% if not product.pos_ready %}<button class="jims-btn jims-btn-secondary jims-btn-compact" type="button" disabled>Pricing review</button>
                   {% elif product.is_serialized %}
-                    {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
+                    {% if product.available_stock > 0 %}<a class="jims-btn jims-btn-secondary jims-btn-compact" href="{% if cart.pk %}{% url 'inventory:cart_line_create' cart.pk %}?product={{ product.pk }}{% else %}{% url 'inventory:cart_workspace' workspace_token %}?line=1&amp;product={{ product.pk }}{% endif %}">Select serial</a>{% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
                   {% elif product.item_type == "service" or product.available_stock > 0 %}
-                    <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>
+                    <form method="post" action="{% if cart.pk %}{% url 'inventory:cart_line_adjust' cart.pk %}{% else %}{% url 'inventory:cart_workspace' workspace_token %}{% endif %}" data-pos-adjust>
+                      {% if not cart.pk %}<input type="hidden" name="workspace_action" value="add">{% endif %}
                       {% csrf_token %}<input type="hidden" name="product" value="{{ product.pk }}"><input type="hidden" name="direction" value="{% if product.in_cart %}increase{% else %}add{% endif %}"><button class="jims-btn jims-btn-primary jims-btn-compact" type="submit" aria-label="Add {{ product.name }} to sale" data-loading-label="Adding...">{% if product.in_cart %}+ Add{% else %}Add{% endif %}</button>
                     </form>
                   {% else %}<button class="jims-btn jims-btn-secondary jims-btn-compact" disabled>Unavailable</button>{% endif %}
@@ -138,7 +140,7 @@
           {% endif %}
         </form>
         <div class="hidden rounded-lg border px-3 py-2 text-sm" data-pos-feedback role="status" aria-live="polite"></div>
-        {% if cart.status == 'draft' and can_register_payment %}
+        {% if cart.pk and cart.status == 'draft' and can_register_payment %}
           <section class="border-t border-slate-200 p-3" aria-labelledby="pos-payment-title">
             <h3 id="pos-payment-title" class="mb-2 text-sm font-semibold text-slate-950">Payment details</h3>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">

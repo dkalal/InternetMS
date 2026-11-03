@@ -32,6 +32,7 @@ urlpatterns = [
     path('movements/', views.movement_list, name='movement_list'),
     path('carts/', views.cart_list, name='cart_list'),
     path('carts/new/', views.cart_create, name='cart_create'),
+    path('carts/workspace/<str:token>/', views.cart_workspace, name='cart_workspace'),
     path('carts/<int:pk>/', views.cart_detail, name='cart_detail'),
     path('carts/<int:cart_pk>/items/new/', views.cart_line_form, name='cart_line_create'),
     path('carts/<int:cart_pk>/items/adjust/', views.cart_line_adjust, name='cart_line_adjust'),

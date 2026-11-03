@@ -562,7 +562,7 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         product_id = self.data.get('product') if self.is_bound else (
             self.instance.product_id or self.initial.get('product')
         )
-        if product_id:
+        if product_id and str(product_id).isascii() and str(product_id).isdecimal() and len(str(product_id)) <= 18:
             self.fields['serial_units'].queryset = StockUnit.objects.filter(
                 tenant=organization, product_id=product_id, status=StockUnit.Status.AVAILABLE
             ).order_by('serial_number')
@@ -572,7 +572,7 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             ]
         self.serials_in_cart = set(CartSerialSelection.objects.filter(
             tenant=organization, cart_line__cart=cart,
-        ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart else set()
+        ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart and cart.pk else set()
         can_discount = (
             has_tenant_permission(
                 membership.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership
@@ -581,6 +581,12 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['discount_amount'].disabled = not can_discount
         if not can_discount:
             self.fields['discount_amount'].help_text = 'Administrator controlled.'
+
+    def clean_product(self):
+        raw_id = str(self.data.get('product', ''))
+        if not (raw_id.isascii() and raw_id.isdecimal() and len(raw_id) <= 18):
+            raise forms.ValidationError('Select a valid product.')
+        return self.cleaned_data['product']
 
     def clean(self):
         cleaned = super().clean()
@@ -631,7 +637,9 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
                 )
             except BelowCostError as exc:
                 self.add_error('discount_amount', str(exc))
-            other_lines = self.cart.lines.exclude(pk=self.instance.pk) if self.instance.pk else self.cart.lines.all()
+            other_lines = (
+                self.cart.lines.exclude(pk=self.instance.pk) if self.cart.pk else CartLine.objects.none()
+            )
             gross_subtotal = sum(
                 (line.quantity * line.unit_price for line in other_lines), Decimal('0.00')
             ) + quantity * unit_price

@@ -1,4 +1,5 @@
 """Optional Edge checkout smoke test against synthetic data in the test database."""
+import os
 from pathlib import Path
 
 from django.conf import settings
@@ -21,7 +22,7 @@ class CartCheckoutBrowserChecks(StaticLiveServerTestCase):
         output = Path(settings.BASE_DIR) / '.backups' / 'cart-checkout'
         output.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='msedge', headless=True)
+            browser = playwright.chromium.launch(channel=os.environ.get('PLAYWRIGHT_BROWSER_CHANNEL', 'msedge') or None, headless=True)
             context = browser.new_context(viewport={'width': 1440, 'height': 1000})
             cached_tailwind = output / 'tailwind.js'
             if cached_tailwind.exists():
@@ -56,8 +57,8 @@ class CartCheckoutBrowserChecks(StaticLiveServerTestCase):
             page.screenshot(path=str(output / 'mobile.png'), full_page=True)
             page.get_by_role('button', name='Confirm payment & view receipt', exact=True).click()
             page.locator('[data-confirm-dialog-accept]').click()
-            page.wait_for_url('**/billing/receipt/*/')
-            expect(page.get_by_role('heading', name='Receipt', exact=False).first).to_be_visible()
+            page.wait_for_url('**/billing/receipt/*/print/')
+            expect(page.get_by_role('button', name='Print Receipt', exact=True)).to_be_visible()
             self.assertEqual(errors, [])
             browser.close()
         receipt = BillingDocument.objects.get(document_type='receipt')

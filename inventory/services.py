@@ -497,6 +497,120 @@ class InventoryService:
 
 
 class CartService:
+    @staticmethod
+    def _line_snapshot(line):
+        if line is None:
+            return {}
+        return {'line_id': line.pk, 'product_id': line.product_id, 'quantity': str(line.quantity),
+                'unit_price': str(line.unit_price), 'discount_amount': str(line.discount_amount),
+                'serial_ids': list(line.serial_selections.values_list('stock_unit_id', flat=True))}
+
+    @staticmethod
+    def record_activity(*, cart, actor, kind, old_value=None, new_value=None, membership=None):
+        audit(organization=cart.tenant, actor=actor, action='inventory.cart.updated', obj=cart,
+              old_value=old_value, new_value=new_value,
+              metadata={'kind': kind, 'cart_id': cart.pk, 'created_by_id': cart.created_by_id,
+                        'actor_username': actor.get_username(),
+                        'membership_id': membership.pk if membership else None, 'stock_changed': False})
+
+    @classmethod
+    @transaction.atomic
+    def save_details(cls, *, organization, cart_id, data, actor, membership):
+        from .cart_lifecycle import visible_carts
+        from .forms import CartForm
+        cart = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update().filter(
+            pk=cart_id, status=Cart.Status.DRAFT,
+        ).first()
+        if cart is None:
+            raise PermissionDenied('Draft cart unavailable.')
+        form = CartForm(data, instance=cart, organization=organization, membership=membership)
+        old = {field: str(getattr(cart, field)) for field in form.Meta.fields}
+        if not form.is_valid():
+            raise ValidationError(dict(form.errors))
+        changed = form.has_changed()
+        old_prices = list(cart.lines.values('id', 'unit_price'))
+        cart = form.save()
+        cls.refresh_cart_prices(cart=cart)
+        from billing.services import BillingService
+        BillingService.compute_totals(tax_rate=cart.tax_rate, line_items=list(cart.lines.select_related('product')),
+                                      discount_amount=cart.discount_amount)
+        cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
+        new_prices = list(cart.lines.values('id', 'unit_price'))
+        if changed or old_prices != new_prices:
+            cls.record_activity(cart=cart, actor=actor, kind='details', membership=membership,
+                                old_value={'fields': old, 'prices': [{k:str(v) for k,v in p.items()} for p in old_prices]},
+                                new_value={'fields': {field: str(getattr(cart, field)) for field in form.Meta.fields},
+                                           'prices': [{k:str(v) for k,v in p.items()} for p in new_prices]})
+        return cart
+
+    @classmethod
+    @transaction.atomic
+    def remove_line(cls, *, organization, cart_id, line_id, actor, membership=None):
+        from .cart_lifecycle import visible_carts
+        cart = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update().filter(
+            pk=cart_id, status=Cart.Status.DRAFT,
+        ).first()
+        if cart is None:
+            raise PermissionDenied('Draft cart unavailable.')
+        line = CartLine.objects.select_for_update().select_related('product').filter(
+            tenant=organization, cart=cart, pk=line_id,
+        ).first()
+        if line is None:
+            raise PermissionDenied('Cart item unavailable.')
+        old = {'cart_id': cart.pk, 'product_id': line.product_id, 'product_name': line.product.name,
+               'quantity': str(line.quantity), 'unit_price': str(line.unit_price),
+               'discount_amount': str(line.discount_amount),
+               'serial_unit_ids': list(line.serial_selections.order_by('stock_unit_id').values_list('stock_unit_id', flat=True))}
+        audit(organization=organization, actor=actor, action='inventory.cart_line.removed', obj=line,
+              old_value=old, metadata={'cart_status': cart.status, 'serialized': line.product.is_serialized,
+                                       'stock_changed': False, 'cart_id': cart.pk})
+        line.delete()
+        cls.record_activity(cart=cart, actor=actor, kind='line_removed', old_value=old, membership=membership)
+        return cart
+
+    @classmethod
+    @transaction.atomic
+    def adjust_line(cls, *, organization, cart_id, product_id, direction, actor, membership=None):
+        from .cart_lifecycle import visible_carts
+        from django.http import QueryDict
+        from products.pricing import BelowCostError, validate_net_unit_price
+        if direction not in {'add', 'increase', 'decrease'}:
+            raise InventoryError('Unsupported quantity action.')
+        cart = visible_carts(organization=organization, actor=actor, membership=membership).select_for_update().filter(
+            pk=cart_id, status=Cart.Status.DRAFT,
+        ).first()
+        if cart is None:
+            raise PermissionDenied('Draft cart unavailable.')
+        product = Product.objects.select_for_update().filter(tenant=organization, pk=product_id, is_active=True).first()
+        if product is None or product.is_serialized:
+            raise InventoryError('Choose an available non-serialized product.')
+        line = cart.lines.select_for_update().filter(tenant=organization, product=product).first()
+        if direction == 'decrease':
+            if line is None:
+                return cart
+            if line.quantity <= 1:
+                return cls.remove_line(organization=organization, cart_id=cart.pk, line_id=line.pk,
+                                       actor=actor, membership=membership)
+            old = {'line_id': line.pk, 'quantity': str(line.quantity), 'unit_price': str(line.unit_price)}
+            line.quantity -= 1
+            line.unit_price, _ = cls.line_pricing(product=product, quantity=line.quantity, customer=cart.customer,
+                                                sale_pricing_category=cart.sale_pricing_category)
+            try:
+                validate_net_unit_price(product=product, quantity=line.quantity, unit_price=line.unit_price,
+                                       line_discount=line.discount_amount, actor=actor, organization=organization)
+            except BelowCostError as exc:
+                raise InventoryError(str(exc)) from exc
+            line.save(update_fields=['quantity', 'unit_price', 'updated_at'])
+            cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
+            cls.record_activity(cart=cart, actor=actor, kind='quantity', old_value=old,
+                                new_value={'line_id': line.pk, 'quantity': str(line.quantity), 'unit_price': str(line.unit_price)},
+                                membership=membership)
+        else:
+            data = QueryDict('', mutable=True)
+            data.update({'product': str(product_id), 'quantity': '1', 'discount_amount': '0'})
+            cls.save_line(organization=organization, cart_id=cart.pk, data=data, actor=actor, membership=membership)
+        return cart
+
     @classmethod
     @transaction.atomic
     def save_line(cls, *, organization, cart_id, data, actor, membership=None, line_id=None):
@@ -515,6 +629,7 @@ class CartService:
         line = cart.lines.filter(tenant=organization, pk=line_id).first() if line_id else None
         if line_id and line is None:
             raise PermissionDenied('Cart item unavailable.')
+        old = cls._line_snapshot(line)
         incoming = CartLineForm(data, instance=line, organization=organization, cart=cart,
                                 sale_pricing_category=cart.sale_pricing_category, membership=membership)
         if not incoming.is_valid():
@@ -522,6 +637,7 @@ class CartService:
         product = incoming.cleaned_data['product']
         if not line_id:
             line = cart.lines.filter(tenant=organization, product=product).first()
+            old = cls._line_snapshot(line)
         if line and not line_id:
             selected = list(incoming.cleaned_data['serial_units'])
             saved_ids = list(line.serial_selections.values_list('stock_unit_id', flat=True))
@@ -548,7 +664,12 @@ class CartService:
         cls.validate_discount_authority(cart=cart, actor=actor, membership=membership)
         audit(organization=organization, actor=actor, action='inventory.cart_line.saved', obj=obj,
               new_value={'quantity': str(obj.quantity), 'serial_ids': list(obj.serial_selections.values_list('stock_unit_id', flat=True))},
-              metadata={'stock_changed': False})
+              metadata={'stock_changed': False, 'cart_id': cart.pk})
+        cls.record_activity(cart=cart, actor=actor, kind='line_saved', old_value=old,
+                            new_value={'line_id': obj.pk, 'product_id': obj.product_id, 'quantity': str(obj.quantity),
+                                       'unit_price': str(obj.unit_price), 'discount_amount': str(obj.discount_amount),
+                                       'serial_ids': list(obj.serial_selections.values_list('stock_unit_id', flat=True))},
+                            membership=membership)
         return obj
 
     @classmethod
@@ -637,8 +758,10 @@ class CartService:
             ).first()
             if line is None:
                 raise InventoryError('This item is unavailable in the draft sale.')
+            previous_prices = [{k:str(v) for k,v in p.items()} for p in cart.lines.values('id', 'unit_price')]
             cls.refresh_cart_prices(cart=cart)
             line.refresh_from_db()
+            previous_discount = line.discount_amount
             amount = money(discount_amount)
             if amount < 0 or amount > line.quantity * line.unit_price:
                 raise InventoryError('Item discount cannot exceed the line amount.')
@@ -664,6 +787,11 @@ class CartService:
                     )
                 except BelowCostError as exc:
                     raise InventoryError(str(exc)) from exc
+            current_prices = [{k:str(v) for k,v in p.items()} for p in cart.lines.values('id', 'unit_price')]
+            if previous_discount != amount or previous_prices != current_prices:
+                cls.record_activity(cart=cart, actor=actor, kind='line_discount', membership=membership,
+                                    old_value={'line_id': line.pk, 'discount_amount': str(previous_discount), 'prices': previous_prices},
+                                    new_value={'line_id': line.pk, 'discount_amount': str(amount), 'prices': current_prices})
             return cart
 
     @classmethod

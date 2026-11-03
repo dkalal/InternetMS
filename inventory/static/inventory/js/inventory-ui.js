@@ -1065,6 +1065,10 @@
         }).then(function (response) {
           return response.json().then(function (data) { return { response: response, data: data }; });
         }).then(function (result) {
+          if (result.data.redirect_url) {
+            window.location.assign(result.data.redirect_url);
+            return;
+          }
           if (!result.response.ok) {
             if (result.data.cart_html) updatePos(result.data);
             var firstInvalid;

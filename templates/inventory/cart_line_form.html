@@ -5,16 +5,17 @@
 <div class="jims-form-page jims-form-page--compact space-y-5">
   <header class="jims-page-header">
     <div>
-      <p class="jims-page-eyebrow">Cart #{{ cart.pk }}</p>
+      <p class="jims-page-eyebrow">{% if cart.pk %}Cart #{{ cart.pk }}{% else %}New sale{% endif %}</p>
       <h1 class="jims-page-title">{{ title }}</h1>
       <p class="jims-page-subtitle">Availability is checked now for guidance and revalidated at full payment.</p>
       {% if not line %}<p class="mt-2 text-sm text-slate-600">Adding an existing product increases its quantity on the same line. Choose additional serials only; use Edit to replace selections.</p>{% endif %}
     </div>
-    <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Back to sale</a>
+    <a href="{% if cart.pk %}{% url 'inventory:cart_detail' cart.pk %}{% else %}{% url 'inventory:cart_workspace' workspace_token %}{% endif %}" class="jims-btn jims-btn-secondary">Back to sale</a>
   </header>
 
   <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form>
     {% csrf_token %}
+    {% if workspace_token %}<input type="hidden" name="workspace_action" value="line">{% endif %}
     {% if form.non_field_errors %}
       <div class="jims-error-summary mx-5 mt-5" role="alert">{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>
     {% endif %}
@@ -68,7 +69,7 @@
       <div class="rounded-lg border border-brand-200 bg-brand-50 p-3 text-xs leading-5 text-brand-900">Draft carts and quotations do not reserve or deduct stock. Serialized products require one currently available serial per unit.</div>
     </div>
     <div class="jims-form-actions">
-      <a href="{% url 'inventory:cart_detail' cart.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      <a href="{% if cart.pk %}{% url 'inventory:cart_detail' cart.pk %}{% else %}{% url 'inventory:cart_workspace' workspace_token %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a>
       <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save item</button>
     </div>
   </form>

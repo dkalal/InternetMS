@@ -592,10 +592,10 @@ body.jims-auth-shell {
 }
 
 .pos-pay-button {
-  min-height: 3.5rem;
-  justify-content: space-between;
-  padding: 0.625rem 1rem;
-  font-size: 0.9375rem;
+  min-height: 2.75rem;
+  justify-content: center;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
 }
 
 .pos-pay-amount {
@@ -667,9 +667,8 @@ body.pos-modal-open { overflow: hidden; }
 .pos-totals dd { text-align: right; white-space: nowrap; }
 .pos-grand-total { align-items: baseline; margin-top: .35rem; padding-top: .5rem !important; border-top: 1px solid var(--jims-border); font-size: 1.1rem; font-weight: 800; }
 .pos-grand-total dd { color: #5b48ed; }
-.pos-checkout-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .65rem; }
-.pos-checkout-actions .jims-btn { min-width: 0; text-align: center; }
-.pos-checkout-actions .pos-pay-button { grid-column: 1 / -1; }
+.pos-checkout-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: .5rem; margin-top: .65rem; align-items: stretch; }
+.pos-checkout-actions .jims-btn { min-width: 0; min-height: 2.75rem; padding: .5rem .625rem; font-size: .8125rem; text-align: center; white-space: normal; }
 .pos-pay-amount { display: none; }
 .pos-product-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; line-height: 1.25rem; min-height: 2.5rem; font-size: .82rem; }
 .pos-product-price { overflow-wrap: anywhere; font-size: .9rem; }

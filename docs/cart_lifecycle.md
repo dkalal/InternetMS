@@ -30,15 +30,55 @@ inspection only; writes use the operational workflows. Conversion retries do not
 save submitted cart details after conversion. Converted line/product snapshots
 remain visible even when a product becomes inactive.
 
-Start sale is CSRF-protected POST. It locks the stable actor row before looking
-for a reusable draft, so two initial requests cannot both observe no draft. Reuse
-is limited to the same tenant and owner and inactivity strictly under 24 hours.
+Start sale is CSRF-protected POST that returns a signed, actor/tenant-bound workspace
+URL without creating a Cart or creation audit. Workspace reload, search and opening
+or cancelling the first serial picker are read-only. Tokens expire after 24 hours.
+The first valid item/customer/details save creates the draft and that change in one
+transaction. Invalid, unsupported and unchanged empty submissions leave no draft.
+
+First writes lock the stable actor row before looking up an append-only
+`inventory.cart.materialized` audit event (`CartWorkspace`, workspace nonce). The
+existing organization/object-type/object-ID audit index serves this bounded lookup.
+The event contains the canonical cart ID; replay of an initial request or a second
+tab with the same token opens that cart without applying the first mutation twice.
+Different tokens intentionally represent separate sales. Missing/deleted original
+carts fail closed rather than recreating history. The event is part of the same
+transaction as draft/items/creation/activity audits. No new schema is needed.
+
+The legacy trusted internal `CartService.start` remains compatible for internal
+callers; normal HTTP Start sale no longer invokes it. Its empty-draft reuse remains
+limited to the same tenant and owner and inactivity strictly under 24 hours.
 Whitespace-only text is empty; selected customer, nonblank walk-in/address/notes,
 nonzero discount/tax, non-default pricing category, lines, converted timestamp,
 quotation, invoice, prior abandonment/restoration metadata or reverse InventorySale
 linkage all make a cart ineligible. Restored history is therefore never considered
 an accidental empty cart.
 Multiple meaningful customer carts remain separate.
+
+## Creator, editor and completion attribution
+
+`Created by` is the cart's original `created_by`, not an assignee or its current
+editor. Normal cart writes never replace this identity. All item add/edit/serial
+replacement, quantity increase/decrease, removal, item discount, saved detail and
+repricing changes go through CartService and append a parent `inventory.cart.updated`
+event with actor, membership ID, kind and before/after values. Reads and unchanged
+detail saves create no edit attribution. Creation events also identify the initiating
+workspace action and username snapshot; workspace tokens/session cookies are not
+stored in those audit payloads. These establish account attribution, not proof of
+the physical person using that account.
+
+Lists retain the existing authorized scope and `owner` filter parameter for
+compatibility, but label it Created by. Last updated by comes from the latest
+known content/state audit; missing historical actors show Unknown. Completed by
+comes from the completed sale receipt's cashier. These are bounded subqueries,
+not per-row application queries or a historical backfill. Existing creation and
+line audit entries remain append-only. Historical creators and records are not reassigned or reconstructed.
+
+Checkout actions share one row, compact height and typography on desktop/mobile.
+Primary color distinguishes payment; quotations remain available independently.
+
+Coverage: `inventory.tests_cart_workspace`, existing lifecycle/financial/checkout
+contracts, and optional isolated `inventory.browser_cart_workspace` Edge checks.
 
 Manual abandonment is audited, draft-only, scoped and stock-neutral, with actor,
 timestamp and an optional bounded reason. Restoration is an explicit audited
@@ -57,7 +97,8 @@ The cart builder collects only payment method and optional payment reference.
 and the existing tenant/owner cart scope. The server saves validated draft details,
 converts to the internal invoice and records its full total using the current local
 payment date in one transaction. Client-supplied payment amounts/dates are ignored.
-The user is redirected directly to the receipt; the invoice remains the internal
+The user is redirected directly to `billing:receipt_print`
+(`/billing/receipt/<receipt_id>/print/`), including successful retries. The invoice remains the internal
 billing and inventory link. No schema or historical record changes are required.
 
 The cart row lock serializes retries, including cash payments without references.
