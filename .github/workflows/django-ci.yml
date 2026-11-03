@@ -36,6 +36,8 @@ jobs:
       PLAYWRIGHT_BROWSER_CHANNEL: ''
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -50,7 +52,14 @@ jobs:
           python -m pip install -r requirements-test.txt
           python -m playwright install --with-deps chromium
       - name: Check patch whitespace
-        run: git show --format= --check HEAD
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$BASE_SHA" HEAD
+          else
+            git diff --check origin/main...HEAD
+          fi
       - name: Collect static files
         run: python manage.py collectstatic --noinput
       - name: Check Django configuration

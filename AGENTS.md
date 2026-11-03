@@ -62,4 +62,3 @@ Report commands, exact outcomes, files changed, migration status, security impac
 - Receiving is server-authorized, atomic, tenant-scoped, row-locked, idempotent, and all-or-nothing.
 - Confirmed purchases, lines, movements, cost snapshots, and serial history are immutable.
 - Phase 2 may improve the high-volume grid and product search, but must not reintroduce package conversion or inline quick creation unless separately approved.
-

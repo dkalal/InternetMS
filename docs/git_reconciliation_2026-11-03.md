@@ -94,6 +94,11 @@ by this candidate. This does not claim that either PR was merged.
 - CI, test-only browser requirements, contributor/release workflow, PR template
   and targeted line-ending policy are new delivery infrastructure.
 
+CI compares the actual PR/push base with its head rather than checking the
+synthetic merge commit against every parent. Two inherited extra EOF blank lines
+are removed separately to satisfy the full reconciliation whitespace gate. No
+repository-wide line-ending renormalization is performed.
+
 ## Migration and security review
 
 No migration is introduced or rewritten. Existing published walk-in migrations

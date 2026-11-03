@@ -264,4 +264,3 @@ class UnifiedPurchasingSameUnitContractTests(TestCase):
 
         self.assertEqual(legacy_line.line_total, Decimal("200000.00"))
         self.assertEqual(current_line.line_total, Decimal("2625.00"))
-
