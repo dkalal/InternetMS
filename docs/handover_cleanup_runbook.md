@@ -1,5 +1,8 @@
 # Tenant handover cleanup (2026-10-25)
 
+Operational execution results and approvals are private local records. Never
+replay a consumed plan; each later cleanup requires a fresh reviewed plan.
+
 **Completed live:** [execution and verification result](handover_live_result_2026-10-25.md).
 Owner-approved fingerprint `02d07ac5be9a…` was applied at 19:28:44 EAT:
 565 selected rows deleted, products **33 → 0**, success audit **1464**.
