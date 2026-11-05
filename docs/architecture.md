@@ -81,6 +81,13 @@ Super Administrator access to tenant data requires an explicit support session w
 
 ### Inventory boundaries
 
+The approved optional packaging extension follows the
+[product packaging contract](product_packaging_contract.md). It defines separate
+commercial and base quantities, physical divisible containers, payment-time
+posting and a gated phased rollout. Until its implementation gates pass, the
+same-unit workflow below remains the only enabled path. Legacy package columns
+remain preservation-only throughout the extension.
+
 `products.Product` remains the shared product/service catalog and `billing.BillingDocument` remains the only quotation, invoice, and receipt system. The `inventory` app owns suppliers, purchases, balances, immutable movements, serial units, carts, sale-cost records, reports, imports, and inventory APIs.
 
 All balance mutations go through `InventoryService` under `transaction.atomic()` with row locks. `BillingService.create_receipt_from_invoice()` locks the invoice and invokes inventory completion in the same transaction only for catalog/inventory sales. This makes retries idempotent and prevents negative stock or double-selling serialized units.
