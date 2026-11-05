@@ -3,7 +3,9 @@
 Base: `feature/packaging-phase0` at `1dec966d34f3ca54a078687b89f0dfe5fab3414b`.
 Dependency: [Phase 0 PR #5](https://github.com/dkalal/InternetMS/pull/5).
 Implementation branch: `feature/packaging-phase1`.
-Status: implementation and verification in progress; no activation release.
+Status: Phase 1 foundation verified and delivered; activation remains closed.
+PR: [Phase 1 #6](https://github.com/dkalal/InternetMS/pull/6).
+Tested implementation SHA: `ce2667f6dd1d11a7799b3e9c7a24e53cf6b49653`.
 
 ## Implemented boundary
 
@@ -107,11 +109,39 @@ Required command prefix:
 docker compose -f compose.packaging-test.yml -p jims-packaging-phase1 run --rm --no-deps web
 ```
 
-Final verification results and migration manifest will be recorded after all gates
-pass. A failed diagnostic run is not a successful gate. No test is skipped,
-weakened or changed to hide a defect. Browser validation belongs to later UI phases;
-this phase exposes no new rendered controls. CI retains its existing browser smoke
-gate for legacy workspace/checkout behavior.
+Final local results on the tested implementation SHA:
+
+- Synthetic image build and complete fresh migration path: exit 0.
+- `python manage.py check`: exit 0; no issues (0 silenced).
+- `python manage.py makemigrations --check --dry-run`: exit 0; no changes.
+- `python manage.py test inventory.tests_packaging_foundation
+  inventory.test_packaging_migrations --keepdb --noinput`: exit 0;
+  **49 tests OK, 112.698 seconds**. Includes actual PostgreSQL configuration and
+  activation-retry concurrency, original-field preservation, old-writer inserts,
+  rollback rehearsal, stale state, role/tenant isolation, stock/value neutrality,
+  finite-number checks and protected history.
+- `python manage.py test --keepdb --noinput --parallel 4`: exit 0;
+  **847 tests OK, 262.043 seconds**. This run used fresh database/clones derived
+  from synthetic base `jims_packaging_release`, through the same Compose prefix
+  with an explicit process-local synthetic DATABASE_URL override.
+- `git diff --check feature/packaging-phase0...HEAD`: exit 0.
+- Secret/private-data review: only source, tests, additive migrations, disposable
+  synthetic configuration and documentation; no office credentials/data/media or
+  diagnostic logs were committed. The project-specific logs are Git-ignored.
+
+Earlier diagnostics are retained locally: the initial foundation fixtures needed
+role-name/Decimal corrections; a NaN test initially hit Django validation before
+PostgreSQL, then was strengthened to use direct parameterized SQL and assert the
+actual CHECK names. An earlier parallel full run failed while serializing an
+exception without tblib. Its underlying cause was not established; subsequent
+serial diagnostic (843 tests, 674.509s) and the final fresh parallel run above
+passed. An attempted diagnostic stop found the serial container already finished;
+no process was stopped. No assertions, tests or framework safety checks were
+weakened, skipped or xfailed.
+
+Browser validation for new packaging UI belongs to later UI phases; this phase
+exposes no new rendered controls. CI retains its existing browser smoke gate for
+legacy workspace/checkout behavior. CI status is recorded separately below.
 
 ## Rollback and remaining phases
 
@@ -146,3 +176,22 @@ Their files were preserved and follow-up changes use new migrations; no applied
 migration was rewritten or squashed. The split foundation migrations are Django's
 cross-app dependency ordering. Only synthetic PostgreSQL databases have received
 this sequence. Production migration remains a separate approved release action.
+
+## CI evidence
+
+Both CI runs on tested source `ce2667f6dd1d11a7799b3e9c7a24e53cf6b49653`
+completed successfully, including whitespace, static collection, Django checks,
+migration drift and fresh PostgreSQL migrations. The push log records:
+
+- Focused inventory/receipt regressions: **100 tests OK, 74.846 seconds**.
+- Full suite: **847 tests OK, 400.076 seconds**.
+- Browser workspace/checkout smoke: **4 tests OK, 14.041 seconds**.
+
+These browser checks cover the existing workspace and checkout; they are not a
+claim that future packaging receiving/sales UI has been implemented or tested.
+
+- [Push CI](https://github.com/dkalal/InternetMS/actions/runs/42008410488)
+- [Stacked PR CI](https://github.com/dkalal/InternetMS/actions/runs/42008630004)
+
+The final documentation update does not alter application or test source. No merge,
+release, production migration or production container operation has been performed.
