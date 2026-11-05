@@ -62,6 +62,8 @@ jobs:
           fi
       - name: Collect static files
         run: python manage.py collectstatic --noinput
+      - name: Purchasing JavaScript regressions
+        run: node --test inventory/js_tests/serial-validation.test.cjs inventory/js_tests/purchase-cost-default.test.cjs
       - name: Check Django configuration
         run: python manage.py check
       - name: Check migration drift
@@ -77,4 +79,4 @@ jobs:
           mkdir -p .backups/cart-checkout
           curl --fail --location --retry 3 https://cdn.tailwindcss.com -o .backups/cart-checkout/tailwind.js
       - name: Browser workspace and checkout smoke checks
-        run: python manage.py test inventory.browser_cart_workspace inventory.browser_cart_checkout --keepdb --noinput
+        run: python manage.py test inventory.browser_cart_workspace inventory.browser_cart_checkout inventory.browser_packaging_receipts --keepdb --noinput

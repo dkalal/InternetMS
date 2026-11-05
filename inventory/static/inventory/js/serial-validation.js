@@ -72,8 +72,12 @@
         var submitter = event.submitter;
         self.validate().then(function (valid) {
           if (!valid) { self.focusError(); return; }
-          self.resubmitting = true;
-          try { self.form.requestSubmit(submitter || undefined); } finally { self.resubmitting = false; }
+          // A no-serial check resolves immediately. A microtask still runs inside
+          // the native submit dispatch, where browsers suppress reentrant submit.
+          setTimeout(function () {
+            self.resubmitting = true;
+            try { self.form.requestSubmit(submitter || undefined); } finally { self.resubmitting = false; }
+          }, 0);
         });
       }, true);
     }
