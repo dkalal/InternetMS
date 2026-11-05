@@ -1,10 +1,16 @@
 from django.urls import path
 
 from . import views
+from . import assignment_views as assignments
 
 app_name = "work_reports"
 
 urlpatterns = [
+    path("assignments/", assignments.assignment_list, name="assignment_list"),
+    path("assignments/new/", assignments.assignment_edit, name="assignment_create"),
+    path("assignments/<int:pk>/", assignments.assignment_detail, name="assignment_detail"),
+    path("assignments/<int:pk>/edit/", assignments.assignment_edit, name="assignment_edit"),
+    path("assignments/<int:pk>/report/", assignments.assignment_report, name="assignment_report"),
     path("", views.report_list, name="list"),
     path("new/", views.report_create, name="create"),
     path("approvals/", views.approval_queue, name="approval_queue"),

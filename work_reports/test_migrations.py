@@ -36,7 +36,8 @@ class WorkReportServiceDayMigrationTests(TransactionTestCase):
         self.old_apps = executor.loader.project_state([self.migrate_from]).apps
 
     def tearDown(self):
-        MigrationExecutor(connection).migrate([self.migrate_to])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
         super().tearDown()
 
     def test_backfill_creates_one_tenant_matched_day_per_existing_report(self):
@@ -54,3 +55,35 @@ class WorkReportServiceDayMigrationTests(TransactionTestCase):
             "tenant_id": self.report.tenant_id,
             "service_date": date(2026, 9, 2),
         }])
+
+
+class AssignmentMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def test_existing_report_survives_assignment_schema_and_reversal(self):
+        before = ("work_reports", "0006_alter_workreporthistory_event_technicianpaymentbatch_and_more")
+        after = ("work_reports", "0007_workassignment_technicianworkreport_assignment_and_more")
+        executor = MigrationExecutor(connection)
+        executor.migrate([before])
+        apps = executor.loader.project_state([before]).apps
+        tenant = apps.get_model("users", "Organization").objects.create(name="Synthetic legacy tenant", slug="legacy-assignment-migration")
+        user = apps.get_model("auth", "User").objects.create(username="synthetic-legacy-technician")
+        member = apps.get_model("users", "TenantMembership").objects.create(tenant=tenant, user=user, base_role="TECHNICIAN")
+        old_report = apps.get_model("work_reports", "TechnicianWorkReport").objects.create(
+            tenant=tenant, technician=member, work_title="Historical report retained",
+            service_date=date(2026, 8, 1), activity_description="Historical completed work",
+            agreed_amount=Decimal("100000.00"),
+        )
+        executor = MigrationExecutor(connection)
+        executor.migrate([after])
+        apps = executor.loader.project_state([after]).apps
+        report = apps.get_model("work_reports", "TechnicianWorkReport").objects.get(pk=old_report.pk)
+        self.assertIsNone(report.assignment_id)
+        self.assertEqual(report.agreed_amount, Decimal("100000.00"))
+        executor = MigrationExecutor(connection)
+        executor.migrate([before])
+        apps = executor.loader.project_state([before]).apps
+        self.assertTrue(apps.get_model("work_reports", "TechnicianWorkReport").objects.filter(pk=old_report.pk).exists())

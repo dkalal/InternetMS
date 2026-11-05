@@ -18,8 +18,12 @@ from .models import (
 
 def _require(membership, action, *, tenant=None):
     tenant = tenant or (membership.tenant if membership else None)
-    if membership is None or not membership.is_active or not has_tenant_permission(
-        membership.user, tenant, action, membership=membership,
+    current = TenantMembership.objects.select_related("user", "tenant").filter(
+        pk=getattr(membership, "pk", None), is_active=True, user__is_active=True,
+        tenant__is_active=True,
+    ).first()
+    if current is None or not has_tenant_permission(
+        current.user, tenant, action, membership=current,
     ):
         raise PermissionDenied("Insufficient work report permissions.")
 
@@ -72,6 +76,13 @@ def _service_days_from_legacy(cleaned_data, service_days):
     return cleaned_data, service_days
 
 
+def _validate_report_fields(cleaned_data, *, allow_assignment=False):
+    from .forms import REPORT_FIELDS
+    allowed = set(REPORT_FIELDS) | ({"assignment"} if allow_assignment else set())
+    if set(cleaned_data) - allowed:
+        raise ValidationError("Unsupported Work Report fields.")
+
+
 def _replace_service_days(*, report, service_days, approved_correction=False):
     rows = _validated_service_days(service_days)
     existing = WorkReportServiceDay.objects.unscoped().select_for_update().filter(
@@ -98,6 +109,20 @@ def create_report(*, membership, cleaned_data, service_days=None):
     if membership.base_role != TenantMembership.BaseRole.TECHNICIAN:
         raise PermissionDenied("Only Technicians create work reports for themselves.")
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data, allow_assignment=True)
+    if cleaned_data.get("assignment"):
+        from .models import WorkAssignment
+        assignment = WorkAssignment.objects.unscoped().select_for_update().get(
+            pk=cleaned_data["assignment"].pk, tenant=membership.tenant,
+        )
+        if (assignment.technician_id != membership.pk or assignment.status != "ACCEPTED"
+                or assignment.accepted_revision != assignment.revision):
+            raise PermissionDenied("A current accepted assignment owned by you is required.")
+        existing = TechnicianWorkReport.objects.unscoped().filter(assignment=assignment).first()
+        if existing:
+            return existing
+        cleaned_data["assignment"] = assignment
+        cleaned_data["agreed_amount"] = Decimal(assignment.accepted_terms["proposed_amount"])
     rows = _validated_service_days(service_days)
     report = TechnicianWorkReport(
         tenant=membership.tenant, technician=membership,
@@ -122,6 +147,12 @@ def update_own_report(*, report_id, membership, cleaned_data, service_days=None)
     if report.status not in {TechnicianWorkReport.Status.DRAFT, TechnicianWorkReport.Status.REJECTED}:
         raise ValidationError("Only draft or rejected reports may be edited.")
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data)
+    if report.assignment_id and any(
+        field in cleaned_data and cleaned_data[field] != getattr(report, field)
+        for field in ("agreed_amount", "assignment", "technician", "tenant")
+    ):
+        raise ValidationError("Accepted assignment payment and ownership cannot be changed.")
     rows = _validated_service_days(service_days) if service_days is not None else None
     for field, value in cleaned_data.items():
         setattr(report, field, value)
@@ -180,6 +211,8 @@ def approve_report(*, report_id, membership, tenant=None):
     report.rejection_reason = ""
     report.save()
     _history(report, membership, WorkReportHistory.Event.APPROVED, from_status=old_status)
+    from .assignment_services import complete_assignment
+    complete_assignment(report, membership)
     return report
 
 
@@ -217,6 +250,7 @@ def correct_approved_report(
         raise ValidationError("Only approved reports use the correction workflow.")
     before = report.snapshot()
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data)
     rows = _validated_service_days(service_days) if service_days is not None else None
     if (
         "agreed_amount" in cleaned_data

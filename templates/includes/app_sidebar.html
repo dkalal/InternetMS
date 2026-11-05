@@ -32,8 +32,11 @@
             <span>Inventory</span>
           </a>
         {% endif %}
+        {% if "work_assignments.view_own" in ACTIVE_PERMISSIONS or "work_assignments.view_all" in ACTIVE_PERMISSIONS %}
+          <a class="jims-sidebar-link" href="{% url 'work_reports:assignment_list' %}" {% if request.resolver_match.app_name == "work_reports" and "assignment" in request.resolver_match.url_name %}aria-current="page"{% endif %}><span class="flex-1">Work Assignments</span>{% if PENDING_ASSIGNMENTS %}<span class="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800">{{ PENDING_ASSIGNMENTS }}</span>{% endif %}</a>
+        {% endif %}
         {% if "technician_work_reports.view_own" in ACTIVE_PERMISSIONS or "technician_work_reports.view_all" in ACTIVE_PERMISSIONS %}
-          <a class="jims-sidebar-link" href="{% url 'work_reports:list' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name != "approval_queue" %}aria-current="page"{% endif %}>
+          <a class="jims-sidebar-link" href="{% url 'work_reports:list' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name != "approval_queue" and "assignment" not in request.resolver_match.url_name %}aria-current="page"{% endif %}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 3h10a2 2 0 0 1 2 2v16H5V5a2 2 0 0 1 2-2Zm2 5h6m-6 4h6m-6 4h4"/></svg>
             <span>{% if request.user_role == "TECHNICIAN" %}My Work Reports{% else %}Work Reports{% endif %}</span>
           </a>

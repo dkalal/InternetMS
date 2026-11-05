@@ -55,6 +55,9 @@ class WorkReportForm(forms.ModelForm):
         self.fields["work_location"].widget.attrs.setdefault("placeholder", "Site, branch, area, or address")
         apply_tailwind(self)
 
+        if self.instance.pk and self.instance.assignment_id:
+            self.fields["agreed_amount"].disabled = True
+
 
 class WorkDateForm(forms.Form):
     service_date = forms.DateField(

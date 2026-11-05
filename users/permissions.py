@@ -10,6 +10,11 @@ from .models import TenantMembership, TenantPermissionGrant
 
 
 class PermissionCode:
+    WORK_ASSIGNMENTS_MANAGE = "work_assignments.manage"
+    WORK_ASSIGNMENTS_VIEW_ALL = "work_assignments.view_all"
+    WORK_ASSIGNMENTS_VIEW_OWN = "work_assignments.view_own"
+    WORK_ASSIGNMENTS_RESPOND_OWN = "work_assignments.respond_own"
+    WORK_ASSIGNMENTS_REPORT_OWN = "work_assignments.create_report_own"
     # Stable public action codes.
     CUSTOMERS_VIEW = "customers.view"
     CUSTOMERS_BALANCE_SUMMARY_VIEW = "customers.balance_summary.view"
@@ -140,6 +145,9 @@ SALES_BASELINE = frozenset({
 })
 
 TECHNICIAN_BASELINE = frozenset({
+    PermissionCode.WORK_ASSIGNMENTS_VIEW_OWN,
+    PermissionCode.WORK_ASSIGNMENTS_RESPOND_OWN,
+    PermissionCode.WORK_ASSIGNMENTS_REPORT_OWN,
     PermissionCode.TECHNICIAN_WORK_REPORTS_CREATE_OWN,
     PermissionCode.TECHNICIAN_WORK_REPORTS_VIEW_OWN,
     PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN,
@@ -150,6 +158,8 @@ TECHNICIAN_BASELINE = frozenset({
 })
 
 WORK_REPORT_MANAGEMENT_PERMISSIONS = frozenset({
+    PermissionCode.WORK_ASSIGNMENTS_MANAGE,
+    PermissionCode.WORK_ASSIGNMENTS_VIEW_ALL,
     PermissionCode.TECHNICIAN_WORK_REPORTS_VIEW_ALL,
     PermissionCode.TECHNICIAN_WORK_REPORTS_APPROVE,
     PermissionCode.TECHNICIAN_WORK_REPORTS_REJECT,

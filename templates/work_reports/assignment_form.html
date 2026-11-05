@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Prepare assignment{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-4"><header><a href="{% url 'work_reports:assignment_list' %}" class="text-brand-700 underline">Assignments</a><h1 class="mt-2 text-2xl font-bold">{% if assignment %}Revise assignment{% else %}Prepare assignment{% endif %}</h1><p class="text-sm text-slate-600">Saving returns the offer to draft. Send it for renewed acceptance. Reassignment requires a reason.</p></header>
+<form method="post" class="rounded-xl border border-slate-200 bg-white p-5">{% csrf_token %}{{ form.non_field_errors }}{% for hidden in form.hidden_fields %}{{ hidden }}{% if hidden.errors %}<div role="alert" class="text-sm text-rose-700">{{ hidden.errors }}</div>{% endif %}{% endfor %}<div class="grid gap-4 sm:grid-cols-2">{% for field in form.visible_fields %}<div>{% include "components/form_field.html" with field=field %}</div>{% endfor %}</div><button class="jims-btn jims-btn-primary mt-5">Save draft</button></form></div>
+{% endblock %}

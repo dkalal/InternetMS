@@ -36,6 +36,10 @@ class ImmutablePaymentQuerySet(TenantScopedQuerySet):
 
 
 class TechnicianWorkReport(models.Model):
+    assignment = models.OneToOneField(
+        "WorkAssignment", on_delete=models.PROTECT, related_name="report",
+        null=True, blank=True,
+    )
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         SUBMITTED = "SUBMITTED", "Awaiting review"
@@ -97,6 +101,16 @@ class TechnicianWorkReport(models.Model):
 
     def clean(self):
         errors = {}
+        if self.assignment_id:
+            assignment = self.assignment
+            if assignment.tenant_id != self.tenant_id or assignment.technician_id != self.technician_id:
+                errors["assignment"] = "Assignment tenant and Technician must match the report."
+            if assignment.status not in {"ACCEPTED", "COMPLETED"}:
+                errors["assignment"] = "The assignment must be accepted."
+            if str(self.agreed_amount) != str(assignment.accepted_terms.get("proposed_amount")):
+                from decimal import Decimal
+                if self.agreed_amount != Decimal(assignment.accepted_terms.get("proposed_amount", "-1")):
+                    errors["agreed_amount"] = "The accepted assignment payment cannot be changed."
         if self.service_date and self.service_date > timezone.localdate():
             errors["service_date"] = "A Work Report can be created only after the work is completed."
         if self.technician_id:
@@ -120,8 +134,11 @@ class TechnicianWorkReport(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.unscoped().filter(pk=self.pk).first()
+            if previous and previous.assignment_id != self.assignment_id:
+                raise ValidationError("A report's assignment link is immutable.")
             if previous and previous.status == self.Status.APPROVED and not getattr(self, "_approved_correction", False):
                 protected = (
+                    "assignment_id",
                     "technician_id", "customer_id", "work_title", "client_name", "service_date",
                     "work_location", "activity_description", "agreed_amount", "internal_notes",
                     "status", "rejection_reason", "submitted_at", "approved_at", "approved_by_id",
@@ -161,6 +178,7 @@ class TechnicianWorkReport(models.Model):
             for day in service_days
         ]
         return {
+            "assignment_id": self.assignment_id,
             "work_title": self.work_title,
             "client_name": self.client_name,
             "customer_id": self.customer_id,
@@ -719,3 +737,126 @@ class WorkReportHistory(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Work report history is immutable.")
+
+
+class WorkAssignment(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        OFFERED = "OFFERED", "Awaiting response"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        DECLINED = "DECLINED", "Declined"
+        CANCELLED = "CANCELLED", "Cancelled"
+        COMPLETED = "COMPLETED", "Completed"
+
+    tenant = models.ForeignKey("users.Organization", on_delete=models.PROTECT)
+    request_key = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    creator = models.ForeignKey("users.TenantMembership", on_delete=models.PROTECT, related_name="created_assignments")
+    technician = models.ForeignKey("users.TenantMembership", on_delete=models.PROTECT, related_name="work_assignments")
+    customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, null=True, blank=True)
+    work_title = models.CharField(max_length=180)
+    scope = models.TextField()
+    client_name = models.CharField(max_length=200, blank=True, default="")
+    work_location = models.CharField(max_length=255, blank=True, default="")
+    proposed_start = models.DateField()
+    proposed_end = models.DateField(null=True, blank=True)
+    proposed_amount = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(0)])
+    instructions = models.TextField(blank=True, default="")
+    management_notes = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    revision = models.PositiveIntegerField(default=0)
+    # Incremented on every mutation, including draft edits, to reject stale forms.
+    version = models.PositiveIntegerField(default=1)
+    accepted_revision = models.PositiveIntegerField(null=True, blank=True)
+    accepted_terms = models.JSONField(default=dict, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    declined_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = TenantScopedManager.from_queryset(WorkReportQuerySet)()
+
+    class Meta:
+        ordering = ["-updated_at", "-pk"]
+        indexes = [models.Index(fields=["tenant", "technician", "status"])]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(proposed_amount__gte=0), name="assignment_amount_nonnegative"),
+            models.CheckConstraint(condition=models.Q(proposed_end__isnull=True) | models.Q(proposed_end__gte=models.F("proposed_start")), name="assignment_schedule_order"),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.technician_id and (
+            self.technician.tenant_id != self.tenant_id
+            or self.technician.base_role != self.technician.BaseRole.TECHNICIAN
+        ):
+            errors["technician"] = "Choose a Technician in this tenant."
+        if self.creator_id and self.creator.tenant_id != self.tenant_id:
+            errors["creator"] = "Creator must belong to this tenant."
+        if self.customer_id and self.customer.tenant_id != self.tenant_id:
+            errors["customer"] = "Customer must belong to this tenant."
+        if self.proposed_end and self.proposed_start and self.proposed_end < self.proposed_start:
+            errors["proposed_end"] = "End date must be on or after start date."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not getattr(self, "_service_write", False):
+            raise ValidationError("Use assignment lifecycle services.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Assignments are retained as business history.")
+
+    def terms(self):
+        return {
+            "technician_id": self.technician_id, "customer_id": self.customer_id,
+            "work_title": self.work_title, "scope": self.scope,
+            "client_name": self.client_name, "work_location": self.work_location,
+            "proposed_start": self.proposed_start.isoformat(),
+            "proposed_end": self.proposed_end.isoformat() if self.proposed_end else None,
+            "proposed_amount": str(self.proposed_amount), "instructions": self.instructions,
+        }
+
+
+class WorkAssignmentHistory(models.Model):
+    tenant = models.ForeignKey("users.Organization", on_delete=models.PROTECT)
+    assignment = models.ForeignKey(WorkAssignment, on_delete=models.PROTECT, related_name="history")
+    actor_membership = models.ForeignKey("users.TenantMembership", on_delete=models.PROTECT)
+    event = models.CharField(max_length=32)
+    from_status = models.CharField(max_length=24, blank=True)
+    to_status = models.CharField(max_length=24)
+    revision = models.PositiveIntegerField()
+    reason = models.TextField(blank=True)
+    snapshot = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager.from_queryset(ImmutableHistoryQuerySet)()
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    @property
+    def event_label(self):
+        return {
+            "CREATED": "Draft created", "REVISED": "Draft revised",
+            "SEND": "Offer sent", "ACCEPT": "Offer accepted",
+            "DECLINE": "Offer declined", "REQUEST_CHANGES": "Changes requested",
+            "CANCEL": "Assignment cancelled", "REPORT_CREATED": "Work Report created",
+            "COMPLETED": "Work Report approved",
+        }.get(self.event, self.event)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Assignment history is immutable.")
+        if self.assignment.tenant_id != self.tenant_id or (
+            self.actor_membership.tenant_id != self.tenant_id
+            and self.actor_membership.base_role != self.actor_membership.BaseRole.SUPER_ADMIN
+        ):
+            raise ValidationError("Assignment history tenant mismatch.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Assignment history is immutable.")
