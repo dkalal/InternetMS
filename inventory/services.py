@@ -77,6 +77,8 @@ class InventoryService:
             raise InventoryError('Invalid product.')
         if product.tenant_id != organization.id:
             raise PermissionDenied('Cross-tenant inventory access denied.')
+        if product.packaging_enabled:
+            raise InventoryError('Packaging stock writes are unavailable until the receiving and sales workflows are verified.')
         legacy_quantity = max(Decimal(str(product.quantity or 0)), Decimal(str(product.stock or 0)), Decimal('0.00'))
         balance, created = InventoryBalance.objects.unscoped().get_or_create(
             product=product,
@@ -148,6 +150,8 @@ class InventoryService:
         seen_serials: set[str] = set()
         for line in lines:
             product = line.product
+            if line.unit_factor is not None:
+                raise InventoryError('Commercial receiving snapshots require the verified packaging receipt workflow.')
             if product.tenant_id != organization.id:
                 raise PermissionDenied('Cross-tenant purchase product denied.')
             if product.item_type == Product.ItemType.SERVICE or not product.track_stock:
@@ -381,6 +385,8 @@ class InventoryService:
         billing_lines = list(invoice.items.select_related('product').order_by('product_id', 'id'))
         product_lines = [line for line in billing_lines if line.product_id]
         for line in product_lines:
+            if line.unit_factor is not None or line.product.packaging_enabled:
+                raise InventoryError('Commercial sale snapshots require the verified packaging allocation workflow.')
             historical_unit = (line.unit_snapshot or '').strip()
             current_unit = (line.product.get_measure_unit_display() or '').strip()
             if historical_unit.casefold() != current_unit.casefold():

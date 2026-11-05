@@ -786,6 +786,8 @@ class BillingService:
             cls._require_same_tenant(organization, product)
             if product.organization_id != organization.id:
                 cls._raise_cross_tenant()
+            if product.packaging_enabled:
+                raise BillingServiceError('Packaging sales are unavailable until unit selection and allocation workflows are verified.')
         if item.package_id:
             package = Package.objects.unscoped().filter(id=item.package_id).first()
             if package is None:

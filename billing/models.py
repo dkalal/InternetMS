@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from users.tenant_models import TenantScopedManager
+from products.packaging_snapshots import sales_constraints, validate_snapshot
 
 
 class BillingDocument(models.Model):
@@ -367,6 +368,10 @@ class BillingDocument(models.Model):
 
 
 class BillingLineItem(models.Model):
+    packaging = models.ForeignKey('products.ProductPackaging', on_delete=models.PROTECT, null=True, blank=True, editable=False)
+    packaging_version = models.PositiveIntegerField(null=True, blank=True, editable=False)
+    unit_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    base_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
     class BillingBehavior(models.TextChoices):
         ONE_TIME = "one_time", "One time"
         RECURRING_MONTHLY = "recurring_monthly", "Recurring monthly"
@@ -437,6 +442,7 @@ class BillingLineItem(models.Model):
     objects = TenantScopedManager()
 
     class Meta:
+        constraints = sales_constraints('bill')
         indexes = [
             models.Index(fields=["organization", "created_at"]),
             models.Index(fields=["organization", "document"]),
@@ -497,6 +503,7 @@ class BillingLineItem(models.Model):
         if self.base_unit_price == Decimal("0.00"):
             self.base_unit_price = self.unit_price
         self.unit_snapshot = (self.unit_snapshot or "Unit").strip()
+        validate_snapshot(self)
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
