@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}Review physical pieces{% endblock %}
+{% block content %}
+<div class="jims-form-page jims-form-page--compact space-y-5">
+<h1 class="jims-page-title">Review physical pieces / {{ document.number }}</h1>
+<p>Selections reserve no stock. Cut or dispatch only after successful full payment. Payment fails if a selected piece becomes unavailable.</p>
+<form method="post" class="jims-form-section space-y-4 p-5">{% csrf_token %}
+{{ form.non_field_errors }}
+{% for line, fields in entries %}
+<fieldset class="space-y-3"><legend class="font-semibold">{{ line.product.name }} / {{ line.quantity }} {{ line.unit_snapshot }} / {{ line.base_quantity }} {{ line.product.get_measure_unit_display }}</legend>
+{% for container_id, field in fields %}{% include 'components/form_field.html' with field=field %}{% empty %}<p>No eligible physical pieces.</p>{% endfor %}
+</fieldset>
+{% empty %}<p>No commercial packaging lines.</p>{% endfor %}
+{% if form.issue_invoice %}{% include "components/form_field.html" with field=form.issue_invoice %}{% endif %}
+<button class="jims-btn jims-btn-primary" type="submit">Save reviewed selections</button>
+<a class="jims-btn jims-btn-secondary" href="{% url 'billing:document_detail' doc_type='invoice' pk=document.pk %}">Back to invoice</a>
+</form></div>
+{% endblock %}

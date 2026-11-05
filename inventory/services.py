@@ -426,9 +426,31 @@ class InventoryService:
 
         billing_lines = list(invoice.items.select_related('product').order_by('product_id', 'id'))
         product_lines = [line for line in billing_lines if line.product_id]
+        # Acquire the complete product lock set before any container lock.
+        products = {p.pk: p for p in Product.objects.unscoped().select_for_update().filter(
+            tenant=organization, organization=organization, pk__in=[line.product_id for line in product_lines],
+        ).order_by('pk')}
+        from .packaging_sales import validate_sale_line, validate_selection, selections_for, post_allocations
+        from .models import StockContainer
+        container_ids = []
         for line in product_lines:
-            if line.unit_factor is not None or line.product.packaging_enabled:
-                raise InventoryError('Commercial sale snapshots require the verified packaging allocation workflow.')
+            if line.product_id not in products:
+                raise PermissionDenied('Invoice product unavailable in the active tenant.')
+            line.product = products[line.product_id]
+            if line.product.packaging_enabled or line.unit_factor is not None:
+                try:
+                    validate_sale_line(organization=organization, line=line)
+                except ValidationError as exc:
+                    raise InventoryError(str(exc)) from exc
+                container_ids.extend(pk for pk, _ in selections_for(line))
+        for product in products.values():
+            if product.track_stock and product.item_type == Product.ItemType.PHYSICAL:
+                cls._locked_product_and_balance(organization=organization, product_id=product.pk, packaging_receipt=product.packaging_enabled)
+        locked_containers = {c.pk: c for c in StockContainer.objects.unscoped().select_for_update().filter(
+            tenant=organization, organization=organization, pk__in=container_ids).order_by('pk')}
+        for line in product_lines:
+            if line.unit_factor is not None:
+                continue
             historical_unit = (line.unit_snapshot or '').strip()
             current_unit = (line.product.get_measure_unit_display() or '').strip()
             if historical_unit.casefold() != current_unit.casefold():
@@ -448,25 +470,35 @@ class InventoryService:
             line_items=product_lines,
             document_discount=getattr(invoice, 'discount_amount', Decimal('0.00')),
         )
-        subtotal = sum((line.line_total for line in product_lines), Decimal('0.00'))
+        subtotal = sum((line.line_total for line in billing_lines), Decimal('0.00'))
         document_discount = money(getattr(invoice, 'discount_amount', Decimal('0.00')))
         processed_discount = Decimal('0.00')
+        discount_shares = {}
+        for index, entry in enumerate(billing_lines):
+            share = (document_discount - processed_discount if index == len(billing_lines) - 1 else
+                     money(document_discount * entry.line_total / subtotal) if subtotal else Decimal('0.00'))
+            discount_shares[entry.pk] = share
+            processed_discount += share
 
-        for index, line in enumerate(product_lines):
+        for line in product_lines:
             product = line.product
             if product.tenant_id != organization.id:
                 raise PermissionDenied('Cross-tenant invoice product denied.')
-            if index == len(product_lines) - 1:
-                allocated_discount = document_discount - processed_discount
-            else:
-                allocated_discount = money(document_discount * line.line_total / subtotal) if subtotal else Decimal('0.00')
-                processed_discount += allocated_discount
+            allocated_discount = discount_shares[line.pk]
             net_revenue = money(line.line_total - allocated_discount)
             cost_total = Decimal('0.00')
 
             if product.item_type == Product.ItemType.PHYSICAL and product.track_stock:
-                locked_product, balance = cls._locked_product_and_balance(organization=organization, product_id=product.pk)
-                quantity = stock_quantity(line.quantity)
+                locked_product, balance = cls._locked_product_and_balance(organization=organization, product_id=product.pk,
+                    packaging_receipt=product.packaging_enabled)
+                quantity = stock_quantity(line.base_quantity if line.unit_factor is not None else line.quantity)
+                pairs = []
+                if line.unit_factor is not None:
+                    try:
+                        pairs = validate_selection(organization=organization, line=line,
+                            selections=selections_for(line), locked=locked_containers)
+                    except ValidationError as exc:
+                        raise InventoryError(str(exc)) from exc
                 if quantity <= 0 or balance.quantity < quantity:
                     raise InventoryError(f'Insufficient stock for {product.name}. Available: {balance.quantity}.')
                 if product.is_serialized:
@@ -497,7 +529,9 @@ class InventoryService:
                     movement_unit_cost = money(cost_total / quantity)
                 else:
                     movement_unit_cost = balance.average_cost
-                    cost_total = money(quantity * movement_unit_cost)
+                    cost_total = (money(balance.quantity * movement_unit_cost)
+                                  - money((balance.quantity - quantity) * movement_unit_cost)
+                                  if line.unit_factor is not None else money(quantity * movement_unit_cost))
 
                 # Compare the actual locked acquisition cost, including selected
                 # serial costs. A stale pre-lock average cannot authorize a loss.
@@ -511,7 +545,7 @@ class InventoryService:
                 balance.quantity = stock_quantity(balance.quantity - quantity)
                 balance.save(update_fields=['quantity', 'updated_at'])
                 cls._sync_legacy_stock(locked_product, balance)
-                StockMovement.objects.create(
+                movement = StockMovement.objects.create(
                     organization=organization,
                     tenant=organization,
                     product=product,
@@ -522,6 +556,9 @@ class InventoryService:
                     billing_line=line,
                     created_by=actor,
                 )
+                if pairs:
+                    post_allocations(organization=organization, line=line, movement=movement,
+                        pairs=pairs, cost_total=cost_total, unit_cost=movement_unit_cost)
 
             InventorySaleLine.objects.create(
                 sale=sale,
@@ -618,7 +655,7 @@ class CartService:
 
     @classmethod
     @transaction.atomic
-    def adjust_line(cls, *, organization, cart_id, product_id, direction, actor, membership=None):
+    def adjust_line(cls, *, organization, cart_id, product_id, direction, actor, membership=None, line_id=None):
         from .cart_lifecycle import visible_carts
         from django.http import QueryDict
         from products.pricing import BelowCostError, validate_net_unit_price
@@ -632,6 +669,28 @@ class CartService:
         product = Product.objects.select_for_update().filter(tenant=organization, pk=product_id, is_active=True).first()
         if product is None or product.is_serialized:
             raise InventoryError('Choose an available non-serialized product.')
+        if product.packaging_enabled:
+            from .packaging_sales import validate_sale_line, suggest
+            line = cart.lines.select_for_update().filter(tenant=organization, product=product, pk=line_id).first() if line_id else None
+            if line is None:
+                raise InventoryError('Choose a selling unit and review physical pieces before adding this product.')
+            validate_sale_line(organization=organization, line=line)
+            quantity = line.quantity + (1 if direction in {'add', 'increase'} else -1)
+            if quantity <= 0:
+                return cls.remove_line(organization=organization, cart_id=cart.pk, line_id=line.pk, actor=actor, membership=membership)
+            line.quantity = quantity
+            line.base_quantity = quantity * line.unit_factor
+            used = {}
+            for other in cart.lines.filter(product=product).exclude(pk=line.pk):
+                for pk, amount in other.container_selections.values_list('container_id', 'base_quantity'):
+                    used[pk] = used.get(pk, Decimal('0')) + amount
+            data = QueryDict('', mutable=True)
+            data.update(product=str(product.pk), quantity=str(quantity), discount_amount=str(line.discount_amount),
+                        sale_packaging=str(line.packaging_id or ''), sale_configuration=str(line.packaging_version))
+            for pk, amount in suggest(organization=organization, line=line, used=used):
+                data[f'container_{pk}'] = str(amount)
+            cls.save_line(organization=organization, cart_id=cart.pk, line_id=line.pk, data=data, actor=actor, membership=membership)
+            return cart
         line = cart.lines.select_for_update().filter(tenant=organization, product=product).first()
         if direction == 'decrease':
             if line is None:
@@ -684,7 +743,7 @@ class CartService:
             raise ValidationError(dict(incoming.errors))
         product = incoming.cleaned_data['product']
         if not line_id:
-            line = cart.lines.filter(tenant=organization, product=product).first()
+            line = cart.lines.filter(tenant=organization, product=product, packaging_id=incoming.instance.packaging_id).first()
             old = cls._line_snapshot(line)
         if line and not line_id:
             selected = list(incoming.cleaned_data['serial_units'])
@@ -693,6 +752,10 @@ class CartService:
                 raise ValidationError({'serial_units': 'A selected serial is already in this cart. Choose a different serial or edit the existing item.'})
             merged = data.copy()
             merged['quantity'] = str(line.quantity + incoming.cleaned_data['quantity'])
+            if product.packaging_enabled:
+                for container_id, amount in line.container_selections.values_list('container_id', 'base_quantity'):
+                    name = f'container_{container_id}'
+                    merged[name] = str(Decimal(merged.get(name) or '0') + amount)
             merged['discount_amount'] = str(line.discount_amount + incoming.cleaned_data['discount_amount'])
             merged.setlist('serial_units', [str(pk) for pk in saved_ids] + [str(unit.pk) for unit in selected])
             incoming = CartLineForm(merged, instance=line, organization=organization, cart=cart,
@@ -702,8 +765,13 @@ class CartService:
         obj = incoming.save(commit=False)
         obj.cart = cart
         obj.unit_price, _ = cls.line_pricing(product=product, quantity=obj.quantity, customer=cart.customer,
-                                            sale_pricing_category=cart.sale_pricing_category)
+                                            sale_pricing_category=cart.sale_pricing_category,
+                                            packaging=obj.packaging, aggregate_base_quantity=incoming.aggregate_base_quantity)
         obj.save()
+        if obj.unit_factor is not None:
+            from .packaging_sales import replace_selections
+            replace_selections(organization=organization, line=obj, selections=incoming.selected_containers)
+        cls.refresh_cart_prices(cart=cart)
         obj.serial_selections.all().delete()
         CartSerialSelection.objects.bulk_create([
             CartSerialSelection(tenant=organization, cart_line=obj, stock_unit=unit)
@@ -775,11 +843,15 @@ class CartService:
             product = line.product
             if not product.is_active or product.tenant_id != cart.tenant_id:
                 raise InventoryError(f'Item #{line.pk} is unavailable. Remove or replace it before conversion.')
+            if line.unit_factor is not None:
+                from .packaging_sales import validate_sale_line
+                validate_sale_line(organization=cart.tenant, line=line)
             price, _ = cls.line_pricing(product=product, quantity=line.quantity, customer=cart.customer,
-                                       sale_pricing_category=cart.sale_pricing_category)
+                                       sale_pricing_category=cart.sale_pricing_category, packaging=line.packaging,
+                                       aggregate_base_quantity=sum((other.base_quantity or other.quantity for other in cart.lines.filter(product=product)), Decimal('0')) if product.packaging_enabled else None)
             if money(line.unit_price) != price:
                 raise InventoryError(f'Pricing for {product.name} has changed. Edit and review the item before conversion.')
-            if product.track_stock and product.item_type == Product.ItemType.PHYSICAL and line.quantity > product.available_stock:
+            if product.track_stock and product.item_type == Product.ItemType.PHYSICAL and (line.base_quantity or line.quantity) > product.available_stock:
                 raise InventoryError(f'Availability for {product.name} has changed. Review its quantity before conversion.')
             if product.is_serialized and any(selection.stock_unit.status != StockUnit.Status.AVAILABLE for selection in line.serial_selections.all()):
                 raise InventoryError(f'Serial availability for {product.name} has changed. Review serial selections before conversion.')
@@ -830,7 +902,7 @@ class CartService:
                 try:
                     validate_net_unit_price(
                         product=item.product, quantity=item.quantity, unit_price=item.unit_price,
-                        line_discount=item.discount_amount, allocated_document_discount=share,
+                        line_discount=item.discount_amount, allocated_document_discount=share, base_quantity=item.base_quantity,
                         actor=actor, organization=organization,
                     )
                 except BelowCostError as exc:
@@ -869,26 +941,29 @@ class CartService:
     def line_pricing(
         cls, *, product: Product, quantity: Decimal, customer: Customer | None = None,
         sale_pricing_category: str = Cart.SalePricingCategory.LEGACY_RETAIL,
+        packaging=None, aggregate_base_quantity=None,
     ):
         """Return the authoritative explicit-category POS price and audit mode.
 
         The legacy/standard POS quantity break remains for backward compatibility;
         Technician pricing is never inferred from a logged-in user's role.
         """
+        tier_quantity = aggregate_base_quantity if aggregate_base_quantity is not None else quantity
         category = sale_pricing_category
         if category == Cart.SalePricingCategory.CUSTOMER_TIER:
             category = customer.default_sale_pricing_category if customer else Product.PricingMode.STANDARD
         if category == Cart.SalePricingCategory.LEGACY_RETAIL:
             qualifies_for_wholesale = (
                 product.allow_wholesale and product.wholesale_price is not None
-                and quantity >= product.wholesale_min_quantity
+                and tier_quantity >= product.wholesale_min_quantity
             )
             if qualifies_for_wholesale:
                 category = Product.PricingMode.WHOLESALE
             else:
                 category = Product.PricingMode.RETAIL
-        unit_price = money(product.price_for_sale_category(sale_pricing_category=category, quantity=quantity))
-        if category == Product.PricingMode.WHOLESALE and product.wholesale_price is not None and unit_price == money(product.wholesale_price):
+        unit_price = money(packaging.price_for_sale_category(sale_pricing_category=category, base_quantity=tier_quantity)
+                           if packaging else product.price_for_sale_category(sale_pricing_category=category, quantity=tier_quantity))
+        if category == Product.PricingMode.WHOLESALE and (packaging.wholesale_price if packaging else product.wholesale_price) is not None and unit_price == money(packaging.wholesale_price if packaging else product.wholesale_price):
             mode = BillingLineItem.PricingMode.WHOLESALE
         elif category == Product.PricingMode.WHOLESALE:
             mode = BillingLineItem.PricingMode.STANDARD
@@ -903,14 +978,22 @@ class CartService:
     @classmethod
     def refresh_cart_prices(cls, *, cart: Cart):
         """Keep the draft preview aligned with the price that checkout will issue."""
-        for line in cart.lines.select_related('product').all():
+        for line in cart.lines.select_related('product', 'packaging').all():
+            if line.unit_factor is not None:
+                from .packaging_sales import validate_sale_line
+                validate_sale_line(organization=cart.tenant, line=line)
             unit_price, _ = cls.line_pricing(
                 product=line.product, quantity=line.quantity, customer=cart.customer,
                 sale_pricing_category=cart.sale_pricing_category,
+                packaging=line.packaging,
+                aggregate_base_quantity=sum((other.base_quantity or other.quantity for other in cart.lines.filter(product_id=line.product_id)), Decimal('0')) if line.product.packaging_enabled else None,
             )
             if money(line.unit_price) != unit_price:
                 line.unit_price = unit_price
                 line.save(update_fields=['unit_price', 'updated_at'])
+        from billing.services import BillingService
+        BillingService._validate_product_cost_floors(organization=cart.tenant, actor=None,
+            line_items=list(cart.lines.select_related('product')), document_discount=cart.discount_amount)
 
     @classmethod
     @transaction.atomic
@@ -1007,6 +1090,8 @@ class CartService:
             fixed_price, pricing_mode = cls.line_pricing(
                 product=line.product, quantity=line.quantity, customer=customer,
                 sale_pricing_category=cart.sale_pricing_category,
+                packaging=line.packaging,
+                aggregate_base_quantity=sum((other.base_quantity or other.quantity for other in cart.lines.filter(product_id=line.product_id)), Decimal('0')) if line.product.packaging_enabled else None,
             )
             if money(line.unit_price) != fixed_price:
                 line.unit_price = fixed_price
@@ -1025,6 +1110,9 @@ class CartService:
                     unit_price=fixed_price,
                     discount_amount=line.discount_amount,
                     pricing_mode=pricing_mode,
+                    product_packaging_id=line.packaging_id,
+                    packaging_version=line.packaging_version,
+                    container_selections=tuple(line.container_selections.values_list('container_id', 'base_quantity')),
                 )
             )
         # This execution-time gate catches stale drafts, revoked/reduced grants,

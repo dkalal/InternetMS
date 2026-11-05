@@ -560,7 +560,7 @@ class CartForm(TenantFormMixin, forms.ModelForm):
                 try:
                     validate_net_unit_price(
                         product=line.product, quantity=line.quantity, unit_price=line.unit_price,
-                        line_discount=line.discount_amount, allocated_document_discount=share,
+                        line_discount=line.discount_amount, allocated_document_discount=share, base_quantity=line.base_quantity,
                         actor=self.membership.user if self.membership else None,
                         organization=self.organization,
                     )
@@ -577,6 +577,8 @@ class CartLineDiscountForm(forms.Form):
 
 
 class CartLineForm(TenantFormMixin, forms.ModelForm):
+    sale_packaging = forms.ChoiceField(required=False, label='Selling unit')
+    sale_configuration = forms.IntegerField(required=False, widget=forms.HiddenInput)
     serial_units = forms.ModelMultipleChoiceField(queryset=StockUnit.objects.none(), required=False)
 
     class Meta:
@@ -601,6 +603,29 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             self.fields['serial_units'].initial = [
                 str(value) for value in self.instance.serial_selections.values_list('stock_unit_id', flat=True)
             ]
+        self.container_fields = []
+        self.selected_packaging_product = self.fields['product'].queryset.filter(pk=product_id).first() if product_id and str(product_id).isdecimal() and len(str(product_id)) <= 18 else None
+        self.fields['sale_packaging'].choices = [('', 'Base unit')]
+        if self.selected_packaging_product and self.selected_packaging_product.packaging_enabled:
+            from .packaging_receipts import packaging_options
+            from .models import StockContainer
+            product = self.selected_packaging_product
+            self.fields['sale_packaging'].choices = [('', product.get_measure_unit_display())] + [
+                (str(option['id']), option['label']) for option in packaging_options(product)]
+            self.fields['sale_configuration'].initial = self.instance.packaging_version or product.packaging_version
+            self.fields['sale_packaging'].initial = str(self.instance.packaging_id or self.initial.get('sale_packaging') or '')
+            saved = dict(self.instance.container_selections.values_list('container_id', 'base_quantity')) if self.instance.pk else {}
+            containers = StockContainer.objects.filter(tenant=organization, organization=organization, product=product,
+                remaining_quantity__gt=0).order_by('received_at', 'pk')[:2000]
+            for container in containers:
+                name = f'container_{container.pk}'
+                self.fields[name] = forms.DecimalField(required=False, decimal_places=0, min_value=0,
+                    max_value=container.remaining_quantity, initial=saved.get(container.pk, 0),
+                    label=f'{container.label} / {container.get_state_display()} / {container.remaining_quantity:g} {product.get_measure_unit_display()}')
+                self.container_fields.append(self[name])
+            self.fields['quantity'].widget.attrs.update({'step': '1', 'min': '1'})
+        else:
+            self.fields['sale_packaging'].widget = forms.HiddenInput()
         self.serials_in_cart = set(CartSerialSelection.objects.filter(
             tenant=organization, cart_line__cart=cart,
         ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart and cart.pk else set()
@@ -618,8 +643,6 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         if not (raw_id.isascii() and raw_id.isdecimal() and len(raw_id) <= 18):
             raise forms.ValidationError('Select a valid product.')
         product = self.cleaned_data['product']
-        if product.packaging_enabled:
-            raise forms.ValidationError('Packaging sales are unavailable until the allocation workflow is verified.')
         return product
 
     def clean(self):
@@ -627,6 +650,36 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         product = cleaned.get('product')
         quantity = cleaned.get('quantity') or Decimal('0.00')
         discount = cleaned.get('discount_amount') or Decimal('0.00')
+        base_quantity = quantity
+        package = None
+        self.aggregate_base_quantity = quantity
+        if product and product.packaging_enabled and quantity > 0:
+            from .packaging_sales import sale_snapshot, validate_selection
+            try:
+                values = sale_snapshot(organization=self.organization, product=product,
+                    packaging_id=cleaned.get('sale_packaging'), quantity=quantity,
+                    version=cleaned.get('sale_configuration'))
+                for name, value in values.items():
+                    setattr(self.instance, name, value)
+                self.instance.product = product
+                self.instance.quantity = quantity
+                self.instance.tenant = self.organization
+                package = values['packaging']
+                base_quantity = values['base_quantity']
+                others = self.cart.lines.filter(product=product).exclude(pk=self.instance.pk) if self.cart and self.cart.pk else []
+                self.aggregate_base_quantity = base_quantity + sum((line.base_quantity or line.quantity for line in others), Decimal('0'))
+                used = {}
+                for line in others:
+                    if not self.instance.pk and line.packaging_id == self.instance.packaging_id:
+                        continue
+                    for pk, amount in line.container_selections.values_list('container_id', 'base_quantity'):
+                        used[pk] = used.get(pk, Decimal('0')) + amount
+                self.selected_containers = [(int(name[10:]), cleaned[name]) for name in self.fields
+                    if name.startswith('container_') and cleaned.get(name)]
+                validate_selection(organization=self.organization, line=self.instance,
+                    selections=self.selected_containers, used=used)
+            except (ValidationError, ValueError) as exc:
+                self.add_error(None, str(exc))
         if quantity <= 0:
             self.add_error(
                 'quantity',
@@ -641,16 +694,16 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             available = product.available_stock
             if available <= 0:
                 self.add_error('product', 'This product is currently out of stock.')
-            elif quantity > available:
+            elif (self.aggregate_base_quantity if product.packaging_enabled else quantity) > available:
                 self.add_error('quantity', f'Only {available} units are currently available.')
-        if product and discount > product.price_for_sale_category(
+        if product and not product.packaging_enabled and discount > product.price_for_sale_category(
             sale_pricing_category=self.sale_pricing_category, quantity=quantity,
         ) * quantity:
             self.add_error('discount_amount', 'Discount cannot exceed the line amount.')
         if product and self.cart is not None:
             from .services import CartService
 
-            if self.instance.pk and self.cart.lines.filter(product=product).exclude(pk=self.instance.pk).exists():
+            if self.instance.pk and self.cart.lines.filter(product=product, packaging_id=self.instance.packaging_id).exclude(pk=self.instance.pk).exists():
                 self.add_error('product', 'This product already has a cart line. Edit that item instead.')
             if not product.is_serialized and cleaned.get('serial_units'):
                 self.add_error('serial_units', 'This product does not use serial selections.')
@@ -660,12 +713,13 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
                 quantity=quantity,
                 customer=self.cart.customer,
                 sale_pricing_category=self.cart.sale_pricing_category,
+                packaging=package, aggregate_base_quantity=self.aggregate_base_quantity,
             )
             from products.pricing import BelowCostError, validate_net_unit_price
             try:
                 validate_net_unit_price(
                     product=product, quantity=quantity, unit_price=unit_price,
-                    line_discount=discount,
+                    line_discount=discount, base_quantity=base_quantity,
                     actor=self.membership.user if self.membership else None,
                     organization=self.organization,
                 )

@@ -60,6 +60,7 @@
       {% if document.document_type == 'invoice' and document.status == 'draft' %}
         <a href="{% url 'billing:document_edit' doc_type=document.document_type pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Edit draft</a>
       {% endif %}
+      {% if has_packaging_inventory_items and document.document_type == 'invoice' and document.status != 'paid' %}<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:invoice_containers' document.pk %}">Review physical pieces</a>{% endif %}
       {% if has_serialized_inventory_items and document.status != 'paid' %}<a href="{% url 'inventory:invoice_serials' document.pk %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Select serial numbers</a>{% endif %}
       {% if can_register_payment %}
         <a href="{% url 'billing:create_receipt_from_invoice' pk=document.id %}" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Create receipt</a>

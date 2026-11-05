@@ -8,6 +8,7 @@
         {% endif %}
         <div class="pos-row-thumb" aria-hidden="true">{% if line.product.image %}<img src="{{ line.product.image.url }}" alt="" loading="lazy" class="h-full w-full object-contain">{% else %}<span>{{ line.product.name|slice:":1"|upper }}</span>{% endif %}</div>
         <div class="pos-row-name min-w-0">
+          {% if line.unit_factor %}<a class="text-xs underline" href="{% url 'inventory:cart_line_edit' cart.pk line.pk %}">Review unit and physical pieces</a>{% endif %}
           <h3 class="pos-line-name font-semibold text-slate-950" title="{{ line.product.name }}">{{ line.product.name }}</h3>
           <p class="text-[11px] text-slate-500"><span data-pos-price-mode>{% if line.pos_pricing_mode == 'wholesale' %}Wholesale{% elif line.pos_pricing_mode == 'technician' %}Technician{% elif line.pos_pricing_mode == 'standard' %}Standard{% else %}Legacy retail{% endif %}</span>{% if line.product.measure_unit %} · {{ line.product.measure_unit }}{% endif %}{% if line.discount_amount %} · Discount {{ line.discount_amount|money_display }} TZS{% endif %}</p>
           {% if line.pos_pricing_mode == 'retail' and line.product.allow_wholesale and line.product.wholesale_price %}<p class="text-[11px] text-slate-500">Wholesale from {{ line.product.wholesale_min_quantity|quantity_display }} {{ line.product.measure_unit }}</p>{% endif %}
@@ -16,9 +17,9 @@
         <div class="pos-row-quantity">
           {% if cart.status == 'draft' and not line.product.is_serialized %}
             <div class="pos-quantity-stepper">
-              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="decrease"><button type="submit" aria-label="Decrease {{ line.product.name }} quantity">−</button></form>
+              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="line_id" value="{{ line.pk }}"><input type="hidden" name="direction" value="decrease"><button type="submit" aria-label="Decrease {{ line.product.name }} quantity">−</button></form>
               <strong><font size="3"><span data-pos-quantity>{{ line.quantity|quantity_display }}</span></font></strong>
-              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="direction" value="increase"><button type="submit" aria-label="Increase {{ line.product.name }} quantity">+</button></form>
+              <form method="post" action="{% url 'inventory:cart_line_adjust' cart.pk %}" data-pos-adjust>{% csrf_token %}<input type="hidden" name="product" value="{{ line.product.pk }}"><input type="hidden" name="line_id" value="{{ line.pk }}"><input type="hidden" name="direction" value="increase"><button type="submit" aria-label="Increase {{ line.product.name }} quantity">+</button></form>
             </div>
           {% else %}<strong><font size="3"><span class="text-sm text-slate-600">{{ line.quantity|quantity_display }}</span></font></strong>{% endif %}
         </div>

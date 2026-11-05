@@ -49,6 +49,7 @@ urlpatterns = [
     path('imports/<int:pk>/commit/', views.import_commit, name='import_commit'),
     path('imports/template/<str:import_type>/', views.import_template, name='import_template'),
     path('exports/<str:record_type>/', views.export_records, name='export_records'),
+    path('invoices/<int:pk>/containers/', views.invoice_containers, name='invoice_containers'),
     path('invoices/<int:pk>/serials/', views.invoice_serials, name='invoice_serials'),
     path('settings/', views.settings_edit, name='settings'),
 ]
