@@ -71,13 +71,13 @@ def audit(*, organization, actor, action, obj, old_value=None, new_value=None, m
 
 class InventoryService:
     @classmethod
-    def _locked_product_and_balance(cls, *, organization, product_id):
+    def _locked_product_and_balance(cls, *, organization, product_id, packaging_receipt=False):
         product = Product.objects.unscoped().select_for_update().filter(pk=product_id).first()
         if product is None:
             raise InventoryError('Invalid product.')
-        if product.tenant_id != organization.id:
+        if product.tenant_id != organization.id or product.organization_id != organization.id:
             raise PermissionDenied('Cross-tenant inventory access denied.')
-        if product.packaging_enabled:
+        if product.packaging_enabled and not packaging_receipt:
             raise InventoryError('Packaging stock writes are unavailable until the receiving and sales workflows are verified.')
         legacy_quantity = max(Decimal(str(product.quantity or 0)), Decimal(str(product.stock or 0)), Decimal('0.00'))
         balance, created = InventoryBalance.objects.unscoped().get_or_create(
@@ -101,6 +101,16 @@ class InventoryService:
                 created_by=None,
             )
         balance = InventoryBalance.objects.unscoped().select_for_update().get(pk=balance.pk)
+        if balance.tenant_id != organization.pk or balance.organization_id != organization.pk:
+            raise PermissionDenied('Cross-tenant inventory balance denied.')
+        if product.packaging_enabled:
+            from .models import StockContainer
+            containers = StockContainer.objects.unscoped().filter(product=product)
+            if containers.exclude(tenant=organization, organization=organization).exists():
+                raise PermissionDenied('Container ownership requires review.')
+            quantity = containers.aggregate(q=Sum('remaining_quantity'))['q'] or Decimal('0')
+            if quantity != balance.quantity:
+                raise InventoryError('Physical containers and aggregate stock do not reconcile. Ask a manager to review before receiving.')
         return product, balance
 
     @staticmethod
@@ -110,7 +120,7 @@ class InventoryService:
 
     @classmethod
     @transaction.atomic
-    def confirm_purchase(cls, *, organization, purchase_id: int, actor):
+    def confirm_purchase(cls, *, organization, purchase_id: int, actor, support_session=None):
         purchase = (
             Purchase.objects.unscoped()
             .select_for_update()
@@ -120,6 +130,14 @@ class InventoryService:
         )
         if purchase is None or purchase.tenant_id != organization.id:
             raise PermissionDenied('Purchase is not available in the active tenant.')
+        if purchase.supplier.tenant_id != organization.pk or purchase.supplier.organization_id != organization.pk:
+            raise PermissionDenied('Supplier unavailable in the active tenant.')
+        if purchase.lines.filter(unit_factor__isnull=False).exists():
+            from products.packaging import authorize
+            from users.permissions import PermissionCode, has_tenant_permission
+            membership = authorize(organization=organization, actor=actor, support_session=support_session)
+            if not has_tenant_permission(actor, organization, PermissionCode.PURCHASE_CONFIRM, membership=membership):
+                raise PermissionDenied('Receiving permission is required.')
         if purchase.status == Purchase.Status.CONFIRMED:
             return purchase
         if purchase.status != Purchase.Status.DRAFT:
@@ -146,12 +164,30 @@ class InventoryService:
         if not lines:
             raise InventoryError('Add at least one purchase line before confirmation.')
 
+        # Lock the complete product set before validating conversion/configuration.
+        product_ids = sorted({line.product_id for line in lines})
+        locked_products = {p.pk: p for p in Product.objects.unscoped().select_for_update().filter(
+            tenant=organization, pk__in=product_ids).order_by('pk')}
+        if len(locked_products) != len(product_ids) or any(line.tenant_id != organization.pk for line in lines):
+            raise PermissionDenied('Cross-tenant purchase line denied.')
+        commercial = any(p.packaging_enabled for p in locked_products.values())
+        if commercial and not purchase.lines.filter(unit_factor__isnull=False).exists():
+            raise InventoryError('Activated products require reviewed commercial purchase snapshots.')
+        container_count = 0
         normalized_serials: dict[int, list[str]] = {}
         seen_serials: set[str] = set()
         for line in lines:
-            product = line.product
-            if line.unit_factor is not None:
-                raise InventoryError('Commercial receiving snapshots require the verified packaging receipt workflow.')
+            product = locked_products[line.product_id]
+            if product.packaging_enabled:
+                from .packaging_receipts import validate_receipt_line
+                try:
+                    container_count += validate_receipt_line(organization=organization, line=line, product=product)
+                except ValidationError as exc:
+                    raise InventoryError('; '.join(exc.messages)) from exc
+            elif line.unit_factor is not None:
+                raise InventoryError('Commercial snapshots require an activated product.')
+            if container_count > 2000:
+                raise InventoryError('Receive at most 2,000 physical containers per purchase.')
             if product.tenant_id != organization.id:
                 raise PermissionDenied('Cross-tenant purchase product denied.')
             if product.item_type == Product.ItemType.SERVICE or not product.track_stock:
@@ -181,10 +217,13 @@ class InventoryService:
 
         total_cost = Decimal('0.00')
         for line in lines:
-            product, balance = cls._locked_product_and_balance(organization=organization, product_id=line.product_id)
+            product, balance = cls._locked_product_and_balance(organization=organization, product_id=line.product_id, packaging_receipt=locked_products[line.product_id].packaging_enabled)
             old_quantity = balance.quantity
             incoming_cost = cost(line.unit_cost)
             new_quantity = stock_quantity(old_quantity + line.quantity)
+            if product.packaging_enabled:
+                from products.packaging import whole_quantity
+                whole_quantity(new_quantity, label='Resulting stock')
             if new_quantity > 0:
                 balance.average_cost = cost(
                     ((old_quantity * balance.average_cost) + line.line_total) / new_quantity
@@ -217,6 +256,9 @@ class InventoryService:
                     expiry_date=line.expiry_date,
                     received_purchase_line=line,
                 )
+            if product.packaging_enabled:
+                from .packaging_receipts import create_receipt_containers
+                create_receipt_containers(organization=organization, line=line, product=product)
             total_cost += line.line_total
 
         purchase.status = Purchase.Status.CONFIRMED

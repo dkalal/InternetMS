@@ -331,7 +331,7 @@
                 base_unit: result.unit || "Unit",
                 serialized: Boolean(result.serialized),
                 expiry: Boolean(result.expiry),
-                buying_price: result.buying_price
+                buying_price: result.buying_price, packaging_enabled: result.packaging_enabled, packaging_version: result.packaging_version, packaging_options: result.packaging_options
               };
               input.value = result.name || result.text;
               closeList();
@@ -416,6 +416,30 @@
         if (unit) unit.textContent = meta ? meta.base_unit : '—';
         var quantity = line.querySelector("input[name$='-quantity']");
         var unitCost = line.querySelector("input[name$='-unit_cost']");
+        var pack = line.querySelector('[name$="-purchase_packaging"]');
+        var config = line.querySelector('[name$="-purchase_configuration"]');
+        var packFields = line.querySelector('[data-purchase-unit-fields]');
+        if (packFields) packFields.classList.toggle('hidden', !(meta && meta.packaging_enabled));
+        if (pack && pack.dataset.product !== (product ? product.value : '')) {
+          var changedProduct = pack.dataset.product != null && pack.dataset.product !== (product ? product.value : '');
+          var previous = changedProduct ? '' : pack.value;
+          pack.replaceChildren(new Option(meta ? meta.base_unit : 'Base unit', ''));
+          ((meta && meta.packaging_options) || []).forEach(function (option) { pack.add(new Option(option.label, String(option.id))); });
+          pack.value = previous;
+          pack.dataset.product = product ? product.value : '';
+          if (config && meta && (!config.value || changedProduct)) config.value = meta.packaging_version;
+        }
+        if (pack && !pack.dataset.bound) {
+          pack.dataset.bound = '1';
+          pack.addEventListener('change', function () { if (config && productMeta[product.value]) config.value = productMeta[product.value].packaging_version; if (unitCost) unitCost.value = ''; syncLine(line); });
+        }
+        if (quantity) { quantity.step = meta && meta.packaging_enabled ? '1' : '0.000001'; quantity.min = meta && meta.packaging_enabled ? '1' : '0.000001'; }
+        var option = meta && (meta.packaging_options || []).find(function (row) { return pack && String(row.id) === pack.value; });
+        var impact = line.querySelector('[data-base-impact]');
+        if (impact) impact.textContent = meta && meta.packaging_enabled ?
+          (quantity.value || '0') + ' x ' + (option ? number(option.factor) : 1) + ' = ' +
+          (number(quantity.value) * (option ? number(option.factor) : 1)) + ' ' + meta.base_unit : '';
+        if (unitCost) unitCost.setAttribute('aria-label', 'Cost per ' + (option ? option.label : (meta ? meta.base_unit : 'unit')));
         var priceHint = line.querySelector("[data-buying-price-hint]");
         if (priceHint) priceHint.textContent = meta && meta.buying_price != null
           ? 'Buying: TZS ' + formatPurchaseCost(meta.buying_price) + ' / ' + meta.base_unit + ' (editable)' : '';
@@ -542,7 +566,7 @@
             base_unit: result.unit || "Unit",
             serialized: Boolean(result.serialized),
             expiry: Boolean(result.expiry),
-            buying_price: result.buying_price
+            buying_price: result.buying_price, packaging_enabled: result.packaging_enabled, packaging_version: result.packaging_version, packaging_options: result.packaging_options
           };
         }
         formset.appendChild(line);
