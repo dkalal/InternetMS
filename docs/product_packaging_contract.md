@@ -277,7 +277,8 @@ Phase checklist (unchecked means not delivered):
 
 - [x] Baseline, worktree, main CI and unrelated deployment PR inspected.
 - [x] Architecture, lifecycle, posting, precision and compatibility defined.
-- [ ] Phase 0 focused/full PostgreSQL verification, commit, push and PR.
+- [x] Phase 0 focused/full PostgreSQL verification, commit, push and PR #5.
+  Evidence: [Phase 0 verification](product_packaging_phase0_verification.md).
 - [ ] Phase 1 gated foundation, migrations, activation and isolation tests; PR targets Phase 0.
 - [ ] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; PR targets Phase 1.
 - [ ] Phase 3 all sales paths, concurrency, historical print and browser tests; PR targets Phase 2.
