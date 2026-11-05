@@ -426,7 +426,11 @@ class CartLine(models.Model):
 
     class Meta:
         ordering = ['id']
-        constraints = [models.UniqueConstraint(fields=['cart', 'product'], name='uniq_cart_product'), *sales_constraints('cart')]
+        constraints = [
+            models.UniqueConstraint(fields=['cart', 'product'], condition=models.Q(packaging__isnull=True), name='uniq_cart_base_product'),
+            models.UniqueConstraint(fields=['cart', 'product', 'packaging'], condition=models.Q(packaging__isnull=False), name='uniq_cart_product_packaging'),
+            *sales_constraints('cart'),
+        ]
 
     @property
     def line_total(self):

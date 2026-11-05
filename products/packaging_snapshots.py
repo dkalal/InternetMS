@@ -38,6 +38,8 @@ def validate_snapshot(line, *, purchase=False):
         if not workflows_ready():
             raise ValidationError('Packaging transactions are unavailable until receiving and sales phases are verified.')
     if all(value is None for value in values) and not line.packaging_id:
+        if line.product_id and line.product.packaging_enabled:
+            raise ValidationError('Activated products require an explicit commercial unit snapshot.')
         return
     if any(value is None for value in values) or not line.product_id:
         raise ValidationError('A commercial unit snapshot must be complete and refer to a product.')
