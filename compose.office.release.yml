@@ -1,0 +1,8 @@
+# Reviewed image override only. Applying this to office requires separate approval.
+# Use AFTER the office docker-compose.yml; never run up without --no-build --no-deps.
+services:
+  web:
+    image: ${OFFICE_RELEASE_IMAGE:?Set the reviewed immutable local image ID}
+    pull_policy: never
+    # This release has no pending migrations. Startup must not run migrate.
+    command: [gunicorn, --bind, '0.0.0.0:8000', --workers, '4', --timeout, '120', --access-logfile, '-', --access-logformat, '%(h)s %(s)s %(b)s %(T)s', internetservices.wsgi:application]

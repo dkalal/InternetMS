@@ -18,3 +18,13 @@ build
 Thumbs.db
 *.log
 node_modules
+
+# Never send local secrets, uploads or preservation artifacts to the builder.
+.env.*
+.backups/
+media/
+staticfiles/
+.agents/
+.codex/
+*.dump
+*.patch

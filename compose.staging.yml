@@ -1,0 +1,52 @@
+# Standalone synthetic staging only. Never combine with docker-compose.yml.
+name: jims-release-staging
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jims_staging
+      POSTGRES_USER: staging
+      POSTGRES_PASSWORD: staging-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U staging -d jims_staging]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [staging]
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jims-office-staging:81ec3f8
+    # Migrations are an explicit separate step, never an automatic startup action.
+    command: [gunicorn, --bind, '0.0.0.0:8000', --workers, '2', --timeout, '120', internetservices.wsgi:application]
+    environment:
+      DATABASE_URL: postgresql://staging:staging-test-only@db:5432/jims_staging
+      DJANGO_DEBUG: '0'
+      DJANGO_SECRET_KEY: ${STAGING_SECRET_KEY:?Set a disposable staging key in .env.staging}
+      DJANGO_SECURE_SSL_REDIRECT: '0'
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver,web
+      DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:18083,http://127.0.0.1:18083
+      DJANGO_SESSION_COOKIE_NAME: jims_staging_session
+      DJANGO_CSRF_COOKIE_NAME: jims_staging_csrf
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      STAGING_LOGIN_PASSWORD: ${STAGING_LOGIN_PASSWORD:?Set a disposable login password in .env.staging}
+      PYTHONDONTWRITEBYTECODE: '1'
+    ports:
+      - '127.0.0.1:18083:8000'
+    tmpfs:
+      - /app/media:mode=1777
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready/', timeout=5).read()"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 15s
+    networks: [staging]
+networks:
+  staging: {}
