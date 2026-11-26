@@ -286,7 +286,7 @@ Phase checklist (unchecked means not delivered):
   Evidence: [Phase 0 verification](product_packaging_phase0_verification.md).
 - [x] Phase 1 gated foundation, migrations, activation and isolation tests; [PR #6](https://github.com/dkalal/InternetMS/pull/6) targets Phase 0.
   Evidence: [Phase 1 verification](product_packaging_phase1.md).
-- [ ] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; PR targets Phase 1.
+- [x] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; [PR #7](https://github.com/dkalal/InternetMS/pull/7) targets Phase 1. Final local full suite: 866 passed; both CI runs passed.
 - [ ] Phase 3 all sales paths, concurrency, historical print and browser tests; PR targets Phase 2.
 - [ ] Phase 4 returns/wastage/reports/maintenance and rollout runbook; PR targets Phase 3.
 

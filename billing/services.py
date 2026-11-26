@@ -45,6 +45,9 @@ class LineItemInput:
     promotion_id: int | None = None
     preserve_unit_price: bool = False
     unit_snapshot: str = ""
+    product_packaging_id: int | None = None
+    packaging_version: int | None = None
+    container_selections: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -685,6 +688,11 @@ class BillingService:
                 "package_id": item.package_id,
                 "description": item.description,
                 "quantity": str(item.quantity),
+                "unit_snapshot": item.unit_snapshot,
+                "product_packaging_id": item.packaging_id,
+                "packaging_version": item.packaging_version,
+                "unit_factor": str(item.unit_factor) if item.unit_factor is not None else None,
+                "base_quantity": str(item.base_quantity) if item.base_quantity is not None else None,
                 "base_unit_price": str(item.base_unit_price),
                 "unit_price": str(item.unit_price),
                 "discount_amount": str(item.discount_amount),
@@ -786,8 +794,6 @@ class BillingService:
             cls._require_same_tenant(organization, product)
             if product.organization_id != organization.id:
                 cls._raise_cross_tenant()
-            if product.packaging_enabled:
-                raise BillingServiceError('Packaging sales are unavailable until unit selection and allocation workflows are verified.')
         if item.package_id:
             package = Package.objects.unscoped().filter(id=item.package_id).first()
             if package is None:
@@ -809,8 +815,26 @@ class BillingService:
         document: BillingDocument,
         items: list[LineItemInput],
     ) -> list[BillingLineItem]:
+        from inventory.packaging_sales import sale_snapshot
+        snapshots = {}
+        base_totals = {}
+        for index, item in enumerate(items):
+            product, _ = cls._resolve_line_item_refs(organization=organization, item=item)
+            if product is not None and product.packaging_enabled:
+                try:
+                    snapshot = sale_snapshot(organization=organization, product=product,
+                        packaging_id=item.product_packaging_id, quantity=item.quantity, version=item.packaging_version)
+                except Exception as exc:
+                    from django.core.exceptions import ValidationError
+                    if isinstance(exc, (ValidationError, ValueError)):
+                        raise BillingServiceError(str(exc)) from exc
+                    raise
+                snapshots[index] = snapshot
+                base_totals[product.pk] = base_totals.get(product.pk, Decimal('0')) + snapshot['base_quantity']
+            elif item.product_packaging_id is not None or item.packaging_version is not None:
+                raise BillingServiceError('Commercial packaging requires an activated stock product.')
         created_items: list[BillingLineItem] = []
-        for item in items:
+        for index, item in enumerate(items):
             product, package = cls._resolve_line_item_refs(organization=organization, item=item)
             internet_service = None
             subscription = None
@@ -844,6 +868,7 @@ class BillingService:
                 if promotion is None:
                     raise BillingServiceError("Invalid promotion.")
             qty = (item.quantity or Decimal("0.00")).quantize(Decimal("0.01"))
+            snapshot = snapshots.get(index, {})
             pricing_mode = item.pricing_mode
             unit = (item.unit_price or Decimal("0.00")).quantize(Decimal("0.01"))
             # Catalog products have fixed prices. MANUAL remains available for
@@ -862,10 +887,14 @@ class BillingService:
                         category = Product.PricingMode.WHOLESALE if wants_wholesale else Product.PricingMode.RETAIL
                     elif category == BillingDocument.SalePricingCategory.STANDARD and pricing_mode == BillingLineItem.PricingMode.WHOLESALE:
                         category = Product.PricingMode.WHOLESALE
-                    unit = product.price_for_sale_category(
-                        sale_pricing_category=category, quantity=qty,
-                    ).quantize(Decimal("0.01"))
-                    if category == Product.PricingMode.WHOLESALE and product.wholesale_price is not None and unit == product.wholesale_price:
+                    package_pricebook = snapshot.get('packaging')
+                    tier_quantity = base_totals.get(product.pk, qty)
+                    unit = (package_pricebook.price_for_sale_category(
+                        sale_pricing_category=category, base_quantity=tier_quantity,
+                    ) if package_pricebook else product.price_for_sale_category(
+                        sale_pricing_category=category, quantity=tier_quantity,
+                    )).quantize(Decimal("0.01"))
+                    if category == Product.PricingMode.WHOLESALE and (package_pricebook.wholesale_price if package_pricebook else product.wholesale_price) is not None and unit == (package_pricebook.wholesale_price if package_pricebook else product.wholesale_price):
                         pricing_mode = BillingLineItem.PricingMode.WHOLESALE
                     elif category == Product.PricingMode.WHOLESALE:
                         pricing_mode = BillingLineItem.PricingMode.STANDARD
@@ -910,10 +939,12 @@ class BillingService:
                     subscription=subscription,
                     description=item.description,
                     quantity=qty,
-                    unit_snapshot=cls._resolve_line_unit(
-                        item=item,
-                        product=product,
-                        package=package,
+                    packaging=snapshot.get('packaging'),
+                    packaging_version=snapshot.get('packaging_version'),
+                    unit_factor=snapshot.get('unit_factor'),
+                    base_quantity=snapshot.get('base_quantity'),
+                    unit_snapshot=snapshot.get('selected_unit_snapshot') or cls._resolve_line_unit(
+                        item=item, product=product, package=package,
                     ),
                     base_unit_price=base_unit,
                     unit_price=unit,
@@ -1074,6 +1105,20 @@ class BillingService:
             )
         if created_items:
             BillingLineItem.objects.bulk_create(created_items)
+            from inventory.packaging_sales import replace_selections
+            used = {}
+            for source, line in zip(items, created_items):
+                if line.unit_factor is not None and source.container_selections:
+                    try:
+                        pairs = replace_selections(organization=organization, line=line,
+                            selections=source.container_selections, used=used)
+                    except Exception as exc:
+                        from django.core.exceptions import ValidationError
+                        if isinstance(exc, (ValidationError, ValueError)):
+                            raise BillingServiceError(str(exc)) from exc
+                        raise
+                    for container, quantity in pairs:
+                        used[container.pk] = used.get(container.pk, Decimal('0')) + quantity
 
         subtotal, tax_amount, total = cls._compute_totals(
             tax_rate=tax_rate, line_items=created_items, discount_amount=discount_amount
@@ -1101,6 +1146,7 @@ class BillingService:
                     unit_price=line.unit_price,
                     line_discount=line.discount_amount,
                     allocated_document_discount=share,
+                    base_quantity=line.base_quantity,
                     actor=actor,
                     organization=organization,
                 )
@@ -1392,6 +1438,11 @@ class BillingService:
         cls._validate_editable_items(items=items)
         old_snapshot = cls._document_snapshot(invoice)
         with transaction.atomic():
+            invoice = BillingDocument.objects.unscoped().select_for_update().get(pk=invoice.pk, tenant=organization)
+            if invoice.status != BillingDocument.Status.DRAFT:
+                raise BillingServiceError(ISSUED_INVOICE_EDIT_ERROR)
+            from inventory.models import ProvisionalContainerAllocation
+            ProvisionalContainerAllocation.objects.unscoped().filter(tenant=organization, billing_line__document=invoice).delete()
             BillingLineItem.objects.filter(document=invoice).delete()
             created_items = cls._build_line_items(organization=organization, document=invoice, items=items)
             cls._validate_product_cost_floors(
@@ -1402,6 +1453,13 @@ class BillingService:
             )
             if created_items:
                 BillingLineItem.objects.bulk_create(created_items)
+                from inventory.packaging_sales import replace_selections
+                used = {}
+                for source, line in zip(items, created_items):
+                    if line.unit_factor is not None and source.container_selections:
+                        pairs = replace_selections(organization=organization, line=line, selections=source.container_selections, used=used)
+                        for container, amount in pairs:
+                            used[container.pk] = used.get(container.pk, Decimal('0')) + amount
             linked_periods = list(
                 SubscriptionPeriod.objects.filter(organization=organization, invoice=invoice).select_related("subscription")
             )
@@ -1454,6 +1512,20 @@ class BillingService:
                 new_value=cls._document_snapshot(invoice),
             )
             return invoice
+
+    @classmethod
+    def _issue_reviewed_packaging_invoice(cls, *, organization, actor, invoice):
+        """Called inside authorized parent-locked allocation review; keeps line identity."""
+        if invoice.status != BillingDocument.Status.DRAFT or invoice.tenant_id != organization.pk:
+            raise BillingServiceError('Only a draft invoice can be issued from physical review.')
+        cls._validate_product_cost_floors(organization=organization, actor=actor,
+            line_items=list(invoice.items.select_related('product')), document_discount=invoice.discount_amount)
+        previous = cls._document_snapshot(invoice)
+        BillingDocument.objects.filter(pk=invoice.pk, tenant=organization).update(status=BillingDocument.Status.ISSUED, issued_at=timezone.now())
+        invoice.refresh_from_db()
+        cls._log_action(organization=organization, performed_by=actor, action_type='invoice_issued', document=invoice,
+            old_value=previous, new_value=cls._document_snapshot(invoice))
+        return invoice
 
     @classmethod
     def _subscription_invoice_item_for_period(
@@ -1574,6 +1646,9 @@ class BillingService:
                 promotion_id=item.promotion_id,
                 preserve_unit_price=True,
                 unit_snapshot=item.unit_snapshot,
+                product_packaging_id=item.packaging_id,
+                packaging_version=item.packaging_version,
+                container_selections=tuple(item.container_selections.values_list('container_id', 'base_quantity')),
             )
             for item in quotation.items.all()
         ]
@@ -1794,6 +1869,9 @@ class BillingService:
                 promotion_id=item.promotion_id,
                 preserve_unit_price=True,
                 unit_snapshot=item.unit_snapshot,
+                product_packaging_id=item.packaging_id,
+                packaging_version=item.packaging_version,
+                container_selections=tuple(item.container_selections.values_list('container_id', 'base_quantity')),
             )
             for item in invoice.items.all()
         ]

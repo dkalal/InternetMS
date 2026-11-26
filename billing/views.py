@@ -671,6 +671,7 @@ def document_detail(request, doc_type: str, pk: int):
             "can_reissue_invoice": can_reissue_invoice,
             "can_create_credit_note": can_create_credit_note,
             "can_void_credit_note": can_void_credit_note,
+            "has_packaging_inventory_items": document.items.filter(unit_factor__isnull=False).exists(),
             "has_serialized_inventory_items": document.document_type == BillingDocument.DocumentType.INVOICE
             and document.items.filter(product__is_serialized=True).exists(),
             "has_inventory_items": document.items.filter(product__isnull=False).exists(),

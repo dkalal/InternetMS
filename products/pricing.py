@@ -46,15 +46,18 @@ def below_cost_message(*, product, net_unit_price: Decimal, actor=None, organiza
 
 
 def validate_net_unit_price(*, product, quantity, unit_price, line_discount=Decimal('0'),
-                            allocated_document_discount=Decimal('0'), actor=None, organization=None):
+                            allocated_document_discount=Decimal('0'), actor=None, organization=None, base_quantity=None):
     quantity = Decimal(quantity or 0)
     if quantity <= 0:
         raise BelowCostError('Sale quantity must be greater than zero.')
+    divisor = Decimal(base_quantity) if base_quantity is not None else quantity
+    if not divisor.is_finite() or divisor <= 0:
+        raise BelowCostError('Base quantity must be finite and greater than zero.')
     net = (
         quantity * Decimal(unit_price or 0)
         - Decimal(line_discount or 0)
         - Decimal(allocated_document_discount or 0)
-    ) / quantity
+    ) / divisor
     floor = cost_floor_for(product)
     if net <= floor:
         raise BelowCostError(below_cost_message(

@@ -94,6 +94,7 @@ def _cart_workspace(cart):
         _, line.pos_pricing_mode = CartService.line_pricing(
             product=line.product, quantity=line.quantity, customer=cart.customer,
             sale_pricing_category=cart.sale_pricing_category,
+            packaging=line.packaging, aggregate_base_quantity=sum((other.base_quantity or other.quantity for other in lines if other.product_id == line.product_id), Decimal('0')) if line.product.packaging_enabled else None,
         )
     subtotal = sum((line.line_total for line in lines), Decimal('0.00'))
     taxable_subtotal = sum(
@@ -1482,6 +1483,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
         unit_price, _ = CartService.line_pricing(
             product=form.cleaned_data['product'], quantity=form.cleaned_data['quantity'], customer=cart.customer,
             sale_pricing_category=cart.sale_pricing_category,
+            packaging=form.instance.packaging, aggregate_base_quantity=form.aggregate_base_quantity,
         )
         if form.cleaned_data['discount_amount'] > form.cleaned_data['quantity'] * unit_price:
             form.add_error('discount_amount', 'Discount cannot exceed the effective sale price.')
@@ -1504,7 +1506,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
                 'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
                 'title': 'Edit cart item' if line else 'Add cart item',
             })
-        except InventoryError as exc:
+        except (InventoryError, BillingServiceError) as exc:
             form.add_error('discount_amount', str(exc))
             return render(request, 'inventory/cart_line_form.html', {
                 'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
@@ -1569,7 +1571,7 @@ def cart_line_adjust(request, cart_pk):
 
     cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
     product = get_object_or_404(Product.objects.filter(tenant=organization, is_active=True), pk=product_id)
-    if product.is_serialized:
+    if product.is_serialized or (product.packaging_enabled and not request.POST.get('line_id')):
         target = reverse('inventory:cart_line_create', args=[cart.pk]) + f'?product={product.pk}'
         if _is_pos_request(request):
             return JsonResponse({'ok': False, 'message': 'Select serial numbers before adding this product.',
@@ -1577,7 +1579,8 @@ def cart_line_adjust(request, cart_pk):
         return redirect(target)
     try:
         cart = CartService.adjust_line(organization=organization, cart_id=cart.pk, product_id=product.pk,
-                                       direction=direction, actor=request.user, membership=request.membership)
+                                       direction=direction, actor=request.user, membership=request.membership,
+                                       **({'line_id': request.POST.get('line_id')} if product.packaging_enabled else {}))
     except (InventoryError, ValidationError) as exc:
         if _is_pos_request(request):
             return _pos_response(request, cart, message=str(exc), level='warning', status=422)
@@ -1993,3 +1996,48 @@ def settings_edit(request):
         'subtitle': 'Configure operational thresholds used by dashboard alerts and movement reports.',
         'cancel_url': 'inventory:dashboard', 'submit_label': 'Save settings',
     })
+
+
+@login_required
+def invoice_containers(request, pk):
+    from django import forms
+    from users.permissions import can_view_sales_document
+    from .packaging_sales import eligible_containers, selections_for, PackagingSelectionService
+    organization = _scope(request, PermissionCode.BILLING_CREATE)
+    document = get_object_or_404(BillingDocument.objects.filter(tenant=organization, organization=organization,
+        document_type='invoice', status__in=['draft', 'issued']), pk=pk)
+    if not can_view_sales_document(request.user, document, membership=request.membership):
+        raise PermissionDenied('Invoice unavailable.')
+    form = forms.Form(request.POST or None)
+    if document.status == 'draft':
+        form.fields['issue_invoice'] = forms.BooleanField(required=False, label='Issue this invoice after saving reviewed selections')
+    entries = []
+    total_choices = 0
+    review_too_large = False
+    for line in document.items.filter(unit_factor__isnull=False).select_related('product').order_by('pk'):
+        saved = dict(selections_for(line))
+        fields = []
+        for container in eligible_containers(organization=organization, line=line)[:2000]:
+            total_choices += 1
+            if total_choices > 2000:
+                review_too_large = True
+                break
+            name = f'line_{line.pk}_container_{container.pk}'
+            form.fields[name] = forms.DecimalField(required=False, min_value=0, max_value=container.remaining_quantity,
+                decimal_places=0, initial=saved.get(container.pk, 0), label=f'{container.label} / {container.get_state_display()} / {container.remaining_quantity:g}')
+            fields.append((container.pk, form[name]))
+        entries.append((line, fields))
+    if request.method == 'POST' and form.is_valid() and review_too_large:
+        form.add_error(None, 'This invoice exceeds the 2,000-piece review limit. Split it into smaller invoices.')
+    if request.method == 'POST' and form.is_valid():
+        selections = {line.pk: [(container_id, form.cleaned_data[field.name]) for container_id, field in fields
+            if form.cleaned_data.get(field.name)] for line, fields in entries}
+        try:
+            PackagingSelectionService.review_document(organization=organization, actor=request.user,
+                document_id=document.pk, selections=selections, membership=request.membership, issue=form.cleaned_data.get('issue_invoice', False))
+        except (ValidationError, BillingServiceError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, 'Physical selections saved. Cut or dispatch only after successful full payment.')
+            return redirect('billing:document_detail', doc_type='invoice', pk=pk)
+    return render(request, 'inventory/invoice_containers.html', {'document': document, 'form': form, 'entries': entries})

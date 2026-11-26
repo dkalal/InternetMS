@@ -115,6 +115,8 @@ class BillingLineItemForm(forms.ModelForm):
         description = (cleaned.get("description") or "").strip()
         unit_snapshot = (cleaned.get("unit_snapshot") or "Unit").strip()
         cleaned["unit_snapshot"] = unit_snapshot
+        if product and product.packaging_enabled:
+            self.add_error('product', 'Use the unit-aware sale cart for this product, then convert it to a quotation or invoice. Physical pieces must be reviewed before payment.')
         if product and package:
             raise forms.ValidationError("Select either a product or a package (not both).")
         if not product and not package and not description:

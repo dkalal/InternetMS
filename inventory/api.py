@@ -157,7 +157,7 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BillingLineItem
-        fields = ['id', 'sku', 'description', 'quantity', 'unit_price', 'discount_amount', 'line_total', 'serial_numbers']
+        fields = ['id', 'sku', 'description', 'quantity', 'unit_price', 'discount_amount', 'line_total', 'serial_numbers', 'unit_snapshot', 'packaging_id', 'unit_factor', 'base_quantity', 'packaging_version']
 
     def get_serial_numbers(self, obj):
         return list(obj.serial_selections.values_list('stock_unit__serial_number', flat=True))
@@ -172,7 +172,15 @@ class InvoiceSerializer(serializers.ModelSerializer):
         fields = ['id', 'number', 'customer_name', 'shipping_address_snapshot', 'sale_pricing_category', 'issue_date', 'status', 'currency', 'subtotal', 'discount_amount', 'tax_rate', 'tax_amount', 'total', 'items']
 
 
+class ContainerSelectionInputSerializer(serializers.Serializer):
+    container_id = serializers.IntegerField(min_value=1)
+    base_quantity = serializers.DecimalField(max_digits=16, decimal_places=6)
+
+
 class InvoiceItemInputSerializer(serializers.Serializer):
+    product_packaging_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    packaging_version = serializers.IntegerField(required=False, min_value=1)
+    container_selections = ContainerSelectionInputSerializer(many=True, required=False)
     product_id = serializers.IntegerField()
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2)
     discount_amount = serializers.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
@@ -241,8 +249,19 @@ class InvoiceCreateSerializer(serializers.Serializer):
                     sale_pricing_category=effective_category, quantity=item['quantity'],
                 ),
                 discount_amount=item['discount_amount'], pricing_mode=effective_category,
+                product_packaging_id=item.get('product_packaging_id'), packaging_version=item.get('packaging_version'),
+                container_selections=tuple((selection['container_id'], selection['base_quantity']) for selection in item.get('container_selections', [])),
             ))
             products.append((product, item.get('serial_numbers', [])))
+        if any(product.packaging_enabled for product, _ in products):
+            preview = BillingDocument(tenant=organization, organization=organization, customer=customer,
+                document_type='invoice', sale_pricing_category=sale_pricing_category)
+            try:
+                built = BillingService._build_line_items(organization=organization, document=preview, items=inputs)
+            except BillingServiceError as exc:
+                raise serializers.ValidationError({'items': str(exc)}) from exc
+            from dataclasses import replace
+            inputs = [replace(item, unit_price=line.unit_price) for item, line in zip(inputs, built)]
         requested_discount = validated_data['discount_amount'] + sum((item.discount_amount for item in inputs), Decimal('0.00'))
         subtotal = sum((item.quantity * item.unit_price for item in inputs), Decimal('0.00'))
         discount_error = discount_authorization_error(
