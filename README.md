@@ -4,6 +4,25 @@ Django SaaS application for tenant-scoped customer, service, inventory, billing,
 
 The codebase is a modular monolith: one Django deployment and database, with domain boundaries enforced by app-level services, tenant-aware querysets, role-based permissions, and audit logs.
 
+## Engineering showcase
+
+This project demonstrates multi-tenant authorization, transaction-safe inventory
+and billing, serialized stock tracking, immutable financial snapshots, technician
+assignment workflows, encrypted payout destinations and printable documents.
+Explore the [architecture](docs/architecture.md), [contribution guide](CONTRIBUTING.md)
+and [security policy](SECURITY.md). Automated PostgreSQL verification is defined in
+[GitHub Actions](.github/workflows/ci.yml).
+
+For interviews, demonstrate a synthetic tenant: create a product, receive stock,
+complete a sale, inspect the receipt and audit trail, then show a second user's
+restricted access. Explain the row locks and idempotency tests behind that flow.
+Use synthetic identities and screenshots; office customer data and live
+maintenance evidence are unsuitable for a public portfolio.
+
+The repository remains an evolving application, not a security certification.
+Demo hosting, approved screenshots, ownership/licensing decisions and a production
+deployment review are separate release tasks.
+
 ## Project Layout
 
 ```text
