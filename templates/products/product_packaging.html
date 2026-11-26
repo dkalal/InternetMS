@@ -1,0 +1,26 @@
+{% extends 'base.html' %}{% load static number_display %}
+{% block title %}Optional packaging / {{ product.name }}{% endblock %}
+{% block content %}<div class="jims-form-page space-y-5">
+<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:export_records' 'packaging' %}">Export packaging catalog</a>
+<h1 class="jims-page-title">Optional packaging / {{ product.name }}</h1>
+<p>Base unit: {{ product.get_measure_unit_display }}. Stock: {{ base_quantity|quantity_display }}. Packaging {% if product.packaging_enabled %}enabled{% else %}disabled{% endif %}. Configuration version {{ product.packaging_version }}.</p>
+<p>Existing quantities are base units. Activation maps counted physical pieces to the exact existing balance and value; it never multiplies stock. Resolve draft purchases, carts and open sales documents first.</p>
+<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:commercial_purchase_import' %}">Import commercial purchase draft</a>
+<a class="jims-btn jims-btn-secondary" href="{% url 'inventory:packaging_containers' product.pk %}">View physical containers</a>
+<section class="jims-form-section space-y-4 p-5"><h2 class="font-semibold">Add a package revision</h2>
+<p>Enter independent selling prices per package. Changing factor or unit creates a new revision. A price-only update below preserves the physical package identity.</p>
+<form method="post" class="space-y-3">{% csrf_token %}<input type="hidden" name="action" value="configure">{{ configuration.non_field_errors }}{% for field in configuration %}{% include 'components/form_field.html' with field=field %}{% endfor %}<button class="jims-btn jims-btn-primary">Add revision</button></form></section>
+{% for package, price_form in price_forms %}<section class="jims-form-section space-y-3 p-5"><h2 class="font-semibold">{{ package.unit.label }} / {{ package.factor|quantity_display }} {{ product.get_measure_unit_display }} / package reference {{ package.pk }} / revision {{ package.version }} / {% if package.is_active %}Active{% else %}Retired{% endif %}</h2>
+{% if package.is_active %}<form method="post" class="space-y-3">{% csrf_token %}<input type="hidden" name="action" value="prices"><input type="hidden" name="packaging_id" value="{{ package.pk }}">{{ price_form.non_field_errors }}{% for field in price_form %}{% include 'components/form_field.html' with field=field %}{% endfor %}<button class="jims-btn jims-btn-secondary">Save independent prices</button></form>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="retire"><input type="hidden" name="packaging_id" value="{{ package.pk }}"><button class="jims-btn jims-btn-danger">Retire revision</button></form>{% endif %}</section>{% endfor %}
+<section class="jims-form-section space-y-4 p-5"><h2 class="font-semibold">Count and reconcile activation</h2>
+{% if not workflow_ready %}<p role="status">Activation remains unavailable until all release gates pass.</p>{% endif %}
+<form method="post" class="space-y-4" data-counted-containers data-packaging-transport="counted">{% csrf_token %}{{ activation.non_field_errors }}{% for field in activation %}{% include 'components/form_field.html' with field=field %}{% endfor %}
+{% if not product.packaging_enabled %}
+{% if needs_balance_preparation %}<p>Existing legacy base stock needs explicit audited balance preparation first. Quantity and value stay unchanged.</p><button name="action" value="prepare" class="jims-btn jims-btn-secondary">Prepare existing base balance</button>{% endif %}
+<p>One row per distinct physical piece. Zero-stock activation needs no rows. Do not combine separate lengths.</p>
+{{ counted.management_form }}{{ counted.non_form_errors }}<div data-counted-rows>{% for row in counted %}<fieldset class="space-y-2 rounded border p-3" data-counted-row><legend>Physical piece {{ forloop.counter }}</legend>{{ row.non_field_errors }}{% for field in row %}{% include 'components/form_field.html' with field=field %}{% endfor %}</fieldset>{% endfor %}</div>
+<template data-counted-empty><fieldset class="space-y-2 rounded border p-3" data-counted-row><legend>Physical piece</legend>{% for field in counted.empty_form %}{% include 'components/form_field.html' with field=field %}{% endfor %}</fieldset></template>
+<button type="button" class="jims-btn jims-btn-secondary" data-counted-add>Add physical piece</button><button name="action" value="activate" class="jims-btn jims-btn-primary">Activate with exact physical count</button>
+{% else %}<p>Disabling requires zero stock, no positive physical remainder and no open transactions.</p><button name="action" value="disable" class="jims-btn jims-btn-danger">Disable packaging</button>{% endif %}
+</form></section></div><script src="{% static 'inventory/js/packaging-admin.js' %}" defer></script>{% endblock %}

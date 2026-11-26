@@ -1605,6 +1605,16 @@ class BillingService:
             updates["expired_at"] = now
 
         with transaction.atomic():
+            quotation = BillingDocument.objects.unscoped().select_for_update().get(pk=quotation.pk, tenant=organization)
+            locked_state = cls.get_quotation_action_state(organization=organization, quotation=quotation)
+            action_key = {BillingDocument.Status.SENT: 'can_send', BillingDocument.Status.ACCEPTED: 'can_accept',
+                BillingDocument.Status.REJECTED: 'can_reject', BillingDocument.Status.EXPIRED: 'can_expire'}[to_status]
+            if not locked_state[action_key]:
+                raise BillingServiceError('Quotation changed. Review its current state before continuing.')
+            old_snapshot = cls._document_snapshot(quotation)
+            if to_status in {BillingDocument.Status.REJECTED, BillingDocument.Status.EXPIRED}:
+                from inventory.models import ProvisionalContainerAllocation
+                ProvisionalContainerAllocation.objects.unscoped().filter(tenant=organization, billing_line__document=quotation).delete()
             BillingDocument.objects.filter(pk=quotation.pk).update(**updates)
             quotation.refresh_from_db()
             cls._log_action(
@@ -1728,6 +1738,8 @@ class BillingService:
 
         old_snapshot = cls._document_snapshot(invoice)
         with transaction.atomic():
+            from inventory.models import ProvisionalContainerAllocation
+            ProvisionalContainerAllocation.objects.unscoped().filter(tenant=organization, billing_line__document=invoice).delete()
             BillingDocument.objects.filter(pk=invoice.pk).update(
                 status=BillingDocument.Status.VOID,
                 voided_at=timezone.now(),

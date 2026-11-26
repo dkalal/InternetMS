@@ -5,6 +5,7 @@ from . import views
 app_name = "billing"
 
 urlpatterns = [
+    path("commercial-units/<int:pk>/", views.commercial_units, name="commercial_units"),
     path("promotions/", views.PromotionListView.as_view(), name="promotion_list"),
     path("promotions/create/", views.PromotionCreateView.as_view(), name="promotion_create"),
     path("promotions/<int:pk>/edit/", views.PromotionUpdateView.as_view(), name="promotion_update"),

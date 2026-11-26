@@ -587,6 +587,15 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
 
     def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD,
                  cart=None, membership=None, **kwargs):
+        from .packaging_transport import expand_fields
+        self.transport_error = None
+        try:
+            if args:
+                args = (expand_fields(args[0], 'container_payload'), *args[1:])
+            elif 'data' in kwargs:
+                kwargs['data'] = expand_fields(kwargs['data'], 'container_payload')
+        except ValidationError as exc:
+            self.transport_error = str(exc)
         self.sale_pricing_category = sale_pricing_category
         self.cart = cart
         self.membership = membership
@@ -647,6 +656,11 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        if self.transport_error:
+            self.add_error(None, self.transport_error)
+        if self.is_bound and any(name.startswith('container_') and name != 'container_payload' and name not in self.fields
+                and self.data.get(name) not in ('', '0', '0.0', '0.00', '0.000000') for name in self.data):
+            self.add_error(None, 'A selected physical piece is unavailable in this product/tenant. Review selections.')
         product = cleaned.get('product')
         quantity = cleaned.get('quantity') or Decimal('0.00')
         discount = cleaned.get('discount_amount') or Decimal('0.00')

@@ -89,6 +89,8 @@ def cleanup_candidate(*, cart_id, now, apply=False):
     if cart.updated_at > now - timedelta(days=30):
         return 'skipped', 'nonempty_under_30_days'
     if apply:
+        from .models import ProvisionalContainerAllocation
+        ProvisionalContainerAllocation.objects.unscoped().filter(tenant=cart.tenant, cart_line__cart=cart).delete()
         cart.status = Cart.Status.ABANDONED
         cart.abandoned_at = now
         cart.abandoned_by = None

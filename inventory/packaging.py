@@ -94,6 +94,10 @@ class PackagingActivationService:
                 raise policy.PackagingError('Existing positive container balances require explicit review before activation.')
             rows = []
             total = Decimal('0')
+            package_ids = {policy.identifier(row['packaging_id'], label='Counted packaging') for row in containers
+                if isinstance(row, dict) and row.get('packaging_id') is not None}
+            packages = {package.pk: package for package in ProductPackaging.objects.unscoped().filter(
+                pk__in=package_ids, tenant=organization, product=product, is_active=True, unit__is_active=True, unit__tenant=organization)}
             for row in containers:
                 if not isinstance(row, dict) or set(row) - {'quantity', 'packaging_id', 'sealed', 'supplier_identifier', 'expiry_date'}:
                     raise policy.PackagingError('Use quantity, packaging_id, sealed and optional supplier identifier for each count.')
@@ -103,8 +107,7 @@ class PackagingActivationService:
                     raise policy.PackagingError('A container sealed state must be a boolean.')
                 package = None
                 if row.get('packaging_id') is not None:
-                    package = ProductPackaging.objects.unscoped().filter(
-                        pk=policy.identifier(row['packaging_id'], label='Counted packaging'), tenant=organization, product=product, is_active=True).first()
+                    package = packages.get(policy.identifier(row['packaging_id'], label='Counted packaging'))
                     if package is None:
                         raise PermissionDenied('Counted packaging is unavailable for this tenant/product.')
                 if sealed and (package is None or amount != package.factor):
@@ -146,3 +149,35 @@ class PackagingActivationService:
               new_value={'product_id': product.pk, 'enabled': enabled, 'base_quantity': str(quantity), 'container_count': len(rows)},
               metadata={'request_key': str(request_key), 'reason': reason, 'quantity_changed': False, 'value_changed': False})
         return event
+
+
+@transaction.atomic
+def prepare_existing_balance(*, organization, actor, product_id, expected_quantity, expected_average_cost, reason, support_session=None):
+    """Explicit audited initialization of existing base stock, never package multiplication."""
+    policy.authorize(organization=organization, actor=actor, stock=True, support_session=support_session)
+    product = policy.locked_product(organization=organization, product_id=product_id)
+    reason = str(reason or '').strip()
+    if product.packaging_enabled or not reason or len(reason) > 500:
+        raise policy.PackagingError('Prepare an inactive packaging workflow with a reconciliation reason.')
+    expected_quantity = policy.whole_quantity(expected_quantity, allow_zero=True)
+    try:
+        expected_average_cost = Decimal(str(expected_average_cost))
+    except (ValueError, InvalidOperation):
+        raise policy.PackagingError('Supply the current acquisition cost.')
+    if not expected_average_cost.is_finite():
+        raise policy.PackagingError('Supply the current acquisition cost.')
+    balance = InventoryBalance.objects.unscoped().select_for_update().filter(product=product).first()
+    quantity = balance.quantity if balance else Decimal(product.quantity)
+    average = balance.average_cost if balance else Decimal(product.buying_price)
+    if quantity != expected_quantity or average != expected_average_cost or Decimal(product.stock) != quantity:
+        raise policy.PackagingError('Base stock or cost changed. Recount and review before preparation.')
+    if balance is not None:
+        if balance.tenant_id != organization.pk or balance.organization_id != organization.pk:
+            raise PermissionDenied('Inventory balance unavailable in this tenant.')
+        return balance
+    from .services import InventoryService, audit
+    _, balance = InventoryService._locked_product_and_balance(organization=organization, product_id=product.pk)
+    audit(organization=organization, actor=actor, action='inventory.packaging.base_balance_prepared', obj=product,
+        new_value={'base_quantity': str(quantity), 'average_cost': str(average)},
+        metadata={'reason': reason, 'quantity_changed': False, 'value_changed': False})
+    return balance

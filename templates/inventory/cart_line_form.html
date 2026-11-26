@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %}{% load static %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -13,7 +13,7 @@
     <a href="{% if cart.pk %}{% url 'inventory:cart_detail' cart.pk %}{% else %}{% url 'inventory:cart_workspace' workspace_token %}{% endif %}" class="jims-btn jims-btn-secondary">Back to sale</a>
   </header>
 
-  <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form>
+  <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form data-packaging-transport="cart">
     {% csrf_token %}
     {% if workspace_token %}<input type="hidden" name="workspace_action" value="line">{% endif %}
     {% if form.non_field_errors %}
@@ -88,4 +88,4 @@
     </section>
   {% endif %}
 </div>
-{% endblock %}
+<script src="{% static 'inventory/js/packaging-admin.js' %}" defer></script>{% endblock %}

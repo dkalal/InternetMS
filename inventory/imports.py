@@ -195,6 +195,8 @@ def _validate_row(*, organization, import_type, raw, errors):
         product = Product.objects.unscoped().filter(tenant=organization, sku__iexact=sku).first()
         if product is None:
             errors.append('sku was not found in this tenant.')
+        elif product.packaging_enabled:
+            errors.append('Use counted activation or a commercial purchase for packaging stock; this legacy opening template cannot create physical pieces.')
         elif not product.track_stock or product.item_type == Product.ItemType.SERVICE:
             errors.append('sku is not stock tracked.')
         quantity = _decimal(raw['quantity'], 'quantity', errors)

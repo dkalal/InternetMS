@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block title %}Import commercial purchases{% endblock %}
+{% block content %}<div class="jims-form-page jims-form-page--compact space-y-5"><h1 class="jims-page-title">Import commercial purchase draft</h1>
+<p>For existing packaging-enabled products only. Quantities and costs refer to the selected commercial unit. The server resolves conversion factors. No stock changes until authorized receiving.</p>
+<a class="jims-btn jims-btn-secondary" href="?template=1">Download commercial purchase template</a>
+<form method="post" enctype="multipart/form-data" class="jims-form-section space-y-4 p-5">{% csrf_token %}{{ form.non_field_errors }}{% for field in form %}{% include 'components/form_field.html' with field=field %}{% endfor %}<button class="jims-btn jims-btn-primary">Validate and create review draft</button></form></div>{% endblock %}

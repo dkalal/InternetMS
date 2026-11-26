@@ -287,7 +287,7 @@ Phase checklist (unchecked means not delivered):
 - [x] Phase 1 gated foundation, migrations, activation and isolation tests; [PR #6](https://github.com/dkalal/InternetMS/pull/6) targets Phase 0.
   Evidence: [Phase 1 verification](product_packaging_phase1.md).
 - [x] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; [PR #7](https://github.com/dkalal/InternetMS/pull/7) targets Phase 1. Final local full suite: 866 passed; both CI runs passed.
-- [ ] Phase 3 all sales paths, concurrency, historical print and browser tests; PR targets Phase 2.
+- [x] Phase 3 sales paths and explicit legacy HTML rejection, concurrency, historical snapshots and browser tests; [PR #8](https://github.com/dkalal/InternetMS/pull/8) targets Phase 2. CI: 878 full tests, 6 browser tests. Evidence: [Phase 3](product_packaging_phase3.md).
 - [ ] Phase 4 returns/wastage/reports/maintenance and rollout runbook; PR targets Phase 3.
 
 Every phase records exact tested SHA, commands/results, schema status, dependency

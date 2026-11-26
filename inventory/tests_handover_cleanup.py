@@ -64,6 +64,33 @@ class HandoverCleanupTests(TransactionTestCase):
         options.update(kwargs)
         return cleanup.apply_plan(**options)
 
+    def test_physical_correction_dependencies_are_not_implicitly_cleanup_approved(self):
+        from products.packaging import PackagingService
+        from inventory.packaging import PackagingActivationService
+        from inventory.packaging_corrections import ContainerCorrectionService
+        from inventory.models import ContainerStockEvent, StockContainer
+        from uuid import uuid4
+        self.product = Product.objects.create(tenant=self.tenant, organization=self.tenant, sku='PHYSICAL-PACK',
+            name='Synthetic physical package', sales_unit=self.unit, quantity=0, stock=0, buying_price=10, selling_price=20, track_stock=True)
+        unit = UnitOfMeasure.objects.create(tenant=self.tenant, organization=self.tenant, name='Test carton', symbol='Carton')
+        package = PackagingService.configure(organization=self.tenant, actor=self.actor, product_id=self.product.pk,
+            unit_id=unit.pk, factor='10', prices={'standard_price': '200'}, support_session=self.support)
+        Product.objects.unscoped().filter(pk=self.product.pk).update(quantity=10, stock=10)
+        InventoryBalance.objects.create(tenant=self.tenant, organization=self.tenant, product=self.product, quantity=10, average_cost=10)
+        self.product.refresh_from_db()
+        PackagingActivationService.change(organization=self.tenant, actor=self.actor, product_id=self.product.pk, enabled=True,
+            request_key=str(uuid4()), reason='Explicit synthetic physical count', expected_quantity='10', expected_average_cost='10',
+            expected_version=self.product.packaging_version, containers=[{'quantity': '10', 'packaging_id': package.pk, 'sealed': True}],
+            support_session=self.support)
+        event = ContainerCorrectionService.waste(organization=self.tenant, actor=self.actor,
+            container_id=StockContainer.objects.unscoped().get(product=self.product).pk, quantity='1', request_key=str(uuid4()),
+            reason='Measured synthetic damage', support_session=self.support)
+        plan = self.plan()
+        self.assertTrue(any(blocker['model'] == 'inventory.containerstockevent' for blocker in plan['payload']['blockers']))
+        self.assertTrue(ContainerStockEvent.objects.unscoped().filter(pk=event.pk).exists())
+        with self.assertRaises(cleanup.CleanupError):
+            self.plan({'inventory.containerstockevent': [event.pk]})
+
     def test_plan_is_strictly_read_only_and_command_outputs_exact_ids(self):
         with CaptureQueriesContext(connection) as queries:
             plan = self.plan()

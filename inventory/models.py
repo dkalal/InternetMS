@@ -616,4 +616,4 @@ class HistoricalInventoryRecord(TenantModel):
         super().save(*args, **kwargs)
 
 
-from .packaging_models import (PackagingActivation, StockContainer, ContainerAllocation, ProvisionalContainerAllocation)  # noqa: E402,F401
+from .packaging_models import (ContainerStockEvent, PackagingActivation, StockContainer, ContainerAllocation, ProvisionalContainerAllocation)  # noqa: E402,F401

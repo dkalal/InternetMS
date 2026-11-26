@@ -153,7 +153,8 @@ class PackagingFoundationTests(PackagingFixture, TestCase):
 
     def test_activation_gate_is_closed_even_when_setting_is_supplied(self):
         self.configure()
-        with self.settings(PACKAGING_WORKFLOWS_READY=True), self.assertRaisesMessage(ValidationError, 'unavailable until'):
+        # A deployment setting must never bypass a closed code capability.
+        with patch('products.packaging.workflows_ready', return_value=False), self.settings(PACKAGING_WORKFLOWS_READY=True), self.assertRaisesMessage(ValidationError, 'unavailable until'):
             self.change()
         self.assertEqual(PackagingActivation.objects.count(), 0)
         self.assertEqual(StockContainer.objects.count(), 0)

@@ -170,3 +170,8 @@ Inventory report selection, date boundaries, purchase totals, stock valuation,
 export and currency semantics follow [the inventory reports contract](inventory_reports_audit_2026-10-24.md).
 
 Search scope, valuation provenance, historical loss review and the reporting workspace follow [the reporting follow-up contract](inventory_reports_followup_2026-10-24.md).
+
+
+### Completed optional packaging extension
+
+[Phase 4](product_packaging_phase4.md) provides explicit product configuration/count mapping, independent commercial prices, unit-aware cart/API sales, payment-time physical allocation, separate physical return/wastage and base/container reporting. Existing products remain disabled until audited activation. Legacy direct billing HTML directs opted-in products to the unit-aware cart; legacy import templates reject opted-in stock entries and the explicit commercial workbook creates stock-neutral drafts. Commercial snapshots never redefine base stock units or legacy columns. [Rollout and rollback](product_packaging_rollout.md) requires separate production authorization and verified private backup/restore evidence.
