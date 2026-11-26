@@ -54,6 +54,12 @@ Report commands, exact outcomes, files changed, migration status, security impac
 
 ## Current purchasing contract
 
+The user-approved optional packaging extension is governed by
+`docs/product_packaging_contract.md`. Its phased implementation may replace the
+deferral only for explicitly activated products after server-side gates pass.
+Legacy package fields remain preservation-only; existing products retain the
+same-unit behavior below by default.
+
 - Each product has one selected sales/stock unit.
 - Purchase quantity, purchase unit cost, inventory balance, and selling prices refer to that same unit.
 - Purchase-package conversion is intentionally deferred and must not be exposed through forms, APIs, imports, or new transaction services.
