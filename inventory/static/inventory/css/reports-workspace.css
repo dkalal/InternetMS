@@ -52,6 +52,31 @@
 .report-empty {padding:2rem 1.25rem;text-align:center}
 .report-empty h3 {font-size:.9rem;color:#334155;font-weight:650}
 .report-empty p {max-width:36rem;margin:.6rem auto 1rem;font-size:.8rem;color:#64748b;line-height:1.7}
+.customer-package-report-shell {display:block}
+.customer-package-report-shell .report-sidebar {position:static;top:auto;border:0;padding:0;margin:0 0 .25rem}
+.customer-package-report-shell .report-navigation {display:flex;align-items:center;gap:.5rem}
+.customer-package-report-shell .report-nav-group {display:flex;align-items:center;gap:.5rem;min-width:0}
+.customer-package-report-shell .report-nav-heading {margin:0;white-space:nowrap}
+.customer-package-report-shell .report-navigation a {padding:.35rem .6rem}
 @media(max-width:1100px) {.report-shell{grid-template-columns:9.5rem minmax(0,1fr);gap:1rem}.report-filters form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:767px) {.report-shell{display:block;margin-top:1rem}.report-sidebar{display:none}.report-mobile-navigation{display:block}.report-mobile-navigation .report-navigation{margin-top:1rem}.report-navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.report-nav-group+.report-nav-group{margin-top:0}.report-header{align-items:center}.report-export{padding:.5rem .75rem;font-size:.75rem}.report-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.report-kpi-value{font-size:1.25rem}.report-content{gap:.85rem}.report-results-header{align-items:start;flex-direction:column;gap:.25rem}}
 @media(max-width:480px) {.report-filters form{grid-template-columns:1fr}.report-search{grid-column:auto}.report-kpis{grid-template-columns:1fr}.report-header{align-items:start}.report-filter-actions .jims-btn-primary{flex:1}.report-navigation{grid-template-columns:1fr}}
+
+/* Keep the customer report's full filter set on one compact desktop row. */
+@media(min-width:901px) {
+  .package-change-filters form {
+    grid-template-columns:minmax(0,2fr) minmax(7rem,.9fr) minmax(7rem,.9fr) minmax(9rem,1.2fr) auto;
+    gap:.65rem .75rem;
+    align-items:end;
+  }
+  .package-change-filters .report-search {grid-column:auto}
+  .package-change-filters .report-filter-actions {white-space:nowrap}
+}
+@media(max-width:900px) {
+  .package-change-filters form {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .package-change-filters .report-search {grid-column:span 2}
+}
+@media(max-width:480px) {
+  .package-change-filters form {grid-template-columns:1fr}
+  .package-change-filters .report-search {grid-column:auto}
+}

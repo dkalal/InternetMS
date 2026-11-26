@@ -23,7 +23,7 @@ def workspace_home(request):
 
     # Technician work is intentionally isolated from the commercial workspace.
     if membership.base_role == TenantMembership.BaseRole.TECHNICIAN:
-        return redirect("work_reports:list")
+        return redirect("work_reports:assignment_list")
 
     documents = sales_document_queryset_for(
         request.user, tenant, membership=membership,

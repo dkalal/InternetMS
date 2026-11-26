@@ -322,6 +322,10 @@ class CartLifecycleTests(CartFixture, TestCase):
         session.save()
         response = self.client.post(url)
         self.assertEqual(response.status_code,302)
+        self.assertFalse(Cart.objects.unscoped().filter(created_by=support_user).exists())
+        saved = self.client.post(response.url, {'notes':'Authorized support test', 'sale_pricing_category':'customer_tier',
+                                               'discount_amount':'0', 'tax_rate':'0'})
+        self.assertEqual(saved.status_code,302)
         cart = Cart.objects.unscoped().get(created_by=support_user)
         self.assertEqual(cart.tenant,self.org)
         self.client.post(reverse('inventory:cart_abandon',args=[cart.pk]))

@@ -2,13 +2,13 @@
 {% load static humanize number_display %}
 {% block title %}{{ workspace_title }}{% endblock %}
 {% block body_class %}jims-purchase-workspace{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/purchase-workspace.css' %}">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/purchase-workspace.css' %}"><link rel="stylesheet" href="{% static 'inventory/css/entry-tables.css' %}">{% endblock %}
 {% block content %}
 <noscript><div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="alert"><strong>JavaScript is required for product search.</strong> Enable JavaScript to add or change purchase products safely. Existing draft data remains unchanged.</div></noscript>
 {% include "inventory/includes/module_nav.html" %}
 {{ product_meta|json_script:"purchase-product-meta" }}
 
-<div data-purchase-workspace>
+<div class="jims-entry-workspace" data-purchase-workspace>
   <form method="post" class="purchase-workspace-form" data-unsaved-form data-submit-lock data-serial-validation-url="{% url 'inventory:serial_check' %}" data-serial-mode="purchase" data-product-search-url="{{ product_search_url }}" data-purchase-rows-preview-url="{{ purchase_rows_preview_url }}" data-can-create-import-product="{{ can_create_import_product|yesno:'true,false' }}" data-supplier-quick-create-url="{{ supplier_quick_create_url }}" data-product-quick-create-url="{{ product_quick_create_url }}" data-category-quick-create-url="{{ category_quick_create_url }}">
     {% csrf_token %}{{ form.auto_generated_reference }}
     <input type="hidden" name="import_token" value="{{ import_token }}">
@@ -65,7 +65,7 @@
           {{ formset.management_form }}
           {% if formset.non_form_errors %}<div class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">{{ formset.non_form_errors }}</div>{% endif %}
           <div class="purchase-grid">
-            <div class="purchase-grid-heading" aria-hidden="true"><span>#</span><span>Product</span><span>Quantity</span><span>Unit</span><span>Unit cost (TZS)</span><span>Amount (TZS)</span><span>Details</span><span></span></div>
+            <div class="purchase-grid-heading" aria-hidden="true"><span>#</span><span>Product</span><span>Quantity</span><span>Unit</span><span>Unit cost (TZS)</span><span>Standard selling (TZS)</span><span>Amount (TZS)</span><span>Details</span><span></span></div>
             <div data-purchase-formset>
               {% for line_form in formset %}{% include "inventory/includes/purchase_grid_line.html" with line_form=line_form line_number=forloop.counter %}{% endfor %}
             </div>

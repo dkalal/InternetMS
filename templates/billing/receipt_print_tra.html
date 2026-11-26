@@ -37,21 +37,21 @@
     <div class="small" style="margin-bottom:3px;">Invoice: {{ source_invoice.number }}</div>
     {% comment %} <div class="small" style="margin-bottom:3px;">Item values reference the invoice; this receipt records the amount received below.</div> {% endcomment %}
   {% endif %}
-  <table class="items">
-    <thead><tr><th class="desc">Description</th><th class="qty">Qty / Unit</th><th class="amt">Amount</th></tr></thead>
+  <table class="items receipt-items">
+    <thead><tr><th class="desc">Description</th><th class="qty">Qty / Unit</th><th scope="col" class="discount">Discount</th><th class="amt">Amount</th></tr></thead>
     <tbody>
       {% for item in items %}
         <tr>
           <td class="desc">
             {% if item.description %}{{ item.description }}{% elif item.package %}{{ item.package.name }}{% elif item.product %}{{ item.product.name }}{% else %}Item {{ forloop.counter }}{% endif %}
             <div class="small">Unit price: {{ item.unit_price|money_display:document.currency }}</div>
-            {% if item.discount_amount %}<div class="small">Item discount: -{{ item.discount_amount|money_display:document.currency }}</div>{% endif %}
           </td>
           <td class="qty">{{ item.quantity|quantity_display }}{% if item.unit_snapshot %} {{ item.unit_snapshot }}{% endif %}</td>
+          <td class="discount">{% if item.discount_amount %}-{% endif %}{{ item.discount_amount|money_display:document.currency }}</td>
           <td class="amt">{{ item.line_total|money_display:document.currency }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="3">Payment for {% if source_invoice %}invoice {{ source_invoice.number }}{% else %}this receipt{% endif %}</td></tr>
+        <tr><td colspan="4">Payment for {% if source_invoice %}invoice {{ source_invoice.number }}{% else %}this receipt{% endif %}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -62,14 +62,20 @@
     <tr><td class="label">Discount</td><td class="value">{% if receipt_amounts.discount %}-{% endif %}{{ receipt_amounts.discount|money_display:document.currency }}</td></tr>
     <tr><td class="label">VAT ({{ receipt_amounts.tax_rate|number_display:2 }}%)</td><td class="value">{{ receipt_amounts.tax|money_display:document.currency }}</td></tr>
     <tr><td class="label total-strong">{% if receipt_amounts.payment_differs_from_total %}INVOICE TOTAL{% else %}TOTAL{% endif %}</td><td class="value total-strong">{{ document.currency|upper }} {{ receipt_amounts.total|money_display:document.currency }}</td></tr>
+    {% if receipt_amounts.cash_received is not None %}
+    <tr class="cash-tender-row"><td class="label" style="padding:0;font-size:9px;color:#444;">Cash received</td><td class="value" style="padding:0;font-size:9px;color:#444;">{{ document.currency|upper }} {{ receipt_amounts.cash_received|money_display:document.currency }}</td></tr>
+    <tr class="cash-tender-row"><td class="label" style="padding:0;font-size:9px;color:#444;">Change</td><td class="value" style="padding:0;font-size:9px;color:#444;">{{ document.currency|upper }} {{ receipt_amounts.change_due|money_display:document.currency }}</td></tr>
+    {% endif %}
   </table>
   {% if receipt_amounts.payment_differs_from_total %}<p class="small">The totals above describe the invoice. This receipt records only the payment received below.</p>{% endif %}
+  {% if receipt_amounts.payment_differs_from_total %}
   <table class="totals" aria-label="Payment received" style="margin-top:5px;">
     <tr>
-      <td class="label total-strong" style="font-size:12px;">AMOUNT RECEIVED</td>
+      <td class="label total-strong" style="font-size:12px;">TOTAL AMOUNT RECEIVED</td>
       <td class="value total-strong" style="font-size:12px;white-space:nowrap;">{{ document.currency|upper }} {{ receipt_amounts.amount_received|money_display:document.currency }}</td>
     </tr>
   </table>
+  {% endif %}
 
   <div class="sep"></div>
   <table class="kvs">

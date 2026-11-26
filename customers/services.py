@@ -150,6 +150,7 @@ class InternetServiceDomainService:
         effective_date: date, reason: str,
     ):
         from billing.models import CustomerSubscription
+        from .reporting import package_snapshot
 
         cls._require_update_permission(organization=organization, actor=actor)
         reason = (reason or "").strip()
@@ -176,6 +177,7 @@ class InternetServiceDomainService:
             if effective_date <= current.start_date:
                 raise CustomerServiceError("Package change date must be after the current subscription start date.")
             old_package_id = current.package_id
+            old_snapshot = package_snapshot(service=service, subscription=current)
             CustomerSubscription.objects.filter(pk=current.pk).update(
                 status=CustomerSubscription.Status.CANCELLED,
                 end_date=effective_date - timedelta(days=1),
@@ -186,6 +188,7 @@ class InternetServiceDomainService:
                 status=CustomerSubscription.Status.ACTIVE, start_date=effective_date,
                 billing_day=current.billing_day, monthly_fee_at_signup=package.monthly_fee,
             )
+            new_snapshot = package_snapshot(service=service, subscription=replacement)
             service.site.packages.add(package)
             if service.site.is_primary:
                 service.customer.packages.add(package)
@@ -198,9 +201,13 @@ class InternetServiceDomainService:
                     service.customer.packages.remove(old_package_id)
             cls._audit(
                 organization=organization, actor=actor, action="internet_service.package_changed", service=service,
-                old_value={"subscription_id": current.id, "package_id": old_package_id},
-                new_value={"subscription_id": replacement.id, "package_id": package.id},
-                metadata={"effective_date": effective_date.isoformat(), "reason": reason},
+                old_value={"subscription_id": current.id, "package_id": old_package_id, "snapshot": old_snapshot},
+                new_value={"subscription_id": replacement.id, "package_id": package.id, "snapshot": new_snapshot},
+                metadata={
+                    "effective_date": effective_date.isoformat(),
+                    "reason": reason,
+                    "snapshot_version": 1,
+                },
             )
             return replacement
 

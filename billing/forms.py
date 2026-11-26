@@ -190,10 +190,19 @@ class ReceiptCreateForm(forms.Form):
     payment_reference = forms.CharField(max_length=80, required=False, help_text="Optional transaction reference / idempotency key.")
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
 
-    def __init__(self, *args, organization=None, invoice=None, **kwargs):
+    def __init__(self, *args, organization=None, invoice=None, subscription_description=None, **kwargs):
         self.organization = organization
         self.invoice = invoice
+        self.subscription_description_enabled = subscription_description is not None
         super().__init__(*args, **kwargs)
+        if self.subscription_description_enabled:
+            self.fields["subscription_description"] = forms.CharField(
+                max_length=500,
+                initial=subscription_description,
+                label="Subscription package description",
+                help_text="Edit the service dates or description for this receipt only. The source invoice remains unchanged.",
+                widget=forms.Textarea(attrs={"rows": 3, "maxlength": 500}),
+            )
         self.requires_full_payment = False
         self.remaining_balance = None
         if invoice is not None and organization is not None:
@@ -209,6 +218,12 @@ class ReceiptCreateForm(forms.Form):
                 "Inventory invoices require one complete payment. Enter the full outstanding balance."
             )
         apply_tailwind(self)
+
+    def clean_subscription_description(self):
+        description = (self.cleaned_data.get("subscription_description") or "").strip()
+        if self.subscription_description_enabled and not description:
+            raise forms.ValidationError("Enter a description for this subscription receipt.")
+        return description
 
     def clean(self):
         cleaned = super().clean()

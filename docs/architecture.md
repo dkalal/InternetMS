@@ -41,6 +41,9 @@ historical compatibility, retries, entry points and deployment/backfill steps.
 
 `billing` owns billing documents, billing line items, numbering, printable templates, receipts, and PDF-related behavior.
 
+Cart-to-receipt financial snapshots, draft line/serial identity and serialized
+quotation conversion follow the [document flow contract](document_flow_audit_2026-11-04.md).
+
 `audit` owns append-only audit records and audit metadata.
 
 `inventory` owns suppliers, purchases, balances, stock movements, serialized units, carts, imports, and inventory reports.
@@ -50,6 +53,11 @@ historical compatibility, retries, entry points and deployment/backfill steps.
 `messaging` owns message templates, previews, and delivery workflows.
 
 `work_reports` owns technician work reports, approval transitions, manual Technician payment acknowledgements, and immutable report/payment history. It does not own billing, payroll, accounting, or money movement.
+
+`work_reports` also owns self-managed Technician payout destination accounts for
+manual bank-transfer acknowledgements. Full account numbers are encrypted with
+a separate rotatable secret key ring; payment history stores only bank name and
+last four digits. The destination selection is not a transfer integration.
 
 `templates` owns shared templates and cross-app UI fragments.
 
@@ -72,6 +80,18 @@ Keep migrations committed with their app. Never edit old migrations after they h
 Treat tenant identity as server-established state. Do not filter tenant-owned data using a tenant ID accepted directly from request data. Require an active membership, use tenant-scoped managers/querysets, and test cross-tenant denial paths.
 
 Permission codes in `users.permissions` are the stable authorization contract. Views and services should fail closed with `require_permission`; templates may hide unavailable actions, but UI visibility is never an authorization boundary.
+
+Sales members retain ownership-scoped access to quotations and draft invoices.
+For debt collection, members with the baseline payment-recording permission can
+view tenant-scoped invoices they created or are responsible for, plus non-draft
+invoices created by an Administrator / Manager and their receipts. They can
+record payments on eligible invoices through the existing atomic billing
+service. This collection scope does not grant access to other sales members'
+invoices, drafts owned by other members, quotations, tenant-wide finance
+reports, reversals, or cross-tenant documents.
+The customer detail billing timeline and subscription periods use this same
+document scope, so collection access remains consistent across the worklist and
+customer account page.
 
 Invitation and password pages render through a standalone account-access layout, independent of any authenticated workspace shell. When a browser already has a different signed-in account, invitation acceptance requires an explicit POST sign-out in that browser before password setup; sessions on other devices remain independent. New invitees sign in with their own credentials after setup, and tenant membership permissions are enforced on every protected request.
 
@@ -101,6 +121,7 @@ Use environment variables for secrets and host configuration:
 
 ```text
 DJANGO_SECRET_KEY
+TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS
 DJANGO_DEBUG
 DJANGO_ALLOWED_HOSTS
 EMAIL_HOST_USER

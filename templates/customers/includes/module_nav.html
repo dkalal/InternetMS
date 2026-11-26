@@ -1,0 +1,14 @@
+<nav class="jims-module-nav" aria-label="Customer sections">
+  <div class="jims-module-nav__scroller" role="region" tabindex="0" aria-label="Customer section links">
+    <div class="jims-module-nav__track">
+      <a class="jims-module-link" href="{% url 'customer-list' %}" {% if request.resolver_match.url_name == "customer-list" %}aria-current="page"{% endif %}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20m9.5-12.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.5 2a3 3 0 0 1 0 5.8M19.5 20v-1.5a3.5 3.5 0 0 0-2-3.16"/></svg><span>Customers</span>
+      </a>
+      {% if "customers.package_changes_report.view" in ACTIVE_PERMISSIONS %}
+        <a class="jims-module-link" href="{% url 'package-change-report' %}" {% if "report" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20V4h2v14h15v2H4Zm4-4v-5h3v5H8Zm5 0V7h3v9h-3Zm5 0V3h3v13h-3Z"/></svg><span>Reports</span>
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</nav>

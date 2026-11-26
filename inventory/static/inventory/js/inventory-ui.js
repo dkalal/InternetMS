@@ -331,7 +331,8 @@
                 base_unit: result.unit || "Unit",
                 serialized: Boolean(result.serialized),
                 expiry: Boolean(result.expiry),
-                buying_price: result.buying_price
+                buying_price: result.buying_price,
+                selling_price: result.selling_price
               };
               input.value = result.name || result.text;
               closeList();
@@ -418,7 +419,10 @@
         var unitCost = line.querySelector("input[name$='-unit_cost']");
         var priceHint = line.querySelector("[data-buying-price-hint]");
         if (priceHint) priceHint.textContent = meta && meta.buying_price != null
-          ? 'Buying: TZS ' + formatPurchaseCost(meta.buying_price) + ' / ' + meta.base_unit + ' (editable)' : '';
+          ? 'Buying: TZS ' + formatPurchaseCost(meta.buying_price) + ' / ' + meta.base_unit + ' ' : '';
+        var sellingHint = line.querySelector("[data-selling-price-hint]");
+        if (sellingHint) sellingHint.textContent = meta && meta.selling_price != null
+          ? 'per ' + (meta.base_unit || 'unit') : '';
         var total = line.querySelector("[data-line-total]");
         if (total) total.textContent = product && product.value
           ? tzsDisplayFormatter.format(number(quantity && quantity.value) * number(unitCost && unitCost.value)) : '—';
@@ -489,6 +493,12 @@
         // Only an explicit product selection supplies a default. Loading a draft,
         // validation rerender, and edits to quantity/cost preserve entered values.
         if (cost) cost.value = meta && meta.buying_price != null ? formatPurchaseCost(meta.buying_price) : "";
+        var sellingPrice = line.querySelector("input[name$='-standard_selling_price']");
+        var sellingHint = line.querySelector("[data-selling-price-hint]");
+        if (sellingPrice) sellingPrice.value = meta && meta.selling_price != null
+          ? formatPurchaseCost(meta.selling_price) : '';
+        if (sellingHint) sellingHint.textContent = meta && meta.selling_price != null
+          ? 'per ' + (meta.base_unit || 'unit') : '';
       }
 
       function bindLine(line) {
@@ -542,7 +552,8 @@
             base_unit: result.unit || "Unit",
             serialized: Boolean(result.serialized),
             expiry: Boolean(result.expiry),
-            buying_price: result.buying_price
+            buying_price: result.buying_price,
+            selling_price: result.selling_price
           };
         }
         formset.appendChild(line);
@@ -838,11 +849,11 @@
     }
 
     var cart = document.querySelector("[data-cart-subtotal]");
-    if (cart && !document.querySelector("[data-pos]")) {
+    if (cart) {
       var discount = document.getElementById("id_discount_amount");
       var rate = document.getElementById("id_tax_rate");
 
-      function syncCartTotals() {
+      var syncCartTotals = function () {
         var subtotal = number(cart.dataset.cartSubtotal);
         var taxableSubtotal = number(cart.dataset.cartTaxableSubtotal);
         var discountValue = Math.min(Math.max(number(discount && discount.value), 0), subtotal);
@@ -854,7 +865,13 @@
         var rateOutput = document.querySelector("[data-live-tax-rate]");
         var taxOutput = document.querySelector("[data-live-tax]");
         var totalOutput = document.querySelector("[data-live-total]");
-        var paymentOutputs = document.querySelectorAll("[data-pos-payment-total]");
+        var paymentOutputs = document.querySelectorAll("[data-pos-payment-total], [data-pos-modal-total]");
+        var cashFields = document.querySelector("[data-pos-cash-fields]");
+        var cashReceived = document.querySelector("[data-pos-cash-received]");
+        var paymentMethod = document.getElementById("id_payment_method");
+        var changeWrap = document.querySelector("[data-pos-change-wrap]");
+        var changeLabel = document.querySelector("[data-pos-change-label]");
+        var changeDue = document.querySelector("[data-pos-change-due]");
         var total = taxable === 0 && taxableSubtotal === 0
           ? subtotal - discountValue
           : subtotal - discountValue + tax;
@@ -863,10 +880,32 @@
         if (taxOutput) taxOutput.textContent = tzsDisplayFormatter.format(tax);
         if (totalOutput) totalOutput.textContent = tzsDisplayFormatter.format(total);
         paymentOutputs.forEach(function (output) { output.textContent = tzsDisplayFormatter.format(total); });
-      }
+        var isCash = paymentMethod && paymentMethod.value === "cash";
+        if (cashFields) cashFields.hidden = !isCash;
+        if (changeWrap && cashReceived && isCash && cashReceived.value !== "") {
+          var difference = Math.round((number(cashReceived.value) - total) * 100) / 100;
+          changeWrap.hidden = false;
+          if (difference < 0) {
+            if (changeLabel) changeLabel.textContent = "Cash short by";
+            if (changeDue) changeDue.textContent = tzsDisplayFormatter.format(Math.abs(difference));
+          } else {
+            if (changeLabel) changeLabel.textContent = difference === 0 ? "No change due" : "Change to give";
+            if (changeDue) changeDue.textContent = tzsDisplayFormatter.format(difference);
+          }
+        } else if (changeWrap) {
+          changeWrap.hidden = true;
+        }
+      };
 
       if (discount) discount.addEventListener("input", syncCartTotals);
       if (rate) rate.addEventListener("input", syncCartTotals);
+      var cashReceivedInput = document.querySelector("[data-pos-cash-received]");
+      var paymentMethodInput = document.getElementById("id_payment_method");
+      if (cashReceivedInput) {
+        cashReceivedInput.addEventListener("input", syncCartTotals);
+        cashReceivedInput.addEventListener("change", syncCartTotals);
+      }
+      if (paymentMethodInput) paymentMethodInput.addEventListener("change", syncCartTotals);
       syncCartTotals();
     }
 
@@ -933,6 +972,7 @@
           var field = document.getElementById("id_" + modalFields[modalControl]);
           if (field && Object.prototype.hasOwnProperty.call(savedModalValues, modalControl)) field.value = savedModalValues[modalControl];
         }
+        if (cart) syncCartTotals();
         modal.hidden = true;
         document.body.classList.remove("pos-modal-open");
         modalControl = null;
@@ -1005,12 +1045,14 @@
         var taxOutput = pos.querySelector("[data-live-tax]");
         var totalOutput = pos.querySelector("[data-live-total]");
         var modalTotal = pos.querySelector("[data-pos-modal-total]");
+        var cashReceived = pos.querySelector("[data-pos-cash-auto='true']");
         if (subtotal) subtotal.textContent = formatter.format(number(data.subtotal));
         if (discountOutput) discountOutput.textContent = "-" + formatter.format(number(data.discount));
         if (rateOutput) rateOutput.textContent = formatter.format(number(data.tax_rate));
         if (taxOutput) taxOutput.textContent = formatter.format(number(data.tax));
         if (totalOutput) totalOutput.textContent = formatter.format(number(data.grand_total));
         if (modalTotal) modalTotal.textContent = formatter.format(number(data.grand_total));
+        if (cashReceived) cashReceived.value = number(data.grand_total).toFixed(2);
         pos.querySelectorAll("[data-pos-line-count], [data-pos-cart-count]").forEach(function (output) {
           output.textContent = data.line_count;
         });
@@ -1031,7 +1073,19 @@
             priceLabel.textContent = pricingLabels[line.pricing_mode] || "Transaction price";
           }
         });
+        syncCartTotals();
       }
+
+      var cashReceivedInput = document.querySelector("[data-pos-cash-received]");
+      if (cashReceivedInput) {
+        cashReceivedInput.addEventListener("input", function () {
+          cashReceivedInput.dataset.posCashAuto = "false";
+          syncCartTotals();
+        });
+        cashReceivedInput.addEventListener("change", syncCartTotals);
+      }
+      var paymentMethodInput = document.getElementById("id_payment_method");
+      if (paymentMethodInput) paymentMethodInput.addEventListener("change", syncCartTotals);
 
       var detailsForm = pos.querySelector("form[data-pos-details]");
       var detailsRequest;
@@ -1065,6 +1119,10 @@
         }).then(function (response) {
           return response.json().then(function (data) { return { response: response, data: data }; });
         }).then(function (result) {
+          if (result.data.redirect_url) {
+            window.location.assign(result.data.redirect_url);
+            return;
+          }
           if (!result.response.ok) {
             if (result.data.cart_html) updatePos(result.data);
             var firstInvalid;

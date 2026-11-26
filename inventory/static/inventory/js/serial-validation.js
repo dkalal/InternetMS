@@ -72,8 +72,16 @@
         var submitter = event.submitter;
         self.validate().then(function (valid) {
           if (!valid) { self.focusError(); return; }
-          self.resubmitting = true;
-          try { self.form.requestSubmit(submitter || undefined); } finally { self.resubmitting = false; }
+          // Even an async validation can resolve in the original submit event's
+          // microtask checkpoint (notably when there are no serials). Browsers
+          // ignore requestSubmit while that event is still being dispatched.
+          // Resume in a new task, retaining the clicked action and native checks.
+          var revision = self.revision;
+          setTimeout(function () {
+            if (revision !== self.revision) return;
+            self.resubmitting = true;
+            try { self.form.requestSubmit(submitter || undefined); } finally { self.resubmitting = false; }
+          }, 0);
         });
       }, true);
     }

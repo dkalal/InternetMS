@@ -2627,6 +2627,86 @@ class BillingDocumentEditorViewTests(TestCase):
         self.assertEqual(revised.subtotal, Decimal("500.00"))
         self.assertEqual(revised.items.get().description, "Revised quote")
 
+    def test_subscription_receipt_can_customize_description_without_editing_invoice(self):
+        package = Package.objects.create(
+            organization=self.org, name="Receipt Fiber", package_type="indoor",
+            speed="10 Mbps", monthly_fee=Decimal("50000.00"), setup_fee=Decimal("0.00"),
+            description="Monthly internet package", is_active=True,
+        )
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org,
+            customer=self.customer,
+            package=package,
+            start_date=date(2026, 10, 1),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org,
+            created_by=self.user,
+            subscription_id=subscription.pk,
+            period_start=date(2026, 10, 1),
+            months=1,
+        )
+        invoice_line = period.invoice.items.get(package=package)
+        original_description = invoice_line.description
+        url = reverse("billing:create_receipt_from_invoice", args=[period.invoice_id])
+
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["form"]["subscription_description"].value(), original_description)
+        self.assertContains(response, "Edit the service dates or description for this receipt only")
+
+        updated_description = "10 Mbps subscription - service period: 01 Oct 2026 - 31 Oct 2026 (customer requested extension)"
+        response = self.client.post(url, {
+            "amount_paid": str(period.invoice.total),
+            "payment_date": "2026-10-02",
+            "payment_method": "cash",
+            "payment_reference": "SUB-RECEIPT-DESC-1",
+            "notes": "",
+            "subscription_description": updated_description,
+        })
+        self.assertEqual(response.status_code, 302)
+        receipt = BillingDocument.objects.get(
+            organization=self.org,
+            document_type=BillingDocument.DocumentType.RECEIPT,
+            invoice=period.invoice,
+        )
+        self.assertEqual(receipt.items.get().description, updated_description)
+        invoice_line.refresh_from_db()
+        self.assertEqual(invoice_line.description, original_description)
+
+        print_response = self.client.get(reverse("billing:receipt_print", args=[receipt.pk]))
+        self.assertEqual(print_response.status_code, 200)
+        self.assertContains(print_response, updated_description)
+
+    def test_non_subscription_receipt_does_not_accept_subscription_description(self):
+        invoice = BillingService.create_document(
+            organization=self.org, created_by=self.user,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            customer_id=self.customer.pk, status=BillingDocument.Status.ISSUED,
+            tax_rate=Decimal("0.00"),
+            items=[LineItemInput(description="One-time installation", unit_price=Decimal("1000.00"))],
+        )
+        url = reverse("billing:create_receipt_from_invoice", args=[invoice.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("subscription_description", response.context["form"].fields)
+        with self.assertRaises(BillingServiceError):
+            BillingService.create_receipt_from_invoice(
+                organization=self.org, created_by=self.user, invoice_id=invoice.pk,
+                amount_paid=invoice.total, payment_method="cash",
+                subscription_description="Tampered package description",
+            )
+        self.assertFalse(BillingDocument.objects.filter(invoice=invoice, document_type=BillingDocument.DocumentType.RECEIPT).exists())
+
+        response = self.client.post(url, {
+            "amount_paid": str(invoice.total), "payment_date": "2026-10-02",
+            "payment_method": "cash", "payment_reference": "NON-SUB-RECEIPT-1",
+            "subscription_description": "Tampered package description",
+        })
+        self.assertEqual(response.status_code, 302)
+        receipt = BillingDocument.objects.get(invoice=invoice, document_type=BillingDocument.DocumentType.RECEIPT)
+        self.assertEqual(receipt.items.get().description, f"Payment for invoice {invoice.number}")
+
 
 class BillingListViewTests(TestCase):
     def setUp(self):

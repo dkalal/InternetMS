@@ -1,0 +1,54 @@
+/* Match the catalog creation spreadsheet without changing formset behavior. */
+.jims-entry-workspace { min-width: 0; max-width: 100%; }
+.jims-entry-scroll { max-width: 100%; overflow: auto; border: 1px solid #ddd6fe; border-radius: 8px; }
+.jims-entry-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.jims-entry-table th, .jims-entry-table td { padding: 5px; vertical-align: top; background: white; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; }
+.jims-entry-table thead th { padding: 10px 8px; text-align: left; background: #f5f3ff; font-weight: 700; }
+.jims-entry-table td { min-width: 150px; }
+.jims-entry-table td:nth-child(2) { min-width: 250px; }
+.jims-entry-table td label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.jims-entry-table input:not([type=checkbox]), .jims-entry-table select,
+.jims-entry-workspace .jims-billing-entry-table input:not([type=hidden]):not([type=checkbox]),
+.jims-entry-workspace .jims-billing-entry-table select,
+.jims-entry-workspace .jims-billing-entry-table textarea { min-height: 36px; width: 100%; font-size: 13px; padding: 6px; border: 1px solid #cbd5e1; border-radius: 5px; background: white; }
+.jims-entry-workspace :is(input, select, textarea, button, summary, a):focus-visible { outline: 2px solid #6d28d9; outline-offset: 1px; }
+.jims-entry-details { margin-top: 12px; border: 1px solid #ddd6fe; border-radius: 8px; background: #f5f3ff; }
+.jims-entry-details > summary { cursor: pointer; padding: 12px 16px; color: #5b21b6; font-weight: 600; }
+.jims-entry-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; padding: 16px 0; }
+.jims-entry-workspace .purchase-grid, .jims-billing-entry-table { border: 1px solid #ddd6fe; border-radius: 8px; background: white; }
+.jims-entry-workspace .purchase-grid-heading, .jims-entry-workspace .jims-line-item-header { background: #f5f3ff; color: #334155; font-size: 13px; text-transform: none; letter-spacing: normal; font-weight: 700; }
+.jims-entry-workspace .purchase-grid-heading > span { border-right: 1px solid #e2e8f0; }
+.jims-entry-workspace .purchase-cell { border-right: 1px solid #e2e8f0; padding: 5px; }
+.jims-entry-workspace .purchase-grid-row { min-height: 48px; align-items: stretch; }
+.jims-entry-workspace .purchase-cell-number, .jims-entry-workspace .purchase-cell-amount { display: flex; align-items: center; }
+.jims-entry-workspace .purchase-cell-amount { justify-content: flex-end; }
+.jims-entry-workspace .purchase-line-details { border-radius: 5px; background: #f5f3ff; color: #5b21b6; min-height: 36px; }
+.jims-entry-workspace .js-line-item { padding: 0; }
+.jims-entry-workspace .js-line-item > .jims-line-item-grid { gap: 0; }
+.jims-entry-workspace .js-line-item > .jims-line-item-grid > * { padding: 5px; border-right: 1px solid #e2e8f0; }
+.jims-entry-workspace .js-line-details { margin: 8px; background: #f5f3ff; }
+@media (min-width: 1024px) {
+  .jims-entry-workspace .jims-line-item-header { padding: 0; gap: 0; }
+  .jims-entry-workspace .jims-line-item-header > * { padding: 10px 5px; border-right: 1px solid #e2e8f0; }
+  .jims-entry-workspace .jims-line-item-grid { grid-template-columns: 2.5rem minmax(15rem, 1fr) 4.25rem 4.875rem 6.25rem 7rem 5.625rem 5.125rem; }
+}
+@media (max-width: 1199px) { .jims-entry-workspace .purchase-cell { border-right: 0; } }
+/* The sidebar leaves too little room for eight billing columns on tablets. */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .jims-entry-workspace .jims-line-item-header { display: none; }
+  .jims-entry-workspace .js-line-item > .jims-line-item-grid { grid-template-columns: 2.5rem minmax(0, 1fr); }
+  .jims-entry-workspace .js-line-item > .jims-line-item-grid > :not(:first-child) { grid-column: 2; }
+  .jims-entry-workspace .jims-line-item-grid > div > label,
+  .jims-entry-workspace .jims-line-item-grid > div > div[class~="lg:sr-only"] {
+    position: static; width: auto; height: auto; margin: 0 0 4px; overflow: visible; clip: auto; white-space: normal;
+  }
+}
+@media (max-width: 640px) {
+  .jims-entry-table thead { display: none; }
+  .jims-entry-table, .jims-entry-table tbody { display: block; }
+  .jims-entry-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .jims-entry-table tr > * { min-width: 0 !important; }
+  .jims-entry-table td::before { content: attr(data-label); display: block; font-weight: 600; margin-bottom: 4px; }
+  .jims-entry-table tr > :first-child, .jims-entry-table tr > :nth-child(2) { grid-column: 1 / -1; }
+  .jims-entry-table input { min-width: 0; }
+}

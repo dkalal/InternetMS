@@ -72,6 +72,8 @@ python manage.py test --keepdb
 
 Phase 2 may introduce the compact high-volume line grid, keyboard entry, bulk selection, and server-side product search. Inline supplier/category/product creation and spreadsheet import remain later, separately approved work.
 
+The purchase grid may let a user with `products.update` explicitly change a selected product's standard selling price. This is a catalog update, never a purchase-line amount: it is tenant-scoped, validated above the current cost floor, audited, and saved in the same transaction as the draft purchase. Users without product-update permission see the current value read-only. Purchase quantity, unit cost, purchase total, stock and confirmed history are not changed by this control.
+
 ### Phase 2 search contract
 
 The purchase product search endpoint is authenticated, permission-protected, tenant-scoped, read-only, paginated, and limited to active physical stock-tracked products. It may return only the metadata required by the purchase combobox; it must not expose cross-tenant catalog data. Product buying price may be returned as an exact decimal string only to users with the existing stock-cost viewing permission. Selecting a product (including through the bulk picker) prefills the editable same-unit purchase cost from that catalog default, including zero. Loading a draft or validation errors never replaces submitted costs; imports retain their explicit costs. This default is not the weighted-average ledger cost and does not change catalog prices or stock. Brand/model metadata may assist product identification. The server-side form and confirmation service remain authoritative even when the browser uses search results to populate a row.

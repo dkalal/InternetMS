@@ -1,4 +1,7 @@
 from django.shortcuts import render, get_object_or_404, redirect
+from django.core.paginator import Paginator
+from django.http import HttpResponse
+from io import BytesIO
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
@@ -12,6 +15,7 @@ from django.views.decorators.http import require_POST
 from django.db import transaction
 from django.db.models import Max, OuterRef, Q, Subquery, Sum
 from django.utils import timezone
+from openpyxl import Workbook
 
 from audit.models import AuditLog
 from custom_fields.mixins import CustomFieldPageContextMixin
@@ -37,7 +41,14 @@ from .forms import (
     AnonymizeCustomerForm,
 )
 from .services import CustomerService, CustomerServiceError, InternetServiceDomainService
-from users.permissions import PermissionCode, has_tenant_permission, require_permission, sales_document_queryset_for
+from .reporting import PackageChangeFilterForm, display_event, package_change_events
+from users.permissions import (
+    PermissionCode,
+    has_tenant_permission,
+    receivables_document_queryset_for,
+    require_permission,
+    sales_document_queryset_for,
+)
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context
 
@@ -910,8 +921,13 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
         context = super().get_context_data(**kwargs)
         organization = require_organization(self.request)
         customer = self.get_object()
-        allowed_documents = sales_document_queryset_for(
-            self.request.user, organization, membership=self.request.membership
+        allowed_documents = (
+            sales_document_queryset_for(
+                self.request.user, organization, membership=self.request.membership
+            )
+            | receivables_document_queryset_for(
+                self.request.user, organization, membership=self.request.membership
+            )
         ).filter(customer=customer)
         finance_all = has_tenant_permission(
             self.request.user, organization, PermissionCode.FINANCE_SALES_VIEW_ALL,
@@ -967,6 +983,10 @@ class CustomerDetailView(CustomFieldPageContextMixin, LoginRequiredMixin, Detail
                 user=self.request.user, organization=organization, customer=customer,
                 membership=self.request.membership,
             )
+        context['can_manage_subscription_lifecycle'] = has_tenant_permission(
+            self.request.user, organization, PermissionCode.FINANCE_REVERSALS_MANAGE,
+            membership=self.request.membership,
+        )
         context['billing_documents'] = billing_documents
         context['billing_document_count'] = allowed_documents.count()
         context['associated_assets'] = list(
@@ -1472,6 +1492,147 @@ class ServicePackageChangeView(LoginRequiredMixin, FormView):
             return self.form_invalid(form)
         messages.success(self.request, f"Package changed to {replacement.package.name}; prior subscription retained in history.")
         return redirect("internet-service-detail", pk=self.service.id)
+
+
+class CustomerPackageChangesReportView(LoginRequiredMixin, TemplateView):
+    template_name = "customers/package_change_report.html"
+    page_size = 25
+    export_limit = 10000
+
+    def dispatch(self, request, *args, **kwargs):
+        self.organization = require_organization(request)
+        require_permission(request, PermissionCode.CUSTOMER_PACKAGE_CHANGES_REPORT_VIEW)
+        self.exporting = request.GET.get("export") == "xlsx"
+        if self.exporting:
+            require_permission(request, PermissionCode.REPORTS_EXPORT)
+        return super().dispatch(request, *args, **kwargs)
+
+    def get(self, request, *args, **kwargs):
+        if self.exporting:
+            form = PackageChangeFilterForm(request.GET, organization=self.organization)
+            if form.is_valid():
+                events = package_change_events(
+                    organization=self.organization, filters=form.cleaned_data,
+                )
+                if events.count() <= self.export_limit:
+                    return self._export(self._display_rows(events), form.cleaned_data)
+        return super().get(request, *args, **kwargs)
+
+    def _display_rows(self, events):
+        events = list(events)
+        subscription_ids = set()
+        old_subscription_ids = set()
+        for event in events:
+            old_value = event.old_value or {}
+            new_value = event.new_value or {}
+            old_id = old_value.get("subscription_id")
+            new_id = new_value.get("subscription_id")
+            if old_id:
+                subscription_ids.add(old_id)
+                old_subscription_ids.add(old_id)
+            if new_id:
+                subscription_ids.add(new_id)
+        legacy_subscriptions = {
+            subscription.pk: subscription
+            for subscription in CustomerSubscription.objects.filter(
+                tenant=self.organization, pk__in=subscription_ids,
+            ).select_related("customer", "site", "internet_service", "package")
+        }
+        periods_by_subscription = {}
+        for period in SubscriptionPeriod.objects.filter(
+            tenant=self.organization, subscription_id__in=old_subscription_ids,
+        ).select_related("invoice").order_by("period_start", "id"):
+            periods_by_subscription.setdefault(period.subscription_id, []).append(period)
+        return [
+            display_event(
+                event,
+                legacy_subscriptions=legacy_subscriptions,
+                periods_by_subscription=periods_by_subscription,
+                localize=timezone.localtime,
+            )
+            for event in events
+        ]
+
+    def _export(self, rows, filters):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Package changes"
+        sheet.append([
+            "Recorded at", "Effective date", "Customer", "Site", "Service code",
+            "Previous package", "Previous monthly fee", "New package", "New monthly fee",
+            "Monthly fee change", "Reason", "Changed by",
+            "Billing period overlaps effective date", "Historical snapshot",
+        ])
+        for row in rows:
+            old_fee = Decimal(row["old_fee"]) if row["old_fee"] is not None else None
+            new_fee = Decimal(row["new_fee"]) if row["new_fee"] is not None else None
+            sheet.append([
+                row["recorded_at"].replace(tzinfo=None), row["effective_date"],
+                row["customer_name"], row["site_name"], row["service_code"],
+                row["old_package"], old_fee, row["new_package"], new_fee,
+                new_fee - old_fee if old_fee is not None and new_fee is not None else None,
+                row["reason"], row["actor"],
+                "Yes" if row["overlapping_periods"] else "No",
+                "Legacy / incomplete" if row["legacy"] else "Snapshot",
+            ])
+            for cell in sheet[sheet.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+        metadata = workbook.create_sheet("Report context")
+        metadata.append(["Report", "Customer package changes"])
+        metadata.append(["Tenant", self.organization.name])
+        metadata.append(["Timezone", timezone.get_current_timezone_name()])
+        for key, value in filters.items():
+            metadata.append([key, str(value) if value is not None else "All"])
+            for cell in metadata[metadata.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+        output = BytesIO()
+        workbook.save(output)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="customer-package-changes.xlsx"'
+        return response
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        form = PackageChangeFilterForm(self.request.GET, organization=self.organization)
+        valid = form.is_valid()
+        filters = form.cleaned_data if valid else {}
+        event_queryset = package_change_events(
+            organization=self.organization, filters=filters,
+        ) if valid else AuditLog.objects.none()
+        result_count = event_queryset.count() if valid else 0
+        params = self.request.GET.copy()
+        params.pop("page", None)
+        params.pop("export", None)
+        filter_query = params.urlencode()
+
+        if self.exporting and valid:
+            if result_count > self.export_limit:
+                form.add_error(None, f"This export contains more than {self.export_limit:,} records. Narrow the date range or search first.")
+                valid = False
+
+        page_obj = Paginator(event_queryset, self.page_size).get_page(
+            self.request.GET.get("page"),
+        ) if valid else None
+        display_rows = self._display_rows(page_obj.object_list) if page_obj else []
+        context.update({
+            "filter_form": form,
+            "filters_valid": valid,
+            "filter_query": filter_query,
+            "page_obj": page_obj,
+            "rows": display_rows,
+            "result_count": result_count,
+            "legacy_count": event_queryset.exclude(metadata__snapshot_version=1).count() if valid else 0,
+            "can_export": has_tenant_permission(
+                self.request.user, self.organization, PermissionCode.REPORTS_EXPORT,
+                membership=getattr(self.request, "membership", None),
+            ),
+        })
+        return context
 
 
 class ServiceStatusChangeView(LoginRequiredMixin, FormView):

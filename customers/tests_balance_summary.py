@@ -6,11 +6,12 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 from billing.models import BillingDocument
-from billing.services import BillingService, BillingServiceError
+from billing.services import BillingService, BillingServiceError, SubscriptionBillingService
 from customers.models import Customer
 from users.models import Organization, TenantMembership, TenantPermissionGrant
 from users.permissions import PermissionCode, can_record_payment, can_view_sales_document, validate_delegated_grant
 from audit.models import AuditLog
+from services.models import Package
 
 
 class CustomerBalanceSummaryTests(TestCase):
@@ -56,6 +57,66 @@ class CustomerBalanceSummaryTests(TestCase):
         self.assertNotContains(response, self.invoice.number)
         grant.delete()
         with self.assertRaises(PermissionDenied): self.summary()
+
+    def test_sales_customer_detail_includes_manager_subscription_billing(self):
+        self.customer.customer_type = "internet"
+        self.customer.save(update_fields=["customer_type"])
+        package = Package.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            name="Collections Fiber",
+            package_type="indoor",
+            speed="20 Mbps",
+            monthly_fee=Decimal("50000.00"),
+            setup_fee=Decimal("0.00"),
+            description="Collections test package",
+        )
+        subscription = SubscriptionBillingService.get_or_create_subscription(
+            organization=self.org,
+            customer=self.customer,
+            package=package,
+            start_date=timezone.localdate(),
+        )
+        period = SubscriptionBillingService.renew(
+            organization=self.org,
+            created_by=self.admin,
+            subscription_id=subscription.id,
+            period_start=timezone.localdate().replace(day=1),
+            months=1,
+        )
+        other_sales = get_user_model().objects.create_user(username="other-balance-sales", password="pass")
+        other_membership = TenantMembership.objects.create(
+            user=other_sales,
+            tenant=self.org,
+            base_role=TenantMembership.BaseRole.SALES,
+        )
+        other_invoice = BillingDocument.objects.create(
+            organization=self.org,
+            tenant=self.org,
+            customer=self.customer,
+            document_type=BillingDocument.DocumentType.INVOICE,
+            number="OTHER-SALES-INVOICE",
+            issue_date=timezone.localdate(),
+            status=BillingDocument.Status.ISSUED,
+            total=Decimal("222.00"),
+            created_by=other_sales,
+            created_by_membership=other_membership,
+            responsible_membership=other_membership,
+        )
+        self.client.force_login(self.sales)
+
+        response = self.client.get(reverse('customer-detail', kwargs={'pk': self.customer.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Billing documents")
+        self.assertContains(response, "Internet package subscriptions")
+        self.assertContains(response, period.invoice.number)
+        self.assertContains(response, "Register payment")
+        self.assertNotContains(response, other_invoice.number)
+        self.assertNotContains(response, "Resolve issue")
+        self.assertNotContains(response, "Cancel</a>")
+        self.assertIn(period.id, [item.id for item in response.context["subscription_periods"]])
+        self.assertFalse(response.context["finance_all"])
 
     def test_ledger_currency_due_date_and_status_rules_in_bounded_queries(self):
         self.grant()

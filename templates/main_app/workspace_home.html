@@ -19,7 +19,7 @@
 
   <section aria-labelledby="workspace-status">
     <h2 id="workspace-status" class="sr-only">Workspace status</h2>
-    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
       {% if is_manager_workspace and can_view_customers %}<a href="{% url 'customer-list' %}" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Active customers</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ customer_count }}</div><div class="mt-2 text-xs text-brand-700">Open customers</div></a>{% endif %}
       {% if is_manager_workspace and can_view_customers %}<a href="{% url 'customer-list' %}?worklist=active" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Operational services</div><div class="mt-2 text-2xl font-bold text-slate-950">{{ operational_service_count }}</div><div class="mt-2 text-xs text-slate-500">Installed connections not disconnected</div></a>{% endif %}
       <a href="{% url 'billing:document_list' doc_type='invoice' %}?status=draft" class="jims-kpi"><div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Draft invoices</div><div class="mt-2 text-2xl font-bold text-amber-800">{{ draft_invoice_count }}</div><div class="mt-2 text-xs text-brand-700">Continue work</div></a>

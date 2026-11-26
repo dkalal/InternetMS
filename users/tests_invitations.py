@@ -1,5 +1,7 @@
 from datetime import timedelta
+from io import StringIO
 import os
+import smtplib
 import subprocess
 import sys
 from unittest.mock import patch
@@ -7,8 +9,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
+from django.core.management import call_command, CommandError
 from django.core import mail
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -82,6 +85,18 @@ class InvitationTests(TestCase):
         self.assertIsNone(WorkspaceInvitation.objects.get().sent_at)
         self.assertTrue(get_user_model().objects.filter(email="new@example.test").exists())
 
+    def test_smtp_disconnect_gives_safe_recovery_guidance(self):
+        with patch("users.invitations.EmailMultiAlternatives.send", side_effect=smtplib.SMTPServerDisconnected):
+            response = self.client.post(
+                reverse("invite_member"),
+                {"email": "new@example.test", "base_role": "SALES"},
+                follow=True,
+            )
+
+        self.assertContains(response, "mail server closed the connection")
+        self.assertTrue(WorkspaceInvitation.objects.exists())
+        self.assertIsNone(WorkspaceInvitation.objects.get().sent_at)
+
     def test_existing_user_keeps_password_and_accepts_own_membership(self):
         existing = get_user_model().objects.create_user("existing-office", email="existing@example.test", password="OldPassword123!")
         other = Organization.objects.create(name="Other", slug="other-invite")
@@ -134,7 +149,7 @@ class InvitationTests(TestCase):
 
         technician = get_user_model().objects.get(email="field.tech@example.test")
         self.assertTrue(self.client.login(username=technician.username, password="FieldTechPassword123!"))
-        self.assertRedirects(self.client.get(reverse("main_app:workspace_home")), reverse("work_reports:list"))
+        self.assertRedirects(self.client.get(reverse("main_app:workspace_home")), reverse("work_reports:assignment_list"))
         self.assertEqual(self.client.get(reverse("billing:document_create", kwargs={"doc_type": "invoice"})).status_code, 403)
         self.assertEqual(self.client.post(reverse("inventory:cart_create")).status_code, 403)
 
@@ -194,9 +209,6 @@ class InvitationTests(TestCase):
         self.assertEqual(browser.session.get("_auth_user_id"), str(self.manager.pk))
 
 
-from django.test import SimpleTestCase
-
-
 class EmailSettingsTests(SimpleTestCase):
     def test_invitation_token_is_removed_from_audit_path(self):
         self.assertEqual(
@@ -212,3 +224,43 @@ class EmailSettingsTests(SimpleTestCase):
             env=env, capture_output=True, text=True, check=True,
         )
         self.assertEqual(result.stdout.strip(), "django.core.mail.backends.smtp.EmailBackend True 587")
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+    EMAIL_HOST="smtp.example.test",
+    EMAIL_PORT=587,
+    EMAIL_USE_TLS=True,
+    EMAIL_USE_SSL=False,
+    EMAIL_TIMEOUT=15,
+    EMAIL_HOST_USER="private-user@example.test",
+    EMAIL_HOST_PASSWORD="private-password",
+    DEFAULT_FROM_EMAIL="private-from@example.test",
+)
+class EmailDiagnosticCommandTests(SimpleTestCase):
+    @patch("django.core.mail.backends.smtp.EmailBackend.open", return_value=True)
+    @patch("django.core.mail.backends.smtp.EmailBackend.close")
+    def test_reports_transport_without_sending_or_printing_secrets(self, close, open_connection):
+        output = StringIO()
+
+        call_command("diagnose_email", stdout=output)
+
+        self.assertIn("SMTP connection, TLS, and authentication succeeded.", output.getvalue())
+        self.assertIn("No test email was sent", output.getvalue())
+        self.assertIn("SMTP password configured: yes", output.getvalue())
+        self.assertNotIn("private-user", output.getvalue())
+        self.assertNotIn("private-password", output.getvalue())
+        self.assertNotIn("private-from", output.getvalue())
+        open_connection.assert_called_once_with()
+        close.assert_called_once_with()
+
+    @patch("django.core.mail.backends.smtp.EmailBackend.open", side_effect=OSError("private provider response"))
+    def test_failure_is_actionable_without_exposing_provider_response(self, open_connection):
+        output = StringIO()
+
+        with self.assertRaises(CommandError) as raised:
+            call_command("diagnose_email", stdout=output)
+
+        self.assertIn("OSError", str(raised.exception))
+        self.assertIn("outbound network access", str(raised.exception))
+        self.assertNotIn("private provider response", str(raised.exception))

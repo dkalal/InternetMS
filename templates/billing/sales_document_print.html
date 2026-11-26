@@ -158,6 +158,7 @@
         <td class="index">{{ forloop.counter }}</td>
         <td class="description">
           <div class="item-name">{% if item.product %}{{ item.product.name }}{% elif item.package %}{{ item.package.name }}{% else %}{{ item.description }}{% endif %}</div>
+          {% if item.package and item.description and item.description != item.package.name %}<div class="item-secondary">{{ item.description }}</div>{% endif %}
         </td>
         <td class="unit">{{ item.unit_snapshot }}</td>
         <td class="quantity right">{{ item.quantity|quantity_display }}</td>

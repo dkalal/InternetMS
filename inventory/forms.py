@@ -22,6 +22,13 @@ class CartPaymentForm(forms.Form):
         ('', 'Select payment method'), ('cash', 'Cash'), ('bank', 'Bank'),
         ('mobile_money', 'Mobile money'), ('other', 'Other'),
     ])
+    cash_received = forms.DecimalField(
+        max_digits=12, decimal_places=2, required=False, min_value=Decimal('0.01'),
+        label='Cash received',
+        widget=forms.NumberInput(attrs={
+            'inputmode': 'decimal', 'min': '0.01', 'step': '0.01', 'autocomplete': 'off',
+        }),
+    )
     payment_reference = forms.CharField(max_length=80, required=False, label='Payment reference')
 
     def __init__(self, *args, cart_id, **kwargs):
@@ -29,8 +36,21 @@ class CartPaymentForm(forms.Form):
         apply_tailwind(self)
         for field in self.fields.values():
             field.widget.attrs['form'] = f'cart-details-form-{cart_id}'
+        self.fields['cash_received'].widget.attrs['data-pos-cash-received'] = ''
+        if not self.is_bound:
+            self.fields['cash_received'].widget.attrs['data-pos-cash-auto'] = 'true'
         # Draft saves and quotations do not require payment details.
         self.use_required_attribute = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if (
+            cleaned_data.get('payment_method') == 'cash'
+            and not cleaned_data.get('cash_received')
+            and 'cash_received' not in self.errors
+        ):
+            self.add_error('cash_received', 'Enter the amount of cash received.')
+        return cleaned_data
 
 
 class TenantFormMixin:
@@ -304,6 +324,11 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
+    standard_selling_price = forms.DecimalField(
+        required=False, max_digits=10, decimal_places=2, min_value=Decimal('0.01'),
+        label='Standard selling price',
+        widget=forms.NumberInput(attrs={'min': '0.01', 'step': '0.01', 'inputmode': 'decimal'}),
+    )
     product = PurchaseProductChoiceField(
         queryset=Product.objects.none(),
         empty_label='Select a product',
@@ -319,8 +344,9 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
             'serial_numbers': forms.Textarea(attrs={'rows': 3, 'placeholder': 'One serial per line'}),
         }
 
-    def __init__(self, *args, organization=None, **kwargs):
+    def __init__(self, *args, organization=None, can_update_product_price=False, **kwargs):
         super().__init__(*args, organization=organization, **kwargs)
+        self.can_update_product_price = can_update_product_price
         self.fields['quantity'].required = False
         self.fields['unit_cost'].required = False
         product_ids = set()
@@ -343,12 +369,32 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['product'].widget.attrs.pop('data-search-placeholder', None)
         self.fields['quantity'].label = 'Quantity'
         self.fields['unit_cost'].label = 'Unit cost'
+        selected_product_id = (
+            self.data.get(self.add_prefix('product')) if self.is_bound
+            else self.instance.product_id
+        )
+        if selected_product_id and str(selected_product_id).isascii() and str(selected_product_id).isdecimal():
+            selected_product = self.fields['product'].queryset.filter(pk=selected_product_id).first()
+            if selected_product:
+                self.fields['standard_selling_price'].initial = selected_product.selling_price
+        if can_update_product_price:
+            self.fields['standard_selling_price'].widget.attrs.pop('readonly', None)
+        else:
+            self.fields['standard_selling_price'].widget.attrs['readonly'] = True
         self.fields['batch_reference'].label = 'Batch reference (optional)'
         self.fields['batch_reference'].widget.attrs['placeholder'] = 'e.g. BATCH-001'
 
     def clean(self):
         cleaned = super().clean()
         product = cleaned.get('product')
+        standard_price = cleaned.get('standard_selling_price')
+        if product and standard_price is not None and standard_price != product.selling_price:
+            if not self.can_update_product_price:
+                self.add_error('standard_selling_price', 'You do not have permission to change catalog prices.')
+            else:
+                from products.pricing import cost_floor_for
+                if standard_price <= cost_floor_for(product):
+                    self.add_error('standard_selling_price', 'Standard selling price must be greater than the current cost per sales unit.')
         if cleaned.get('quantity') is None:
             self.add_error('quantity', 'Enter the quantity received in the product sales unit.')
         if cleaned.get('unit_cost') is None:
@@ -370,9 +416,10 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineFormSet(BaseInlineFormSet):
-    def __init__(self, *args, organization=None, import_present=False, **kwargs):
+    def __init__(self, *args, organization=None, import_present=False, can_update_product_price=False, **kwargs):
         self.organization = organization
         self.import_present = import_present
+        self.can_update_product_price = can_update_product_price
         super().__init__(*args, **kwargs)
         for form in self.forms:
             form.organization = organization
@@ -380,6 +427,7 @@ class PurchaseLineFormSet(BaseInlineFormSet):
     def get_form_kwargs(self, index):
         kwargs = super().get_form_kwargs(index)
         kwargs['organization'] = self.organization
+        kwargs['can_update_product_price'] = self.can_update_product_price
         return kwargs
 
     def clean(self):
@@ -562,7 +610,7 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         product_id = self.data.get('product') if self.is_bound else (
             self.instance.product_id or self.initial.get('product')
         )
-        if product_id:
+        if product_id and str(product_id).isascii() and str(product_id).isdecimal() and len(str(product_id)) <= 18:
             self.fields['serial_units'].queryset = StockUnit.objects.filter(
                 tenant=organization, product_id=product_id, status=StockUnit.Status.AVAILABLE
             ).order_by('serial_number')
@@ -572,7 +620,7 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             ]
         self.serials_in_cart = set(CartSerialSelection.objects.filter(
             tenant=organization, cart_line__cart=cart,
-        ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart else set()
+        ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart and cart.pk else set()
         can_discount = (
             has_tenant_permission(
                 membership.user, organization, PermissionCode.CART_DISCOUNT_APPLY, membership=membership
@@ -631,7 +679,9 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
                 )
             except BelowCostError as exc:
                 self.add_error('discount_amount', str(exc))
-            other_lines = self.cart.lines.exclude(pk=self.instance.pk) if self.instance.pk else self.cart.lines.all()
+            other_lines = (
+                self.cart.lines.exclude(pk=self.instance.pk) if self.cart.pk else CartLine.objects.none()
+            )
             gross_subtotal = sum(
                 (line.quantity * line.unit_price for line in other_lines), Decimal('0.00')
             ) + quantity * unit_price

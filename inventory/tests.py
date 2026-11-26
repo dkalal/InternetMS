@@ -631,14 +631,20 @@ class InventoryAcceptanceTests(TestCase):
         response = self.client.get(url)
         self.assertIn(self.product.pk, [p.pk for p in response.context['catalog']])
 
-    def test_start_sale_opens_an_editable_pos_draft_immediately(self):
+    def test_start_sale_opens_workspace_and_saves_only_meaningful_details(self):
         self.client.login(username='inventory-admin', password='pass')
         response = self.client.post(reverse('inventory:cart_create'))
-        cart = Cart.objects.get(created_by=self.admin)
-        self.assertRedirects(response, reverse('inventory:cart_detail', args=[cart.pk]))
-        self.assertEqual(cart.status, Cart.Status.DRAFT)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Cart.objects.filter(created_by=self.admin).exists())
+        self.assertContains(self.client.get(response.url), 'A draft is saved when')
         repeat_response = self.client.post(reverse('inventory:cart_create'))
-        self.assertRedirects(repeat_response, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertEqual(repeat_response.status_code, 302)
+        self.assertFalse(Cart.objects.filter(created_by=self.admin).exists())
+        saved = self.client.post(response.url, {'notes': 'First saved sale', 'sale_pricing_category': 'customer_tier',
+                                               'discount_amount': '0', 'tax_rate': '0'})
+        cart = Cart.objects.get(created_by=self.admin)
+        self.assertRedirects(saved, reverse('inventory:cart_detail', args=[cart.pk]))
+        self.assertEqual(cart.status, Cart.Status.DRAFT)
         self.assertEqual(Cart.objects.filter(created_by=self.admin, status=Cart.Status.DRAFT).count(), 1)
         self.assertEqual(self.client.get(reverse('inventory:cart_create')).status_code, 404)
 

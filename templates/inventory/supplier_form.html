@@ -1,8 +1,10 @@
 {% extends 'base.html' %}
+{% load static %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/entry-tables.css' %}">{% endblock %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% if not embedded_create %}{% include "inventory/includes/module_nav.html" %}{% endif %}
-<div class="jims-form-page mx-auto max-w-[880px] space-y-4">
+<div class="jims-form-page jims-entry-workspace space-y-4">
   <header class="jims-page-header">
     <div><p class="jims-page-eyebrow">Suppliers</p>
     <h1 class="jims-page-title">{{ title }}</h1>
@@ -13,31 +15,28 @@
     {% csrf_token %}
     {% if form.non_field_errors %}<div class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{{ form.non_field_errors }}</div>{% endif %}
 
-    <section class="jims-panel">
-      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Company details</h2><p class="mt-1 text-sm text-slate-600">The organization shown on purchase records.</p></div>
-      <div class="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
-        <div class="min-w-0 sm:col-span-2 sm:max-w-[23rem]">{% include "components/form_field.html" with field=form.company_name %}</div>
-        <div class="min-w-0 sm:max-w-[18rem]">{% include "components/form_field.html" with field=form.tin_vrn %}</div>
-        <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">{% include "components/form_field.html" with field=form.is_active %}</div>
-        <div class="min-w-0 sm:col-span-2 sm:max-w-[23rem]">{% include "components/form_field.html" with field=form.physical_address %}</div>
+    <div class="jims-entry-scroll" tabindex="0" role="region" aria-label="Supplier details table">
+      <table class="jims-entry-table">
+        <thead><tr><th scope="col">#</th><th scope="col">Company name *</th><th scope="col">TIN / VRN</th><th scope="col">Contact person</th><th scope="col">Phone</th><th scope="col">Email</th></tr></thead>
+        <tbody><tr><th scope="row">1</th>
+          <td data-label="Company name">{% include "components/form_field.html" with field=form.company_name hide_help=True %}</td>
+          <td data-label="TIN / VRN">{% include "components/form_field.html" with field=form.tin_vrn hide_help=True %}</td>
+          <td data-label="Contact person">{% include "components/form_field.html" with field=form.contact_person hide_help=True %}</td>
+          <td data-label="Phone">{% include "components/form_field.html" with field=form.phone hide_help=True %}</td>
+          <td data-label="Email">{% include "components/form_field.html" with field=form.email hide_help=True %}</td>
+        </tr></tbody>
+      </table>
+    </div>
+    <details class="jims-entry-details" {% if form.physical_address.errors or form.notes.errors or form.is_active.errors or form.physical_address.value or form.notes.value %}open{% endif %}>
+      <summary>More details <span class="text-xs font-normal">Address, status and internal notes</span></summary>
+      <div class="grid gap-4 p-4 sm:grid-cols-2">
+        <div>{% include "components/form_field.html" with field=form.physical_address %}</div>
+        <div>{% include "components/form_field.html" with field=form.notes %}</div>
+        <div>{% include "components/form_field.html" with field=form.is_active %}</div>
       </div>
-    </section>
+    </details>
 
-    <section class="jims-panel">
-      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Contact information</h2><p class="mt-1 text-sm text-slate-600">Who should staff contact about orders and deliveries?</p></div>
-      <div class="grid gap-4 p-4 sm:grid-cols-3 sm:p-5">
-        <div class="min-w-0">{% include "components/form_field.html" with field=form.contact_person %}</div>
-        <div class="min-w-0">{% include "components/form_field.html" with field=form.phone %}</div>
-        <div class="min-w-0">{% include "components/form_field.html" with field=form.email %}</div>
-      </div>
-    </section>
-
-    <section class="jims-panel">
-      <div class="jims-panel-header"><h2 class="font-semibold text-slate-950">Internal notes <span class="font-normal text-slate-500">(optional)</span></h2></div>
-      <div class="p-5">{% include "components/form_field.html" with field=form.notes %}</div>
-    </section>
-
-    <div class="jims-form-actions">
+    <div class="jims-entry-actions">
       {% if embedded_create %}<button type="button" class="jims-btn jims-btn-secondary" onclick="window.parent.postMessage({type: 'jims-purchase-modal-close'}, window.location.origin)">Cancel</button>{% elif supplier %}<a href="{% url 'inventory:supplier_detail' supplier.pk %}" class="jims-btn jims-btn-secondary">Cancel</a>{% else %}<a href="{% url 'inventory:supplier_list' %}" class="jims-btn jims-btn-secondary">Cancel</a>{% endif %}
       <button type="submit" class="jims-btn jims-btn-primary" data-loading-label="Saving…">Save supplier</button>
     </div>

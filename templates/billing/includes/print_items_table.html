@@ -30,6 +30,9 @@
                       Item {{ forloop.counter }}
                     {% endif %}
                   </span>
+                  {% if item.package and item.description and item.description != item.package.name %}
+                    <span class="item-subtitle item-subtitle--description">{{ item.description }}</span>
+                  {% endif %}
                   {% if item.discount_amount %}
                     <span class="item-subtitle">Discount: {{ document.currency|upper }} {{ item.discount_amount|money_display:document.currency }}{% if item.discount_reason %} - {{ item.discount_reason }}{% endif %}</span>
                   {% endif %}

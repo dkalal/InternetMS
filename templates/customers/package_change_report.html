@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% load static humanize number_display %}
+{% block title %}Package change history{% endblock %}
+{% block topbar_new_invoice %}{% endblock %}
+{% block topbar_start_sale %}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/reports-workspace.css' %}">{% endblock %}
+{% block content %}
+{% include "customers/includes/module_nav.html" %}
+<div class="report-shell customer-package-report-shell">
+  <aside class="report-sidebar">{% include 'customers/includes/report_navigation.html' with nav_label='Customer reports' %}</aside>
+  <div class="report-content">
+    <header class="report-header">
+      <div>
+        <p class="jims-page-eyebrow">Customer reports workspace</p>
+        <h1 class="jims-page-title">Package change history</h1>
+        <p class="jims-page-subtitle">Review package changes by customer, service, effective date and reason. Historical package details use the values recorded when the change happened.</p>
+      </div>
+      {% if can_export and filters_valid %}<a class="jims-btn jims-btn-secondary report-export" href="?{{ filter_query }}&amp;export=xlsx">Export Excel</a>{% endif %}
+    </header>
+    <details class="report-mobile-navigation jims-toolbar">
+      <summary>Choose report: Package changes</summary>
+      {% include 'customers/includes/report_navigation.html' with nav_label='Choose customer report' %}
+    </details>
+
+    <section class="jims-toolbar report-filters package-change-filters" aria-label="Package change report filters">
+      <form method="get">
+        {% if filter_form.errors %}<div class="report-errors" role="alert">Report not generated. Correct the filters below. {{ filter_form.non_field_errors }}</div>{% endif %}
+        {% for field in filter_form %}
+          <div class="report-field{% if field.name == 'q' %} report-search{% endif %}">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}<p class="report-help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</p>{% endif %}
+            <div class="report-field-errors">{{ field.errors }}</div>
+          </div>
+        {% endfor %}
+        <div class="report-filter-actions"><button class="jims-btn jims-btn-primary">Apply filters</button><a class="jims-btn jims-btn-secondary" href="{% url 'package-change-report' %}">Reset</a></div>
+      </form>
+    </section>
+
+    {% if filters_valid %}
+      <section class="report-kpis" aria-label="Report summary">
+        <div class="jims-kpi"><p class="report-kpi-label">Matching package changes</p><p class="report-kpi-value">{{ result_count|intcomma }}</p><p class="report-help">Across all matching pages</p></div>
+        {% if legacy_count %}<div class="jims-kpi"><p class="report-kpi-label">Legacy records</p><p class="report-kpi-value">{{ legacy_count|intcomma }}</p><p class="report-help">Older events lack a complete historical snapshot.</p></div>{% endif %}
+      </section>
+    {% endif %}
+
+    <section class="jims-panel report-results" aria-label="Package change results">
+      {% if filters_valid %}<div class="report-results-header"><h2>Package changes</h2><span>{{ result_count|intcomma }} record{{ result_count|pluralize }}{% if rows %} · Showing {{ page_obj.start_index }}–{{ page_obj.end_index }}{% endif %}</span></div>{% endif %}
+      {% if rows %}
+        <div class="jims-table-wrap report-table-wrap" role="region" tabindex="0" aria-label="Package change data. Scroll horizontally for all columns.">
+          <table class="jims-table report-table">
+            <caption class="sr-only">Package change history for the selected tenant and filters</caption>
+            <thead><tr>
+              <th scope="col">Effective / recorded</th><th scope="col">Customer / service</th><th scope="col">Previous package</th><th scope="col">New package</th><th scope="col" class="report-number">Monthly fee change</th><th scope="col">Reason / actor</th><th scope="col">Billing review</th>
+            </tr></thead>
+            <tbody>
+              {% for row in rows %}
+                <tr>
+                  <td class="whitespace-nowrap"><strong>{{ row.effective_date|date:"d M Y"|default:"Unavailable" }}</strong><span class="block text-xs text-slate-500">Recorded {{ row.recorded_at|date:"d M Y H:i" }}</span></td>
+                  <td><strong>{{ row.customer_name }}</strong><span class="block text-xs text-slate-600">{{ row.site_name }} · {{ row.service_code }}</span></td>
+                  <td>{{ row.old_package }}<span class="block text-xs text-slate-500">{% if row.old_fee != None %}TZS {{ row.old_fee|money_display }} / month{% else %}Fee unavailable{% endif %}</span></td>
+                  <td>{{ row.new_package }}<span class="block text-xs text-slate-500">{% if row.new_fee != None %}TZS {{ row.new_fee|money_display }} / month{% else %}Fee unavailable{% endif %}</span></td>
+                  <td class="report-number">{% if row.fee_delta != None %}{% if row.fee_delta > 0 %}+{% endif %}TZS {{ row.fee_delta|money_display }}{% else %}Unavailable{% endif %}</td>
+                  <td class="max-w-xs whitespace-normal"><span>{{ row.reason|default:"No reason recorded" }}</span><span class="block text-xs text-slate-500">By {{ row.actor }}</span>{% if row.legacy %}<span class="report-result-badge mt-1">Legacy · incomplete snapshot</span>{% endif %}</td>
+                  <td>
+                    {% if row.overlapping_periods %}
+                      <span class="report-result-badge report-result-warning">Review period overlap</span>
+                      {% for period in row.overlapping_periods %}<span class="block mt-1 text-xs text-slate-600">{{ period.period_start|date:"d M Y" }}–{{ period.period_end|date:"d M Y" }} · {{ period.get_status_display }}{% if period.invoice_id %} · {{ period.invoice.number }}{% endif %}</span>{% endfor %}
+                    {% else %}<span class="text-xs text-slate-500">No overlapping period found</span>{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if page_obj.paginator.num_pages > 1 %}<nav class="report-pagination" aria-label="Report pagination"><span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span><div>{% if page_obj.has_previous %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.previous_page_number }}&amp;{{ filter_query }}">Previous</a>{% endif %}{% if page_obj.has_next %}<a class="jims-btn jims-btn-secondary" href="?page={{ page_obj.next_page_number }}&amp;{{ filter_query }}">Next</a>{% endif %}</div></nav>{% endif %}
+      {% elif filters_valid %}
+        <div class="report-empty"><h3>No package changes match these filters</h3><p>Package changes recorded from this release onward include full historical snapshots. Older events may appear with incomplete details when their original records are still available.</p></div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
