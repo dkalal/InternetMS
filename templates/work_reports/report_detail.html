@@ -7,6 +7,7 @@
     <div><a href="{% url 'work_reports:list' %}" class="text-sm font-semibold text-brand-700">← Work Reports</a><div class="mt-2 flex flex-wrap items-center gap-3"><h1 class="text-2xl font-bold tracking-tight text-slate-950">{{ report.work_title }}</h1><span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold {% if report.status == 'APPROVED' %}bg-emerald-50 text-emerald-700{% elif report.status == 'REJECTED' %}bg-rose-50 text-rose-700{% elif report.status == 'SUBMITTED' %}bg-amber-50 text-amber-800{% else %}bg-slate-100 text-slate-700{% endif %}">{{ report.get_status_display }}</span></div><p class="mt-1 text-sm text-slate-500">{% if report.client_name %}{{ report.client_name }} · {% endif %}{{ report.service_days_summary }}</p></div>
     <div class="flex flex-wrap gap-2">
       {% if can_edit %}<a href="{% url 'work_reports:edit' report.pk %}" class="jims-btn jims-btn-secondary">Edit report</a><form method="post" action="{% url 'work_reports:submit' report.pk %}">{% csrf_token %}<button class="jims-btn jims-btn-primary">{% if report.status == 'REJECTED' %}Resubmit{% else %}Submit for review{% endif %}</button></form>{% endif %}
+      {% if can_delete %}<a href="{% url 'work_reports:delete' report.pk %}" class="jims-btn jims-btn-secondary text-rose-700">Delete report</a>{% endif %}
       {% if can_review and report.status == 'SUBMITTED' %}<a href="{% url 'work_reports:reject' report.pk %}" class="jims-btn jims-btn-secondary">Request correction</a><form method="post" action="{% url 'work_reports:approve' report.pk %}">{% csrf_token %}<button class="jims-btn jims-btn-primary">Approve report</button></form>{% endif %}
       {% if can_review and report.status == 'APPROVED' %}<a href="{% url 'work_reports:correct' report.pk %}" class="jims-btn jims-btn-secondary">Correct approved report</a>{% endif %}
     </div>
@@ -38,13 +39,14 @@
           <div><dt class="text-slate-500">Amount recorded as paid</dt><dd class="mt-1 font-bold text-slate-950">TZS {{ payment.amount_paid|money_display }}</dd></div>
           <div><dt class="text-slate-500">Payment date</dt><dd class="mt-1 font-semibold text-slate-900">{{ payment.payment_date|date:"d M Y" }}</dd></div>
           <div><dt class="text-slate-500">Method</dt><dd class="mt-1 font-semibold text-slate-900">{{ payment.get_payment_method_display }}</dd></div>
+          {% if payment.payout_bank_name_snapshot %}<div><dt class="text-slate-500">Destination account</dt><dd class="mt-1 font-semibold text-slate-900">{{ payment.payout_bank_name_snapshot }} · •••• {{ payment.payout_account_last4_snapshot }}</dd></div>{% endif %}
           {% if payment.amount_paid != payment.agreed_amount_snapshot %}<div><dt class="text-slate-500">Difference</dt><dd class="mt-1 font-semibold text-orange-700">TZS {{ payment.difference|money_display }}</dd></div><div class="sm:col-span-2 lg:col-span-3"><dt class="text-slate-500">Adjustment reason</dt><dd class="mt-1 text-slate-800">{{ payment.adjustment_reason }}</dd></div>{% endif %}
           {% if payment.reference %}<div><dt class="text-slate-500">Reference</dt><dd class="mt-1 break-words font-medium text-slate-900">{{ payment.reference }}</dd></div>{% endif %}
           {% if can_review and payment.manager_note %}<div class="sm:col-span-2"><dt class="text-slate-500">Manager note</dt><dd class="mt-1 whitespace-pre-line text-slate-800">{{ payment.manager_note }}</dd></div>{% endif %}
           {% if payment.dispute_reason %}<div class="sm:col-span-2 lg:col-span-4 rounded-lg border border-orange-200 bg-orange-50 p-3"><dt class="font-semibold text-orange-900">Technician dispute</dt><dd class="mt-1 whitespace-pre-line text-orange-900">{{ payment.dispute_reason }}</dd></div>{% endif %}
           {% if payment.void_reason %}<div class="sm:col-span-2 lg:col-span-4"><dt class="text-slate-500">Void reason</dt><dd class="mt-1 whitespace-pre-line text-slate-700">{{ payment.void_reason }}</dd></div>{% endif %}
         </dl>
-        <p class="mt-4 text-xs text-slate-500">This is a manually recorded internal acknowledgement. JBMS does not send or verify money and does not create an invoice or receipt.</p>
+        {% comment %} <p class="mt-4 text-xs text-slate-500">This is a manually recorded internal acknowledgement. JBMS does not send or verify money and does not create an invoice or receipt.</p> {% endcomment %}
         <div class="mt-4 flex flex-wrap gap-2">
           {% if payment.batch_id %}<a href="{% url 'work_reports:payment_batch_detail' payment.batch_id %}" class="jims-btn jims-btn-primary">View complete payment batch</a>{% endif %}
           {% if can_respond_payment %}

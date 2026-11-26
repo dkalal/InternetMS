@@ -52,7 +52,15 @@
         {% endfor %}
       </div>
     </fieldset>
-    <div class="mt-7 flex justify-end gap-3"><a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a><button type="submit" class="jims-btn jims-btn-primary">{% if approved_correction %}Save controlled correction{% else %}Save draft{% endif %}</button></div>
+    <div class="mt-7 flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-end">
+      <a href="{% if report %}{% url 'work_reports:detail' report.pk %}{% else %}{% url 'work_reports:list' %}{% endif %}" class="jims-btn jims-btn-secondary">Cancel</a>
+      {% if approved_correction %}
+        <button type="submit" class="jims-btn jims-btn-primary">Save controlled correction</button>
+      {% else %}
+        <button type="submit" name="report_action" value="draft" class="jims-btn jims-btn-secondary">Save draft</button>
+        <button type="submit" name="report_action" value="submit" class="jims-btn jims-btn-primary">{% if report %}Save &amp; submit for review{% else %}Create &amp; submit report{% endif %}</button>
+      {% endif %}
+    </div>
   </form>
 </div>
 <template id="empty-work-date-form">

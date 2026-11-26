@@ -46,7 +46,7 @@ class AssignmentForm(forms.ModelForm):
 
 class AssignmentActionForm(forms.Form):
     version = forms.IntegerField(widget=forms.HiddenInput)
-    revision = forms.IntegerField(widget=forms.HiddenInput)
+    revision = forms.IntegerField(widget=forms.HiddenInput, required=False)
     action = forms.ChoiceField(choices=[("accept", "Accept offer"), ("decline", "Decline"), ("request_changes", "Request changes")])
     reason = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}))
     proposed_amount = forms.DecimalField(required=False, max_digits=14, decimal_places=2, min_value=0)

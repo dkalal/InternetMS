@@ -87,3 +87,44 @@ class AssignmentMigrationTests(TransactionTestCase):
         executor.migrate([before])
         apps = executor.loader.project_state([before]).apps
         self.assertTrue(apps.get_model("work_reports", "TechnicianWorkReport").objects.filter(pk=old_report.pk).exists())
+
+    def test_existing_report_and_history_survive_archive_migration_and_reversal(self):
+        before = ("work_reports", "0008_workassignment_request_key")
+        after = ("work_reports", "0009_technicianworkreport_archived_at_and_more")
+        executor = MigrationExecutor(connection)
+        executor.migrate([before])
+        apps = executor.loader.project_state([before]).apps
+        tenant = apps.get_model("users", "Organization").objects.create(
+            name="Synthetic archive tenant", slug="archive-migration-tenant",
+        )
+        user = apps.get_model("auth", "User").objects.create(username="archive-migration-technician")
+        member = apps.get_model("users", "TenantMembership").objects.create(
+            tenant=tenant, user=user, base_role="TECHNICIAN",
+        )
+        Report = apps.get_model("work_reports", "TechnicianWorkReport")
+        History = apps.get_model("work_reports", "WorkReportHistory")
+        report = Report.objects.create(
+            tenant=tenant, technician=member, work_title="Historical rejected report",
+            service_date=date(2026, 8, 1), activity_description="Historical work",
+            agreed_amount=Decimal("100000.00"), status="REJECTED",
+            rejection_reason="Needs more detail.",
+        )
+        History.objects.create(
+            tenant=tenant, report=report, actor_membership=member,
+            event="REJECTED", from_status="SUBMITTED", to_status="REJECTED",
+            reason="Needs more detail.", snapshot={"work_title": report.work_title},
+        )
+
+        MigrationExecutor(connection).migrate([after])
+        apps = MigrationExecutor(connection).loader.project_state([after]).apps
+        MigratedReport = apps.get_model("work_reports", "TechnicianWorkReport")
+        MigratedHistory = apps.get_model("work_reports", "WorkReportHistory")
+        migrated = MigratedReport.objects.get(pk=report.pk)
+        self.assertIsNone(migrated.archived_at)
+        self.assertIsNone(migrated.archived_by_id)
+        self.assertEqual(MigratedHistory.objects.filter(report_id=report.pk).count(), 1)
+
+        MigrationExecutor(connection).migrate([before])
+        apps = MigrationExecutor(connection).loader.project_state([before]).apps
+        self.assertTrue(apps.get_model("work_reports", "TechnicianWorkReport").objects.filter(pk=report.pk).exists())
+        self.assertEqual(apps.get_model("work_reports", "WorkReportHistory").objects.filter(report_id=report.pk).count(), 1)

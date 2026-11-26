@@ -1,14 +1,17 @@
 from datetime import date
 from decimal import Decimal
+import re
 
 from django import forms
+from django.core.exceptions import ValidationError
 from django.forms import BaseFormSet, formset_factory
 from django.utils import timezone
 
 from customers.models import Customer
 from internetservices.tailwind import apply_tailwind
 
-from .models import TechnicianPaymentRecord, TechnicianWorkReport
+from .bank_account_security import PayoutAccountEncryptionUnavailable, payout_account_cipher
+from .models import TechnicianPaymentRecord, TechnicianPayoutAccount, TechnicianWorkReport
 
 
 REPORT_FIELDS = (
@@ -136,6 +139,10 @@ class ApprovedCorrectionForm(WorkReportForm):
 
 
 class TechnicianPaymentForm(forms.ModelForm):
+    payout_account = forms.ModelChoiceField(
+        queryset=TechnicianPayoutAccount.objects.none(), required=False,
+        label="Technician payout account",
+    )
     confirm_adjusted_amount = forms.BooleanField(
         required=False,
         label="I approve this adjusted final amount",
@@ -160,13 +167,16 @@ class TechnicianPaymentForm(forms.ModelForm):
             "adjustment_reason": "Adjustment reason",
         }
         help_texts = {
-            "payment_method": "Descriptive label only; JBMS does not validate or transfer money.",
             "adjustment_reason": "Required when the final amount differs from the approved agreed amount.",
         }
 
     def __init__(self, *args, report, **kwargs):
         super().__init__(*args, **kwargs)
         self.report = report
+        self.fields["payout_account"].queryset = TechnicianPayoutAccount.objects.filter(
+            tenant=report.tenant, technician=report.technician, is_active=True,
+        ).order_by("-is_default", "bank_name", "id")
+        self.fields["payout_account"].label_from_instance = lambda account: account.display_label
         self.fields["amount_paid"].initial = report.agreed_amount
         apply_tailwind(self)
 
@@ -182,6 +192,11 @@ class TechnicianPaymentForm(forms.ModelForm):
                     "confirm_adjusted_amount",
                     "Explicitly approve the adjusted final amount.",
                 )
+        if cleaned.get("payment_method") == TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER:
+            if not cleaned.get("payout_account"):
+                self.add_error("payout_account", "Choose the Technician's account for this bank transfer.")
+        elif cleaned.get("payout_account"):
+            self.add_error("payout_account", "A payout account can only be selected for a bank transfer.")
         return cleaned
 
 
@@ -191,10 +206,13 @@ class TechnicianPaymentBatchForm(forms.Form):
     )
     payment_method = forms.ChoiceField(
         label="Payment method", choices=TechnicianPaymentRecord.PaymentMethod.choices,
-        help_text="Descriptive label only; JBMS does not validate or transfer money.",
     )
     method_description = forms.CharField(
         label="Describe other method", required=False, max_length=120,
+    )
+    payout_account = forms.ModelChoiceField(
+        queryset=TechnicianPayoutAccount.objects.none(), required=False,
+        label="Technician payout account",
     )
     reference = forms.CharField(label="Reference (optional)", required=False, max_length=200)
     manager_note = forms.CharField(
@@ -205,6 +223,12 @@ class TechnicianPaymentBatchForm(forms.Form):
     def __init__(self, *args, reports, **kwargs):
         super().__init__(*args, **kwargs)
         self.reports = list(reports)
+        if self.reports:
+            first = self.reports[0]
+            self.fields["payout_account"].queryset = TechnicianPayoutAccount.objects.filter(
+                tenant=first.tenant, technician=first.technician, is_active=True,
+            ).order_by("-is_default", "bank_name", "id")
+            self.fields["payout_account"].label_from_instance = lambda account: account.display_label
         if not self.is_bound:
             self.fields["payment_date"].initial = date.today()
         for report in self.reports:
@@ -225,6 +249,11 @@ class TechnicianPaymentBatchForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get("payment_method") == TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER:
+            if not cleaned.get("payout_account"):
+                self.add_error("payout_account", "Choose the Technician's account for this bank transfer.")
+        elif cleaned.get("payout_account"):
+            self.add_error("payout_account", "A payout account can only be selected for a bank transfer.")
         if (
             cleaned.get("payment_method") == TechnicianPaymentRecord.PaymentMethod.OTHER
             and not (cleaned.get("method_description") or "").strip()
@@ -289,3 +318,39 @@ class PaymentVoidForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         apply_tailwind(self)
+
+
+class TechnicianPayoutAccountForm(forms.Form):
+    label = forms.CharField(label="Account label (optional)", required=False, max_length=80,
+                            widget=forms.TextInput(attrs={"autocomplete": "off"}))
+    bank_name = forms.CharField(label="Bank name", max_length=120,
+                                widget=forms.TextInput(attrs={"autocomplete": "organization"}))
+    account_number = forms.CharField(
+        label="Bank account number", max_length=64, strip=True,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password", "inputmode": "text"}, render_value=False),
+        help_text="Saved encrypted. It will not be shown again after saving.",
+    )
+    account_number_confirmation = forms.CharField(
+        label="Confirm account number", max_length=64, strip=True,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password", "inputmode": "text"}, render_value=False),
+    )
+    make_default = forms.BooleanField(label="Use as my default payout account", required=False, initial=True)
+
+    def clean(self):
+        cleaned = super().clean()
+        account = "".join((cleaned.get("account_number") or "").split()).replace("-", "").upper()
+        confirmation = "".join((cleaned.get("account_number_confirmation") or "").split()).replace("-", "").upper()
+        if account and not re.fullmatch(r"[A-Z0-9]{4,64}", account):
+            self.add_error("account_number", "Enter a valid account number using letters or digits only.")
+        if account and confirmation and account != confirmation:
+            self.add_error("account_number_confirmation", "The account numbers do not match.")
+        if account:
+            try:
+                payout_account_cipher()
+            except PayoutAccountEncryptionUnavailable:
+                self.add_error(None, "Secure account storage is temporarily unavailable. Contact your administrator.")
+        cleaned["normalized_account_number"] = account
+        return cleaned
+
+    def clean_bank_name(self):
+        return " ".join(self.cleaned_data["bank_name"].split())

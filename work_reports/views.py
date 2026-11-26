@@ -1,16 +1,23 @@
+from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
-from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery
 from django.db.models.functions import Coalesce
-from django.http import Http404
+from django.db.models import DecimalField, Sum, Value
+from django.http import Http404, HttpResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.cache import never_cache
 
 from internetservices.listing import paginate_queryset
 from users.models import TenantMembership
@@ -20,10 +27,11 @@ from users.tenancy import require_tenant
 from .forms import (
     ApprovedCorrectionForm, PaymentDisputeForm, PaymentVoidForm,
     RejectionForm, TechnicianPaymentBatchForm, TechnicianPaymentForm,
-    WorkDateFormSet, WorkReportForm,
+    TechnicianPayoutAccountForm, WorkDateFormSet, WorkReportForm,
 )
 from .models import (
-    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianPayoutAccount,
+    TechnicianWorkReport,
     WorkReportServiceDay,
 )
 from .policies import (
@@ -31,11 +39,16 @@ from .policies import (
     technician_payment_queryset_for, work_report_queryset_for,
 )
 from .services import (
-    approve_report, correct_approved_report, create_report, reject_report,
+    archive_needs_correction_report, approve_report,
+    add_technician_payout_account, deactivate_technician_payout_account,
+    correct_approved_report, create_and_submit_report,
+    create_report, reject_report,
     confirm_technician_payment, confirm_technician_payment_batch,
     dispute_technician_payment, dispute_technician_payment_batch,
     record_technician_payment, record_technician_payment_batch,
-    replace_technician_payment, submit_report, update_own_report,
+    set_technician_payout_account_default,
+    replace_technician_payment, submit_report, update_and_submit_own_report,
+    update_own_report,
     void_technician_payment, void_technician_payment_batch,
 )
 
@@ -171,18 +184,22 @@ def report_list(request):
             membership=request.membership,
         )
     )
+    can_filter_payment_status = can_manage_payments or (
+        request.membership.base_role == TenantMembership.BaseRole.TECHNICIAN
+        and can_view_payments
+    )
     status = request.GET.get("status", "").upper()
     if status in TechnicianWorkReport.Status.values:
         queryset = queryset.filter(status=status)
     payment_status = request.GET.get("payment", "").upper()
-    if can_manage_payments and payment_status == "NOT_RECORDED":
+    if can_filter_payment_status and payment_status == "NOT_RECORDED":
         queryset = queryset.filter(
             status=TechnicianWorkReport.Status.APPROVED,
             active_payment_record_id__isnull=True,
             technician__is_active=True,
             technician__base_role=TenantMembership.BaseRole.TECHNICIAN,
         )
-    elif can_manage_payments and payment_status in TechnicianPaymentRecord.Status.values:
+    elif can_filter_payment_status and payment_status in TechnicianPaymentRecord.Status.values:
         queryset = queryset.filter(technician_payment_status=payment_status)
     query = request.GET.get("q", "").strip()
     if query:
@@ -196,6 +213,62 @@ def report_list(request):
             queryset = queryset.filter(technician_id=int(technician_filter))
         except ValueError:
             technician_filter = ""
+
+    # Date filters and all existing filters are applied before summary,
+    # pagination, and export so those three surfaces describe the same set.
+    date_from = request.GET.get("date_from", "").strip()
+    date_to = request.GET.get("date_to", "").strip()
+    try:
+        parsed_from = date.fromisoformat(date_from) if date_from else None
+        parsed_to = date.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        return HttpResponse("Invalid date filter.", status=400)
+    if parsed_from and parsed_to and parsed_from > parsed_to:
+        return HttpResponse("Start date must be on or before end date.", status=400)
+    if parsed_from or parsed_to:
+        legacy_filter = Q(_has_service_days=False)
+        if parsed_from:
+            legacy_filter &= Q(service_date__gte=parsed_from)
+        if parsed_to:
+            legacy_filter &= Q(service_date__lte=parsed_to)
+        matching_days = WorkReportServiceDay.objects.unscoped().filter(tenant=tenant)
+        if parsed_from:
+            matching_days = matching_days.filter(service_date__gte=parsed_from)
+        if parsed_to:
+            matching_days = matching_days.filter(service_date__lte=parsed_to)
+        report_days = WorkReportServiceDay.objects.unscoped().filter(
+            tenant=tenant, report_id=OuterRef("pk"),
+        )
+        queryset = queryset.annotate(_has_service_days=Exists(report_days)).filter(
+            Q(pk__in=Subquery(matching_days.values("report_id"))) | legacy_filter,
+        )
+
+    can_export = can_review and has_tenant_permission(
+        request.user, tenant, PermissionCode.REPORTS_EXPORT,
+        membership=request.membership,
+    )
+    if request.GET.get("export") == "xlsx":
+        if not can_export:
+            raise Http404
+        return _work_report_xlsx(queryset, request.GET, tenant=tenant)
+
+    amount_field = DecimalField(max_digits=18, decimal_places=2)
+    confirmed_payment = TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=tenant, report=OuterRef("pk"),
+        status=TechnicianPaymentRecord.Status.CONFIRMED,
+    ).order_by().values("report_id").annotate(total=Sum("amount_paid")).values("total")[:1]
+    summary = queryset.order_by().annotate(
+        confirmed_paid=Coalesce(
+            Subquery(confirmed_payment, output_field=amount_field),
+            Value(Decimal("0.00"), output_field=amount_field), output_field=amount_field,
+        ),
+    ).aggregate(
+        report_count=Count("pk"),
+        agreed_total=Coalesce(Sum("agreed_amount"), Value(Decimal("0.00"), output_field=amount_field)),
+        approved_total=Coalesce(Sum("agreed_amount", filter=Q(status=TechnicianWorkReport.Status.APPROVED)), Value(Decimal("0.00"), output_field=amount_field)),
+        confirmed_paid_total=Coalesce(Sum("confirmed_paid"), Value(Decimal("0.00"), output_field=amount_field)),
+    )
+    summary["approved_outstanding"] = max(Decimal("0.00"), summary["approved_total"] - summary["confirmed_paid_total"])
 
     pagination = paginate_queryset(request, queryset, default_page_size=10)
     report_page = pagination["page_obj"].object_list
@@ -229,6 +302,7 @@ def report_list(request):
 
     preserved = {
         "payment": payment_status, "q": query, "technician": technician_filter,
+        "date_from": date_from, "date_to": date_to,
     }
     status_tabs = []
     for value, label in (
@@ -250,11 +324,76 @@ def report_list(request):
         "pending_payment_batches": pending_batches,
         "status_tabs": status_tabs, "selected_status": status, "query": query,
         "can_review": can_review, "can_view_payments": can_view_payments,
+        "can_view_personal_summary": (
+            not can_review
+            and request.membership.base_role == TenantMembership.BaseRole.TECHNICIAN
+            and can_view_payments
+        ),
+        "can_delete_reports": (
+            request.membership.base_role == TenantMembership.BaseRole.TECHNICIAN
+            and has_tenant_permission(
+                request.user, tenant, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN,
+                membership=request.membership,
+            )
+        ),
+        "can_filter_payment_status": can_filter_payment_status,
+        "can_export": can_export, "financial_summary": summary,
+        "date_from": date_from, "date_to": date_to,
         "can_manage_payments": can_manage_payments,
         "selected_payment_status": payment_status,
         "technicians": technicians, "selected_technician": technician_filter,
         **pagination,
     })
+
+
+def _work_report_xlsx(queryset, filters, *, tenant):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Work Reports"
+    headers = ["Work date", "Technician", "Work", "Client", "Status", "Agreed amount (TZS)", "Confirmed paid (TZS)"]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="4338CA")
+    payments = TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=tenant, report=OuterRef("pk"),
+        status=TechnicianPaymentRecord.Status.CONFIRMED,
+    ).order_by().values("report_id").annotate(total=Sum("amount_paid")).values("total")[:1]
+    rows = queryset.select_related("technician__user").prefetch_related(None).prefetch_related(Prefetch(
+        "service_days", queryset=WorkReportServiceDay.objects.unscoped().filter(
+            tenant=tenant,
+        ).order_by("service_date", "id"),
+    )).annotate(
+        confirmed_paid=Coalesce(Subquery(payments), Value(Decimal("0.00"))),
+    ).order_by("service_date", "pk")
+    for report in rows.iterator(chunk_size=500):
+        # XLSX string cells remain text; untrusted descriptions cannot become formulas.
+        sheet.append([
+            report.service_days_summary, report.technician.user.get_full_name() or report.technician.user.username,
+            report.work_title, report.client_name, report.get_status_display(),
+            report.agreed_amount, report.confirmed_paid,
+        ])
+        for cell in sheet[sheet.max_row][:5]:
+            cell.data_type = "s"
+        for cell in sheet[sheet.max_row][5:]:
+            cell.number_format = '"TZS" #,##0.00'
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    context = workbook.create_sheet("Report context")
+    context.append(["Applied filters", "Value"])
+    for key in ("status", "payment", "q", "technician", "date_from", "date_to"):
+        context.append([key.replace("_", " ").title(), filters.get(key, "") or "All"])
+    context.append(["Timezone", settings.TIME_ZONE])
+    for row in context.iter_rows():
+        for cell in row:
+            cell.data_type = "s"
+    output = BytesIO()
+    workbook.save(output)
+    response = HttpResponse(output.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = 'attachment; filename="work_reports.xlsx"'
+    response["Cache-Control"] = "private, no-store"
+    return response
+
 
 @login_required
 def report_detail(request, pk):
@@ -288,6 +427,15 @@ def report_detail(request, pk):
         "history_start_index": history_page.start_index() if history_paginator.count else 0,
         "history_end_index": history_page.end_index() if history_paginator.count else 0,
         "can_review": can_review,
+        "can_delete": (
+            report.technician_id == request.membership.id
+            and report.status == TechnicianWorkReport.Status.REJECTED
+            and report.assignment_id is None
+            and has_tenant_permission(
+                request.user, tenant, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN,
+                membership=request.membership,
+            )
+        ),
         "can_edit": report.technician_id == request.membership.id and report.status in {
             TechnicianWorkReport.Status.DRAFT, TechnicianWorkReport.Status.REJECTED,
         },
@@ -312,6 +460,28 @@ def report_detail(request, pk):
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def report_delete(request, pk):
+    tenant = require_tenant(request)
+    require_permission(request, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN)
+    report = get_object_or_404(
+        TechnicianWorkReport.objects.unscoped().select_related("technician__user"),
+        pk=pk, tenant=tenant, technician=request.membership,
+        status=TechnicianWorkReport.Status.REJECTED,
+        assignment__isnull=True, archived_at__isnull=True,
+    )
+    if request.method == "POST":
+        try:
+            archive_needs_correction_report(report_id=report.pk, membership=request.membership)
+        except ValidationError as exc:
+            messages.error(request, _validation_message(exc))
+            return redirect("work_reports:detail", pk=report.pk)
+        messages.success(request, "Work report removed. Its audit history has been retained.")
+        return redirect("work_reports:list")
+    return render(request, "work_reports/report_delete_confirm.html", {"report": report})
+
+
+@login_required
 def report_create(request):
     tenant = require_tenant(request)
     require_permission(request, PermissionCode.TECHNICIAN_WORK_REPORTS_CREATE_OWN)
@@ -320,16 +490,31 @@ def report_create(request):
     if request.method == "POST":
         form_valid = form.is_valid()
         dates_valid = work_date_formset.is_valid()
+        report_action = request.POST.get("report_action", "draft")
+        action_valid = report_action in {"draft", "submit"}
+        if not action_valid:
+            form.add_error(None, "Choose Save draft or Submit for review.")
     else:
         form_valid = dates_valid = False
-    if form_valid and dates_valid:
-        report = create_report(
-            membership=request.membership,
-            cleaned_data=form.cleaned_data,
-            service_days=_cleaned_work_dates(work_date_formset),
-        )
-        messages.success(request, "Work report saved as a draft.")
-        return redirect("work_reports:detail", pk=report.pk)
+        report_action = "draft"
+        action_valid = True
+    if form_valid and dates_valid and action_valid:
+        try:
+            if report_action == "submit":
+                report = create_and_submit_report(
+                    membership=request.membership, cleaned_data=form.cleaned_data,
+                    service_days=_cleaned_work_dates(work_date_formset),
+                )
+            else:
+                report = create_report(
+                    membership=request.membership, cleaned_data=form.cleaned_data,
+                    service_days=_cleaned_work_dates(work_date_formset),
+                )
+        except ValidationError as exc:
+            form.add_error(None, _validation_message(exc))
+        else:
+            messages.success(request, "Work report submitted for review." if report_action == "submit" else "Work report saved as a draft.")
+            return redirect("work_reports:detail", pk=report.pk)
     return render(request, "work_reports/report_form.html", {
         "form": form, "work_date_formset": work_date_formset,
         "page_title": "New Work Report",
@@ -361,7 +546,7 @@ def report_edit(request, pk):
     require_permission(request, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN)
     report = get_object_or_404(
         TechnicianWorkReport.objects.unscoped(), pk=pk, tenant=tenant,
-        technician=request.membership,
+        technician=request.membership, archived_at__isnull=True,
     )
     if report.status not in {TechnicianWorkReport.Status.DRAFT, TechnicianWorkReport.Status.REJECTED}:
         raise Http404
@@ -370,19 +555,32 @@ def report_edit(request, pk):
     if request.method == "POST":
         form_valid = form.is_valid()
         dates_valid = work_date_formset.is_valid()
+        report_action = request.POST.get("report_action", "draft")
+        action_valid = report_action in {"draft", "submit"}
+        if not action_valid:
+            form.add_error(None, "Choose Save draft or Submit for review.")
     else:
         form_valid = dates_valid = False
-    if form_valid and dates_valid:
+        report_action = "draft"
+        action_valid = True
+    if form_valid and dates_valid and action_valid:
         try:
-            report = update_own_report(
-                report_id=report.pk, membership=request.membership,
-                cleaned_data=form.cleaned_data,
-                service_days=_cleaned_work_dates(work_date_formset),
-            )
+            if report_action == "submit":
+                report = update_and_submit_own_report(
+                    report_id=report.pk, membership=request.membership,
+                    cleaned_data=form.cleaned_data,
+                    service_days=_cleaned_work_dates(work_date_formset),
+                )
+            else:
+                report = update_own_report(
+                    report_id=report.pk, membership=request.membership,
+                    cleaned_data=form.cleaned_data,
+                    service_days=_cleaned_work_dates(work_date_formset),
+                )
         except ValidationError as exc:
             form.add_error(None, _validation_message(exc))
         else:
-            messages.success(request, "Work report updated.")
+            messages.success(request, "Work report submitted for review." if report_action == "submit" else "Work report updated as a draft.")
             return redirect("work_reports:detail", pk=report.pk)
     return render(request, "work_reports/report_form.html", {
         "form": form, "work_date_formset": work_date_formset,
@@ -604,6 +802,7 @@ def payment_batch_record(request):
                 membership=request.membership,
                 payment_date=data["payment_date"],
                 payment_method=data["payment_method"],
+                payout_account_id=data["payout_account"].pk if data.get("payout_account") else None,
                 method_description=data["method_description"],
                 reference=data["reference"], manager_note=data["manager_note"],
                 tenant=tenant, request_metadata=_request_metadata(request),
@@ -729,6 +928,7 @@ def payment_batch_replace(request, pk):
             replacement = record_technician_payment_batch(
                 report_allocations=form.allocations(), membership=request.membership,
                 payment_date=data["payment_date"], payment_method=data["payment_method"],
+                payout_account_id=data["payout_account"].pk if data.get("payout_account") else None,
                 method_description=data["method_description"], reference=data["reference"],
                 manager_note=data["manager_note"], tenant=tenant, replaces_batch_id=batch.pk,
                 request_metadata=_request_metadata(request),
@@ -754,6 +954,7 @@ def _render_payment_form(request, *, report, replaces=None):
             "amount_paid": data["amount_paid"],
             "payment_date": data["payment_date"],
             "payment_method": data["payment_method"],
+            "payout_account_id": data["payout_account"].pk if data.get("payout_account") else None,
             "reference": data["reference"],
             "manager_note": data["manager_note"],
             "adjustment_reason": data["adjustment_reason"],
@@ -793,6 +994,58 @@ def payment_record(request, report_pk):
         pk=report_pk, status=TechnicianWorkReport.Status.APPROVED,
     )
     return _render_payment_form(request, report=report)
+
+
+@login_required
+@never_cache
+def technician_profile(request):
+    tenant = require_tenant(request)
+    require_permission(request, PermissionCode.TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN)
+    if request.membership.base_role != TenantMembership.BaseRole.TECHNICIAN:
+        raise PermissionDenied("Only Technicians can manage their own payout account.")
+    form = TechnicianPayoutAccountForm(request.POST or None)
+    if request.method == "POST":
+        action = request.POST.get("action", "add")
+        try:
+            if action == "add":
+                if form.is_valid():
+                    data = form.cleaned_data
+                    add_technician_payout_account(
+                        membership=request.membership, tenant=tenant,
+                        label=data["label"], bank_name=data["bank_name"],
+                        account_number=data["normalized_account_number"],
+                        make_default=data["make_default"],
+                    )
+                    messages.success(request, "Payout account saved securely.")
+                    return redirect("work_reports:technician_profile")
+            elif action == "default":
+                set_technician_payout_account_default(
+                    account_id=request.POST.get("account_id"),
+                    membership=request.membership, tenant=tenant,
+                )
+                messages.success(request, "Default payout account updated.")
+                return redirect("work_reports:technician_profile")
+            elif action == "deactivate":
+                deactivate_technician_payout_account(
+                    account_id=request.POST.get("account_id"),
+                    membership=request.membership, tenant=tenant,
+                )
+                messages.success(request, "Payout account deactivated. Previous payment history is retained.")
+                return redirect("work_reports:technician_profile")
+            else:
+                raise ValidationError("Choose a valid account action.")
+        except ValidationError as exc:
+            if action == "add":
+                form.add_error(None, _validation_message(exc))
+            else:
+                messages.error(request, _validation_message(exc))
+                return redirect("work_reports:technician_profile")
+    accounts = TechnicianPayoutAccount.objects.filter(
+        tenant=tenant, technician=request.membership,
+    ).order_by("-is_active", "-is_default", "-created_at")
+    return render(request, "work_reports/technician_profile.html", {
+        "form": form, "payout_accounts": accounts,
+    })
 
 
 @login_required

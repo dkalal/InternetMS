@@ -17,7 +17,10 @@ from users.models import Organization, TenantMembership as M, SupportAccessSessi
 from customers.models import Customer
 from .assignment_services import save_assignment, manager_action, respond, create_assignment_report, complete_assignment
 from .models import WorkAssignment as A, WorkAssignmentHistory, TechnicianWorkReport as R
-from .services import submit_report, approve_report, reject_report, update_own_report, correct_approved_report
+from .services import (
+    archive_needs_correction_report, submit_report, approve_report,
+    reject_report, update_own_report, correct_approved_report,
+)
 
 
 class AssignmentFixtures:
@@ -295,10 +298,107 @@ class AssignmentTests(AssignmentFixtures, TestCase):
         payload = {"version": assignment.version, "revision": assignment.revision, "action": "accept"}
         client = self.client_for(self.tech)
         self.assertEqual(client.post(url, payload).status_code, 302)
-        # A stale manager form must render an actionable validation error.
+        # Manager actions now live on the edit form; a stale cancellation must
+        # still render the service's concurrency error there.
         manager = self.client_for(self.manager)
-        response = manager.post(url, {**payload, "action": "cancel", "reason": "Cancelled"})
+        edit_url = reverse("work_reports:assignment_edit", args=[assignment.pk])
+        response = manager.post(edit_url, {
+            "version": assignment.version - 1, "action": "cancel",
+            "reason": "Cancelled", "assignment_action": "cancel",
+        })
         self.assertContains(response, "Reload and review")
+
+    def test_manager_offer_and_cancel_actions_live_on_assignment_form(self):
+        client = self.client_for(self.manager)
+        create_url = reverse("work_reports:assignment_create")
+        draft = client.get(create_url)
+        self.assertEqual(draft.status_code, 200)
+        self.assertContains(draft, "Offer to Technician")
+        self.assertNotContains(draft, "Offer action")
+        data = {
+            "request_token": draft.context["form"]["request_token"].value(),
+            "version": "1", "technician": str(self.tech.pk), "customer": "",
+            "work_title": "Synthetic field visit", "scope": "Inspect equipment",
+            "client_name": "", "work_location": "Dar es Salaam",
+            "proposed_start": (timezone.localdate() + timedelta(days=1)).isoformat(),
+            "proposed_end": "", "proposed_amount": "50000.00", "instructions": "",
+            "management_notes": "", "reason": "", "action": "cancel",
+            "assignment_action": "send",
+        }
+        sent = client.post(create_url, data)
+        assignment = A.objects.unscoped().get(work_title="Synthetic field visit")
+        self.assertEqual(assignment.status, A.Status.OFFERED)
+        self.assertEqual(sent.status_code, 302)
+        edit_url = reverse("work_reports:assignment_edit", args=[assignment.pk])
+        edit = client.get(edit_url)
+        self.assertContains(edit, "Cancel assignment")
+        cancelled = client.post(edit_url, {
+            "version": str(assignment.version), "action": "cancel",
+            "reason": "Customer postponed the work", "assignment_action": "cancel",
+        })
+        assignment.refresh_from_db()
+        self.assertEqual(cancelled.status_code, 302)
+        self.assertEqual(assignment.status, A.Status.CANCELLED)
+        self.assertEqual(assignment.history.filter(event="CANCEL").count(), 1)
+
+    def test_technician_requested_values_appear_beside_matching_manager_labels(self):
+        requested_start = timezone.localdate() + timedelta(days=4)
+        requested_end = requested_start + timedelta(days=2)
+        assignment = self.response(
+            self.offer(), "request_changes", reason="The scope needs more time",
+            proposed_amount=Decimal("1500.00"), proposed_start=requested_start,
+            proposed_end=requested_end,
+        )
+        response = self.client_for(self.manager).get(
+            reverse("work_reports:assignment_edit", args=[assignment.pk]),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Technician requested: TZS 1,500.00")
+        self.assertContains(response, requested_start.strftime("%b") + f" {requested_start.day}, {requested_start.year}")
+        self.assertContains(response, requested_end.strftime("%b") + f" {requested_end.day}, {requested_end.year}")
+        # Suggestions are context only; they do not overwrite the manager's offer fields.
+        self.assertEqual(response.context["form"]["proposed_amount"].value(), Decimal("100000.00"))
+
+    def test_assignment_history_is_scannable_and_keeps_technician_scope_private(self):
+        assignment = self.offer()
+        self.response(
+            assignment, "request_changes", reason="Please allow more time",
+            proposed_amount=Decimal("125000.00"),
+            proposed_start=timezone.localdate() + timedelta(days=5),
+        )
+        url = reverse("work_reports:assignment_detail", args=[assignment.pk])
+        manager_response = self.client_for(self.manager).get(url)
+        self.assertContains(manager_response, "Offer history")
+        self.assertContains(manager_response, "Latest activity appears first")
+        self.assertContains(manager_response, "Offer sent to assignment-tech")
+        self.assertContains(manager_response, "Technician requested changes")
+        self.assertContains(manager_response, "Please allow more time")
+        self.assertContains(manager_response, "Technician requested")
+        self.assertContains(manager_response, "View offer snapshot")
+        self.assertContains(manager_response, "Revision 1")
+
+        technician_response = self.client_for(self.tech).get(url)
+        self.assertEqual(technician_response.status_code, 200)
+        self.assertContains(technician_response, "Technician requested changes")
+        self.assertNotContains(technician_response, "PRIVATE-MANAGEMENT-ONLY")
+
+    def test_assignment_history_summarizes_revised_offer_values(self):
+        assignment = self.offer()
+        assignment = self.response(
+            assignment, "request_changes", reason="More work is required",
+            proposed_amount=Decimal("125000.00"),
+        )
+        assignment = save_assignment(
+            assignment_id=assignment.pk, membership=self.manager,
+            version=assignment.version, cleaned_data={"proposed_amount": Decimal("125000.00")},
+        )
+        response = self.client_for(self.manager).get(
+            reverse("work_reports:assignment_detail", args=[assignment.pk]),
+        )
+        self.assertContains(response, "Assignment terms updated")
+        self.assertContains(response, "Changed terms")
+        self.assertContains(response, "TZS 100,000.00")
+        self.assertContains(response, "TZS 125,000.00")
 
     def test_report_browser_post_ignores_tampered_amount(self):
         assignment = self.response(self.offer())
@@ -312,6 +412,22 @@ class AssignmentTests(AssignmentFixtures, TestCase):
         report = R.objects.unscoped().get(assignment=assignment)
         self.assertEqual(report.agreed_amount, Decimal("100000"))
         self.assertEqual(report.work_title, assignment.work_title)
+
+    def test_assignment_linked_needs_correction_report_cannot_be_archived(self):
+        assignment = self.response(self.offer())
+        report = self.report(assignment)
+        submit_report(report_id=report.pk, membership=self.tech)
+        reject_report(
+            report_id=report.pk, membership=self.manager,
+            reason="Please provide a clearer completion summary.",
+        )
+
+        with self.assertRaises(ValidationError):
+            archive_needs_correction_report(report_id=report.pk, membership=self.tech)
+
+        report.refresh_from_db()
+        self.assertIsNone(report.archived_at)
+        self.assertFalse(report.history.filter(event="ARCHIVED").exists())
 
 
 class AssignmentConcurrencyTests(AssignmentFixtures, TransactionTestCase):

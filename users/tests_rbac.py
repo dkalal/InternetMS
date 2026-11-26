@@ -50,6 +50,7 @@ class TenantRBACSecurityTests(TestCase):
         )
         self.own_invoice = self._invoice(self.tenant_a, self.customer, "INV-OWN", self.sales_a_membership)
         self.other_sales_invoice = self._invoice(self.tenant_a, self.customer, "INV-OTHER-SALES", self.sales_b_membership)
+        self.admin_invoice = self._invoice(self.tenant_a, self.customer, "INV-ADMIN", self.manager_membership)
         self.other_tenant_invoice = self._invoice(self.tenant_b, self.other_customer, "INV-OTHER-TENANT", None)
 
     def _invoice(self, tenant, customer, number, membership):
@@ -72,12 +73,24 @@ class TenantRBACSecurityTests(TestCase):
         response = self.client.get(reverse("billing:document_pdf", kwargs={"doc_type": "invoice", "pk": self.other_tenant_invoice.pk}))
         self.assertEqual(response.status_code, 404)
 
-    def test_sales_can_complete_own_invoice_in_installments_but_not_another_sales_invoice(self):
+    def test_sales_can_follow_up_and_collect_any_tenant_invoice_but_not_cross_tenant(self):
         self.own_invoice.status = BillingDocument.Status.ISSUED
         self.own_invoice.save(update_fields=["status"])
         self.other_sales_invoice.status = BillingDocument.Status.ISSUED
         self.other_sales_invoice.save(update_fields=["status"])
+        self.admin_invoice.status = BillingDocument.Status.ISSUED
+        self.admin_invoice.save(update_fields=["status"])
         self.client.force_login(self.sales_a)
+
+        invoice_list = self.client.get(reverse("billing:document_list", args=["invoice"]))
+        self.assertEqual(invoice_list.status_code, 200)
+        self.assertContains(invoice_list, self.admin_invoice.number)
+        self.assertNotContains(invoice_list, self.other_sales_invoice.number)
+
+        admin_detail = self.client.get(reverse("billing:document_detail", kwargs={"doc_type": "invoice", "pk": self.admin_invoice.pk}))
+        self.assertEqual(admin_detail.status_code, 200)
+        receipt_form = self.client.get(reverse("billing:create_receipt_from_invoice", args=[self.admin_invoice.pk]))
+        self.assertEqual(receipt_form.status_code, 200)
 
         first = self.client.post(
             reverse("billing:create_receipt_from_invoice", args=[self.own_invoice.pk]),
@@ -93,15 +106,33 @@ class TenantRBACSecurityTests(TestCase):
         self.own_invoice.refresh_from_db()
         self.assertEqual(self.own_invoice.status, BillingDocument.Status.PARTIALLY_PAID)
 
-        denied = self.client.post(
-            reverse("billing:create_receipt_from_invoice", args=[self.other_sales_invoice.pk]),
+        admin_payment = self.client.post(
+            reverse("billing:create_receipt_from_invoice", args=[self.admin_invoice.pk]),
             {
                 "amount_paid": "100.00",
                 "payment_date": date.today().isoformat(),
                 "payment_method": "cash",
+                "payment_reference": "sales-admin-invoice",
             },
         )
-        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(admin_payment.status_code, 302)
+        self.admin_invoice.refresh_from_db()
+        self.assertEqual(self.admin_invoice.status, BillingDocument.Status.PAID)
+        admin_receipt = self.admin_invoice.receipts.get()
+        self.assertEqual(
+            self.client.get(reverse("billing:document_detail", kwargs={"doc_type": "receipt", "pk": admin_receipt.pk})).status_code,
+            200,
+        )
+        self.assertEqual(self.client.get(reverse("billing:receipt_print", args=[admin_receipt.pk])).status_code, 200)
+        receipts = self.client.get(reverse("billing:document_list", args=["receipt"]))
+        self.assertEqual(receipts.status_code, 200)
+        self.assertContains(receipts, admin_receipt.number)
+
+        cross_tenant = self.client.post(
+            reverse("billing:create_receipt_from_invoice", args=[self.other_tenant_invoice.pk]),
+            {"amount_paid": "100.00", "payment_date": date.today().isoformat(), "payment_method": "cash"},
+        )
+        self.assertEqual(cross_tenant.status_code, 404)
 
         final = self.client.post(
             reverse("billing:create_receipt_from_invoice", args=[self.own_invoice.pk]),
@@ -135,7 +166,7 @@ class TenantRBACSecurityTests(TestCase):
 
     def test_manager_sees_only_own_tenant_documents(self):
         ids = set(sales_document_queryset_for(self.manager, self.tenant_a).values_list("id", flat=True))
-        self.assertEqual(ids, {self.own_invoice.id, self.other_sales_invoice.id})
+        self.assertEqual(ids, {self.own_invoice.id, self.other_sales_invoice.id, self.admin_invoice.id})
 
     def test_manager_cannot_edit_self_or_cross_tenant(self):
         other_manager = TenantMembership.objects.create(

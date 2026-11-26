@@ -60,6 +60,50 @@ use the existing report lifecycle and cannot change linked accepted payment.
 Approval completes the assignment in the same transaction; acceptance and report
 submission never authorize payment. Payment services remain authoritative.
 
+## Removing reports that need correction
+
+A Technician may remove only their own `REJECTED` (Needs correction) report,
+using the existing `TECHNICIAN_WORK_REPORTS_UPDATE_OWN` permission. Confirmation
+is a CSRF-protected POST. This is an archive/soft-delete: `archived_at` and
+`archived_by` are recorded, an immutable `ARCHIVED` history event and audit log
+entry are written atomically, and the report is excluded from ordinary report
+lists, detail, editing, submission, summaries and exports. The report, work-date
+rows, correction reason and earlier history remain stored. Hard deletion remains
+prohibited. Reports linked to assignments cannot be removed, preserving the
+one-report-per-assignment and retry behavior. Draft, submitted and approved
+reports cannot be removed; the service also fails closed if any payment record
+is attached. The confirmation screen explains retention and the absence of a
+self-service restore action.
+
+Migration 0009 additively adds nullable archive metadata and the new history
+event choice; it does not rewrite existing report rows. Rolling back removes the
+archive metadata, so archived reports would reappear in ordinary lists. Before
+rollback, export or review archived IDs, restore their visibility intentionally,
+and preserve their history/audit evidence; never roll back this migration as a
+routine release step.
+
+The Work Reports workspace financial summary uses the complete authorized and
+filtered queryset before pagination. Work-date ranges match authoritative
+service-day rows, with the legacy report date used only where no service-day
+rows exist. The summary distinguishes total agreed amounts, approved amounts,
+confirmed payments, and approved amounts less confirmed payments. These values
+are Technician accountability figures, not payroll, billing, or accounting
+balances. Technicians see only totals for their own authorized reports and only
+when they have own-payment visibility; members with Work Report management
+access see tenant-wide figures. Payment-status filtering for Technicians is
+likewise limited to their own reports. Filtered XLSX export additionally
+requires `reports.export`. Export
+uses the same server-side filtered queryset across all pages, records its filter
+context, uses private no-store caching, and stores untrusted text as literal
+spreadsheet strings. No new persisted financial state or migration is needed.
+
+The design follows Django's queryset aggregation and pagination model and
+OWASP's spreadsheet export guidance: calculate totals over the authorized
+filtered result set and defend exported user-controlled text against formula
+interpretation. References: [Django aggregation](https://docs.djangoproject.com/en/5.2/topics/db/aggregation/),
+[Django pagination](https://docs.djangoproject.com/en/5.2/topics/pagination/),
+[OWASP CSV Injection](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Injection/21-CSV_Injection/).
+
 ## Migration and verification
 
 Migration 0007 adds assignment/history tables and a nullable unique report FK;
@@ -74,3 +118,48 @@ suite. Use a separate PostgreSQL test database through Docker Compose with curre
 source mounted read-only. Browser smoke uses synthetic data only, desktop and
 390px mobile. Never claim unavailable verification passed. No deployment or live
 database migration is authorized.
+
+## Technician payout destination accounts
+
+Technicians may manage only their own tenant-scoped destination bank accounts
+from `work_reports:technician_profile`. The stable
+`technician_payout_accounts.manage_own` permission is in the Technician baseline;
+the endpoint and lifecycle service both verify active membership, role, tenant,
+and ownership. There is no Manager CRUD endpoint for a Technician's account.
+Technicians may add an account, choose one active default, or deactivate an old
+account. Deactivation is soft and retained because payment history may reference
+that destination. A payment may reference only an active account owned by the
+Work Report's Technician in the same tenant. Bank-transfer recording requires a
+selected account; other methods cannot attach one. The manager's choice is
+revalidated under row locks by the payment service, for both single and batch
+records.
+
+Only the bank name and last four digits are copied into immutable payment and
+batch snapshots. The complete account number is collected twice, normalized,
+encrypted using a separately configured Fernet key ring before database write,
+and never returned by any application page or log. The owner sees bank and masked
+digits; authorized payment readers see those same masked destination details.
+The app does not collect account-holder name because it is not needed to record
+the destination, does not validate bank ownership, and does not initiate or
+confirm transfers. Bank details remain self-declared.
+
+Set `TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS` in the deployment secret manager
+before enabling account entry. Generate a Fernet key with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+The first comma-separated key encrypts new records; subsequent keys allow reads
+during rotation. This ring is independent of `DJANGO_SECRET_KEY`, has no source
+code or development fallback, and missing/invalid keys fail closed. Keep old
+keys available until ciphertext rotation and backup-retention requirements are
+complete. `rotate_technician_payout_account_keys` is a dry run by default;
+`--apply` rewrites existing ciphertext under the primary key. The command reports
+counts only and never emits account data.
+
+The additive payout-account migration introduces a nullable account FK and masked
+snapshots on payment records/batches, then adds the tenant-owned account table and
+constraints. Existing payment rows remain NULL and keep their existing history;
+there is no guessed account or historical backfill. Rolling back removes account
+records and payout references; retain an encrypted export and the corresponding
+key ring before rollback if payout destinations must be preserved. A live
+migration/deployment requires the separately configured key secret and a tested
+backup/restore path. No money movement, banking integration, or payroll balance
+is introduced.

@@ -21,6 +21,7 @@ class PermissionCode:
     CUSTOMERS_CREATE = "customers.create"
     CUSTOMERS_UPDATE = "customers.update"
     CUSTOMERS_ARCHIVE = "customers.archive"
+    CUSTOMER_PACKAGE_CHANGES_REPORT_VIEW = "customers.package_changes_report.view"
     PACKAGES_VIEW = "packages.view"
     PACKAGES_CREATE = "packages.create"
     PACKAGES_UPDATE = "packages.update"
@@ -87,6 +88,7 @@ class PermissionCode:
     TECHNICIAN_PAYMENTS_CONFIRM_OWN = "technician_payments.confirm_own"
     TECHNICIAN_PAYMENTS_DISPUTE_OWN = "technician_payments.dispute_own"
     TECHNICIAN_PAYMENTS_VOID = "technician_payments.void"
+    TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN = "technician_payout_accounts.manage_own"
 
     # Compatibility aliases used by existing views while they are migrated.
     TENANT_READ = CUSTOMERS_VIEW
@@ -155,6 +157,7 @@ TECHNICIAN_BASELINE = frozenset({
     PermissionCode.TECHNICIAN_PAYMENTS_VIEW_OWN,
     PermissionCode.TECHNICIAN_PAYMENTS_CONFIRM_OWN,
     PermissionCode.TECHNICIAN_PAYMENTS_DISPUTE_OWN,
+    PermissionCode.TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN,
 })
 
 WORK_REPORT_MANAGEMENT_PERMISSIONS = frozenset({
@@ -173,6 +176,7 @@ TENANT_OPERATION_PERMISSIONS = frozenset({
     PermissionCode.CUSTOMERS_BALANCE_SUMMARY_VIEW,
     PermissionCode.CUSTOMERS_VIEW, PermissionCode.CUSTOMERS_CREATE, PermissionCode.CUSTOMERS_UPDATE,
     PermissionCode.CUSTOMERS_ARCHIVE,
+    PermissionCode.CUSTOMER_PACKAGE_CHANGES_REPORT_VIEW,
     PermissionCode.PACKAGES_VIEW, PermissionCode.PACKAGES_CREATE, PermissionCode.PACKAGES_UPDATE,
     PermissionCode.PRODUCTS_VIEW, PermissionCode.PRODUCTS_CREATE, PermissionCode.PRODUCTS_UPDATE,
     PermissionCode.INVENTORY_VIEW, PermissionCode.INVENTORY_ADJUST, PermissionCode.PURCHASES_CREATE,
@@ -339,6 +343,63 @@ def sales_document_queryset_for(user, tenant, queryset=None, *, membership=None)
     return queryset.filter(Q(created_by_membership=membership) | Q(responsible_membership=membership)).distinct()
 
 
+def receivables_document_queryset_for(user, tenant, queryset=None, *, membership=None):
+    """Tenant receivables worklist available to staff authorized to record payments.
+
+    Sales can follow issued invoices across the tenant because collections are a
+    shared operational responsibility. Draft invoices remain private to their
+    creator/assignee, and quotations/other document types retain own-document
+    visibility through ``sales_document_queryset_for``.
+    """
+    from billing.models import BillingDocument
+
+    queryset = queryset if queryset is not None else BillingDocument.objects.unscoped().all()
+    queryset = queryset.filter(tenant=tenant)
+    membership = membership or membership_for(user, tenant)
+    if membership is None:
+        return queryset.none()
+    if membership.base_role in {TenantMembership.BaseRole.SUPER_ADMIN, TenantMembership.BaseRole.ADMIN_MANAGER}:
+        return queryset
+    if (
+        membership.base_role != TenantMembership.BaseRole.SALES
+        or not has_tenant_permission(user, tenant, PermissionCode.PAYMENTS_RECORD_OWN, membership=membership)
+    ):
+        return queryset.none()
+
+    issued_invoice_statuses = (
+        BillingDocument.Status.ISSUED,
+        BillingDocument.Status.SENT,
+        BillingDocument.Status.PARTIALLY_PAID,
+        BillingDocument.Status.PAID,
+        BillingDocument.Status.VOID,
+        BillingDocument.Status.SUPERSEDED,
+        BillingDocument.Status.CANCELLED,
+        BillingDocument.Status.REISSUED,
+    )
+    own_document = Q(created_by_membership=membership) | Q(responsible_membership=membership)
+    manager_invoice = Q(created_by_membership__base_role=TenantMembership.BaseRole.ADMIN_MANAGER)
+    visible_invoice = Q(
+        document_type=BillingDocument.DocumentType.INVOICE,
+        status__in=issued_invoice_statuses,
+    ) & (own_document | manager_invoice)
+    visible_receipt = Q(
+        document_type=BillingDocument.DocumentType.RECEIPT,
+        invoice__status__in=issued_invoice_statuses,
+    ) & (
+        Q(invoice__created_by_membership=membership)
+        | Q(invoice__responsible_membership=membership)
+        | Q(invoice__created_by_membership__base_role=TenantMembership.BaseRole.ADMIN_MANAGER)
+    )
+    return queryset.filter(
+        visible_invoice
+        | Q(
+            document_type=BillingDocument.DocumentType.INVOICE,
+            status=BillingDocument.Status.DRAFT,
+        ) & own_document
+        | visible_receipt
+    ).distinct()
+
+
 def can_view_sales_document(user, document, *, membership=None) -> bool:
     return sales_document_queryset_for(
         user, document.tenant, membership=membership
@@ -359,7 +420,9 @@ def can_record_payment(user, invoice, *, membership=None) -> bool:
     membership = membership or membership_for(user, invoice.tenant)
     if not has_tenant_permission(user, invoice.tenant, PermissionCode.PAYMENTS_RECORD_OWN, membership=membership):
         return False
-    return can_view_sales_document(user, invoice, membership=membership)
+    return receivables_document_queryset_for(
+        user, invoice.tenant, membership=membership
+    ).filter(pk=invoice.pk).exists()
 
 
 def financial_report_queryset_for(user, tenant, queryset, *, membership=None):

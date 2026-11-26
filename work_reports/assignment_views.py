@@ -1,9 +1,13 @@
+from datetime import date
+from decimal import Decimal, InvalidOperation
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 
 from internetservices.listing import paginate_queryset
+from users.models import TenantMembership
 from users.permissions import PermissionCode as P
 from users.tenancy import require_tenant
 from .assignment_forms import AssignmentForm, AssignmentActionForm
@@ -19,6 +23,100 @@ def _manager(request):
 def _query(request):
     tenant = require_tenant(request)
     return assignment_queryset(membership=request.membership, tenant=tenant).select_related("technician__user", "customer", "report")
+
+
+def _format_history_value(name, value):
+    if value in (None, ""):
+        return "Not set"
+    if name == "proposed_amount":
+        try:
+            return "TZS {:,.2f}".format(Decimal(str(value)))
+        except (InvalidOperation, TypeError, ValueError):
+            return str(value)
+    if name in {"proposed_start", "proposed_end"}:
+        try:
+            parsed = date.fromisoformat(value)
+            return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}"
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _history_timeline(page, *, manager, membership, tenant):
+    entries = list(page)
+    snapshots = [entry.snapshot or {} for entry in entries]
+    membership_ids = {
+        terms.get("technician_id")
+        for snapshot in snapshots
+        for terms in (snapshot.get("terms", {}), snapshot.get("previous_terms", {}))
+        if terms.get("technician_id")
+    }
+    technicians = {
+        item.pk: str(item.user)
+        for item in TenantMembership.objects.filter(tenant=tenant, pk__in=membership_ids).select_related("user")
+    }
+    labels = dict(WorkAssignment.Status.choices)
+    field_labels = {
+        "work_title": "Work title", "scope": "Scope", "client_name": "Client",
+        "work_location": "Location", "proposed_amount": "Payment amount",
+        "proposed_start": "Start date", "proposed_end": "End date",
+        "instructions": "Instructions",
+    }
+    event_styles = {
+        "CREATED": "slate", "REVISED": "indigo", "SEND": "blue",
+        "ACCEPT": "emerald", "DECLINE": "rose", "REQUEST_CHANGES": "amber",
+        "CANCEL": "rose", "REPORT_CREATED": "violet", "COMPLETED": "emerald",
+    }
+    timeline = []
+    for entry, snapshot in zip(entries, snapshots):
+        terms = snapshot.get("terms", {})
+        previous = snapshot.get("previous_terms", {})
+        suggestions = snapshot.get("suggestions", {})
+        previous_belongs_to_actor = previous.get("technician_id") in (None, membership.pk)
+        changed_terms = []
+        if previous and (manager or previous_belongs_to_actor):
+            for name, label in field_labels.items():
+                old, new = previous.get(name), terms.get(name)
+                if old != new:
+                    changed_terms.append({
+                        "label": label,
+                        "old": _format_history_value(name, old),
+                        "new": _format_history_value(name, new),
+                        "long_text": name in {"scope", "instructions"},
+                    })
+            if manager and previous.get("technician_id") != terms.get("technician_id"):
+                changed_terms.insert(0, {
+                    "label": "Technician",
+                    "old": technicians.get(previous.get("technician_id"), "Previous Technician"),
+                    "new": technicians.get(terms.get("technician_id"), "Current Technician"),
+                })
+        if entry.event == "CREATED":
+            summary = "Draft assignment created"
+        elif entry.event == "REVISED":
+            summary = "Assignment terms updated"
+        elif entry.event == "SEND":
+            summary = f"Offer sent to {technicians.get(terms.get('technician_id'), 'the Technician')}"
+        elif entry.event == "REQUEST_CHANGES":
+            summary = "Technician requested changes"
+        elif entry.event == "REPORT_CREATED":
+            summary = "Work Report created"
+        elif entry.event == "COMPLETED":
+            summary = "Assignment completed after report approval"
+        else:
+            summary = entry.event_label
+        shown_suggestions = []
+        if entry.event == "REQUEST_CHANGES":
+            for name, label in (("proposed_amount", "Payment amount"), ("proposed_start", "Start date"), ("proposed_end", "End date")):
+                if suggestions.get(name) not in (None, ""):
+                    shown_suggestions.append({"label": label, "value": _format_history_value(name, suggestions[name])})
+        timeline.append({
+            "entry": entry, "summary": summary, "style": event_styles.get(entry.event, "slate"),
+            "from_status_label": labels.get(entry.from_status, entry.from_status or "—"),
+            "to_status_label": labels.get(entry.to_status, entry.to_status),
+            "changed_terms": changed_terms, "suggestions": shown_suggestions,
+            "terms": terms,
+        })
+    return timeline
 
 
 @login_required
@@ -40,6 +138,48 @@ def assignment_edit(request, pk=None):
     require_actor(request.membership, P.WORK_ASSIGNMENTS_MANAGE)
     assignment = get_object_or_404(_query(request), pk=pk) if pk else None
     form = AssignmentForm(request.POST or None, instance=assignment, tenant=tenant, membership=request.membership)
+    requested_changes = {}
+    if assignment:
+        change_event = assignment.history.filter(
+            tenant=tenant, event="REQUEST_CHANGES",
+        ).order_by("-created_at", "-pk").first()
+        suggestions = (change_event.snapshot or {}).get("suggestions", {}) if change_event else {}
+        if suggestions.get("proposed_amount") not in (None, ""):
+            try:
+                requested_changes["proposed_amount"] = "TZS {:,.2f}".format(Decimal(str(suggestions["proposed_amount"])))
+            except (InvalidOperation, TypeError, ValueError):
+                pass
+        for field_name in ("proposed_start", "proposed_end"):
+            raw_date = suggestions.get(field_name)
+            if raw_date:
+                try:
+                    parsed_date = date.fromisoformat(raw_date)
+                    requested_changes[field_name] = f"{parsed_date.strftime('%b')} {parsed_date.day}, {parsed_date.year}"
+                except (TypeError, ValueError):
+                    requested_changes[field_name] = str(raw_date)
+    form_fields = [
+        {"field": field, "requested_change": requested_changes.get(field.name)}
+        for field in form.visible_fields()
+    ]
+    assignment_action = request.POST.get("assignment_action", "") if request.method == "POST" else ""
+    if request.method == "POST" and assignment_action == "cancel" and assignment:
+        action_form = AssignmentActionForm(request.POST, manager=True, status=assignment.status)
+        if action_form.is_valid():
+            try:
+                manager_action(
+                    assignment_id=pk, membership=request.membership,
+                    version=action_form.cleaned_data["version"], action="cancel",
+                    reason=action_form.cleaned_data["reason"],
+                )
+            except ValidationError as exc:
+                action_form.add_error(None, "; ".join(exc.messages))
+            else:
+                messages.success(request, "Assignment cancelled.")
+                return redirect("work_reports:assignment_detail", pk=pk)
+        return render(request, "work_reports/assignment_form.html", {
+            "form": form, "assignment": assignment, "action_form": action_form,
+            "can_send": False, "can_cancel": True, "form_fields": form_fields,
+        })
     if request.method == "POST" and form.is_valid():
         try:
             result = save_assignment(
@@ -47,11 +187,24 @@ def assignment_edit(request, pk=None):
                 version=form.cleaned_data.get("version"), reason=form.cleaned_data["reason"], cleaned_data=form.cleaned_data,
                 request_token=form.cleaned_data.get("request_token"),
             )
+            if assignment_action == "send":
+                result = manager_action(
+                    assignment_id=result.pk, membership=request.membership,
+                    version=result.version, action="send",
+                )
         except ValidationError as exc:
             form.add_error(None, "; ".join(exc.messages))
         else:
             return redirect("work_reports:assignment_detail", pk=result.pk)
-    return render(request, "work_reports/assignment_form.html", {"form": form, "assignment": assignment})
+    return render(request, "work_reports/assignment_form.html", {
+        "form": form, "assignment": assignment, "form_fields": form_fields,
+        "can_send": not assignment or (not getattr(assignment, "report", None) and assignment.status in {
+            WorkAssignment.Status.DRAFT, WorkAssignment.Status.OFFERED,
+            WorkAssignment.Status.CHANGES_REQUESTED, WorkAssignment.Status.DECLINED,
+            WorkAssignment.Status.ACCEPTED,
+        }),
+        "can_cancel": assignment and not getattr(assignment, "report", None) and assignment.status not in {WorkAssignment.Status.CANCELLED, WorkAssignment.Status.COMPLETED},
+    })
 
 
 @login_required
@@ -75,13 +228,17 @@ def assignment_detail(request, pk):
     # accepted terms are sufficient; management alone sees the complete history.
     if not manager and request.membership.base_role == request.membership.BaseRole.TECHNICIAN:
         history = history.filter(snapshot__terms__technician_id=request.membership.pk).exclude(to_status="DRAFT")
+    history_page = paginate_queryset(request, history, default_page_size=20)["page_obj"]
     linked = getattr(assignment, "report", None)
     return render(request, "work_reports/assignment_detail.html", {
         "assignment": assignment, "manager": manager, "form": form,
-        "history_page": paginate_queryset(request, history, default_page_size=20)["page_obj"],
+        "history_page": history_page,
+        "history_items": _history_timeline(
+            history_page, manager=manager, membership=request.membership, tenant=assignment.tenant,
+        ),
         "linked_report": linked,
         "can_edit": manager and not linked and assignment.status not in {"CANCELLED", "COMPLETED"},
-        "can_act": not linked and ((manager and assignment.status not in {"CANCELLED", "COMPLETED"}) or (request.membership.base_role == request.membership.BaseRole.TECHNICIAN and assignment.status == "OFFERED")),
+        "can_act": not linked and not manager and request.membership.base_role == request.membership.BaseRole.TECHNICIAN and assignment.status == "OFFERED",
         "can_create_report": request.membership.base_role == request.membership.BaseRole.TECHNICIAN and assignment.status == "ACCEPTED" and not linked,
     })
 

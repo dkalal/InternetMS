@@ -19,6 +19,12 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-secret-key')
 if not DEBUG and SECRET_KEY == 'dev-only-insecure-secret-key':
     raise RuntimeError('DJANGO_SECRET_KEY is required when DJANGO_DEBUG=0.')
 
+# Separate, rotatable application key ring for Technician bank account numbers.
+# Never fall back to Django's SECRET_KEY or a source-controlled development key.
+TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS = env_list(
+    'TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS',
+)
+
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'internet.home.arpa,10.10.10.254,localhost,127.0.0.1')
 
 # Always trust the Railway domain + any extra origins from env

@@ -18,6 +18,9 @@ class WorkReportQuerySet(TenantScopedQuerySet):
     def delete(self):
         raise ValidationError("Work reports are retained as business history and cannot be deleted.")
 
+    def active(self):
+        return self.filter(archived_at__isnull=True)
+
 
 class WorkReportServiceDayQuerySet(TenantScopedQuerySet):
     def update(self, **kwargs):
@@ -33,6 +36,14 @@ class ImmutablePaymentQuerySet(TenantScopedQuerySet):
 
     def delete(self):
         raise ValidationError("Technician payment records are retained as business history and cannot be deleted.")
+
+
+class TechnicianPayoutAccountQuerySet(TenantScopedQuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Technician payout accounts must be changed through lifecycle services.")
+
+    def delete(self):
+        raise ValidationError("Technician payout accounts are retained as payment history.")
 
 
 class TechnicianWorkReport(models.Model):
@@ -83,6 +94,11 @@ class TechnicianWorkReport(models.Model):
         "users.TenantMembership", on_delete=models.PROTECT,
         related_name="approved_work_reports", null=True, blank=True,
     )
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    archived_by = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT,
+        related_name="archived_work_reports", null=True, blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -94,6 +110,22 @@ class TechnicianWorkReport(models.Model):
             models.Index(fields=["tenant", "technician", "status"]),
             models.Index(fields=["tenant", "status", "submitted_at"]),
             models.Index(fields=["tenant", "service_date"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(archived_at__isnull=True, archived_by__isnull=True)
+                    | models.Q(archived_at__isnull=False, archived_by__isnull=False)
+                ),
+                name="work_report_archive_actor_pair",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(archived_at__isnull=True)
+                    | models.Q(status="REJECTED", assignment__isnull=True)
+                ),
+                name="work_report_archive_only_rejected_unlinked",
+            ),
         ]
 
     def __str__(self):
@@ -128,6 +160,18 @@ class TechnicianWorkReport(models.Model):
             errors["rejection_reason"] = "A rejection reason is required."
         if self.status == self.Status.APPROVED and (not self.approved_by_id or not self.approved_at):
             errors["status"] = "Approved reports require an approver and approval timestamp."
+        if bool(self.archived_at) != bool(self.archived_by_id):
+            errors["archived_at"] = "Archived reports require an archive timestamp and actor."
+        if self.archived_at:
+            if self.status != self.Status.REJECTED:
+                errors["status"] = "Only reports needing correction may be archived."
+            if self.assignment_id:
+                errors["assignment"] = "Assignment-linked reports cannot be archived."
+            if self.archived_by_id and (
+                self.archived_by.tenant_id != self.tenant_id
+                and self.archived_by.base_role != self.archived_by.BaseRole.SUPER_ADMIN
+            ):
+                errors["archived_by"] = "Archive actor belongs to another tenant."
         if errors:
             raise ValidationError(errors)
 
@@ -136,6 +180,13 @@ class TechnicianWorkReport(models.Model):
             previous = type(self).objects.unscoped().filter(pk=self.pk).first()
             if previous and previous.assignment_id != self.assignment_id:
                 raise ValidationError("A report's assignment link is immutable.")
+            if previous and previous.archived_at and not getattr(self, "_archive_write", False):
+                raise ValidationError("Archived work reports cannot be changed.")
+            if previous and (
+                previous.archived_at != self.archived_at
+                or previous.archived_by_id != self.archived_by_id
+            ) and not getattr(self, "_archive_write", False):
+                raise ValidationError("Work Report archive state must be changed through its lifecycle service.")
             if previous and previous.status == self.Status.APPROVED and not getattr(self, "_approved_correction", False):
                 protected = (
                     "assignment_id",
@@ -295,6 +346,87 @@ class WorkReportServiceDay(models.Model):
         return super().delete(*args, **kwargs)
 
 
+class TechnicianPayoutAccount(models.Model):
+    """A Technician-owned, tenant-scoped destination account. Account numbers stay encrypted."""
+
+    tenant = models.ForeignKey(
+        "users.Organization", on_delete=models.PROTECT,
+        related_name="technician_payout_accounts", db_index=True,
+    )
+    technician = models.ForeignKey(
+        "users.TenantMembership", on_delete=models.PROTECT,
+        related_name="payout_accounts", db_index=True,
+    )
+    label = models.CharField(max_length=80, blank=True, default="")
+    bank_name = models.CharField(max_length=120)
+    account_number_encrypted = models.CharField(max_length=255, editable=False)
+    account_number_last4 = models.CharField(max_length=4, editable=False)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = TenantScopedManager.from_queryset(TechnicianPayoutAccountQuerySet)()
+
+    class Meta:
+        ordering = ["-is_default", "-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "technician"],
+                condition=models.Q(is_default=True),
+                name="one_default_payout_account_per_technician",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(is_default=True) | models.Q(is_active=True),
+                name="default_payout_account_must_be_active",
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.technician_id:
+            if self.technician.tenant_id != self.tenant_id:
+                errors["technician"] = "Payout account and Technician must belong to the same workspace."
+            if self.technician.base_role != self.technician.BaseRole.TECHNICIAN:
+                errors["technician"] = "Payout accounts are only available to Technicians."
+        if self.is_default and not self.is_active:
+            errors["is_default"] = "An inactive payout account cannot be the default."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            key_rotation = getattr(self, "_key_rotation", False)
+            if not getattr(self, "_lifecycle_transition", False) and not key_rotation:
+                raise ValidationError("Technician payout accounts must be changed through lifecycle services.")
+            previous = type(self).objects.unscoped().filter(pk=self.pk).values(
+                "tenant_id", "technician_id", "label", "bank_name",
+                "account_number_encrypted", "account_number_last4",
+            ).first()
+            protected_fields = (
+                "tenant_id", "technician_id", "label", "bank_name",
+                "account_number_last4",
+            )
+            if not key_rotation:
+                protected_fields += ("account_number_encrypted",)
+            if previous is None or any(
+                previous[field] != getattr(self, field)
+                for field in protected_fields
+            ):
+                raise ValidationError("Saved payout account details cannot be overwritten; add a new account instead.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Technician payout accounts are retained as payment history.")
+
+    @property
+    def display_label(self):
+        suffix = f"•••• {self.account_number_last4}"
+        label = f" ({self.label})" if self.label else ""
+        return f"{self.bank_name}{label} · {suffix}"
+
+
 class TechnicianPaymentRecord(models.Model):
     class Status(models.TextChoices):
         AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION", "Awaiting Technician confirmation"
@@ -319,6 +451,12 @@ class TechnicianPaymentRecord(models.Model):
     amount_paid = models.DecimalField(max_digits=14, decimal_places=2)
     payment_date = models.DateField(db_index=True)
     payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices)
+    payout_account = models.ForeignKey(
+        TechnicianPayoutAccount, on_delete=models.PROTECT,
+        related_name="payment_records", null=True, blank=True,
+    )
+    payout_bank_name_snapshot = models.CharField(max_length=120, blank=True, default="")
+    payout_account_last4_snapshot = models.CharField(max_length=4, blank=True, default="")
     reference = models.CharField(max_length=200, blank=True, default="")
     manager_note = models.TextField(blank=True, default="")
     adjustment_reason = models.TextField(blank=True, default="")
@@ -415,6 +553,21 @@ class TechnicianPaymentRecord(models.Model):
                 errors["report"] = "Payment and Work Report tenants must match."
             if self.report.status != TechnicianWorkReport.Status.APPROVED:
                 errors["report"] = "Only an approved Work Report can have a payment record."
+        if self.payout_account_id:
+            if (
+                self.payout_account.tenant_id != self.tenant_id
+                or self.payout_account.technician_id != self.report.technician_id
+            ):
+                errors["payout_account"] = "Choose an account belonging to this Work Report's Technician."
+            if (
+                self.payout_bank_name_snapshot != self.payout_account.bank_name
+                or self.payout_account_last4_snapshot != self.payout_account.account_number_last4
+            ):
+                errors["payout_account"] = "Payment account snapshot does not match the selected account."
+        elif self.payment_method == self.PaymentMethod.BANK_TRANSFER and self.pk is None:
+            errors["payout_account"] = "Select the Technician's payout account used for this bank transfer."
+        elif self.payout_bank_name_snapshot or self.payout_account_last4_snapshot:
+            errors["payout_account"] = "A payout account snapshot requires a linked account."
         if (
             self.amount_paid is not None
             and self.agreed_amount_snapshot is not None
@@ -453,6 +606,7 @@ class TechnicianPaymentRecord(models.Model):
                 or self.batch.status != self.status
                 or self.batch.payment_date != self.payment_date
                 or self.batch.payment_method != self.payment_method
+                or self.batch.payout_account_id != self.payout_account_id
             ):
                 errors["batch"] = "Payment allocation and batch details must remain consistent."
         if errors:
@@ -477,6 +631,9 @@ class TechnicianPaymentRecord(models.Model):
             "difference": str(self.difference),
             "payment_date": self.payment_date.isoformat(),
             "payment_method": self.payment_method,
+            "payout_account_id": self.payout_account_id,
+            "payout_bank_name": self.payout_bank_name_snapshot,
+            "payout_account_last4": self.payout_account_last4_snapshot,
             "reference": self.reference,
             "manager_note": self.manager_note,
             "adjustment_reason": self.adjustment_reason,
@@ -507,6 +664,12 @@ class TechnicianPaymentBatch(models.Model):
     payment_method = models.CharField(
         max_length=20, choices=TechnicianPaymentRecord.PaymentMethod.choices,
     )
+    payout_account = models.ForeignKey(
+        TechnicianPayoutAccount, on_delete=models.PROTECT,
+        related_name="payment_batches", null=True, blank=True,
+    )
+    payout_bank_name_snapshot = models.CharField(max_length=120, blank=True, default="")
+    payout_account_last4_snapshot = models.CharField(max_length=4, blank=True, default="")
     method_description = models.CharField(max_length=120, blank=True, default="")
     reference = models.CharField(max_length=200, blank=True, default="")
     manager_note = models.TextField(blank=True, default="")
@@ -603,6 +766,21 @@ class TechnicianPaymentBatch(models.Model):
             or self.technician.base_role != self.technician.BaseRole.TECHNICIAN
         ):
             errors["technician"] = "Batch Technician must belong to this tenant."
+        if self.payout_account_id:
+            if (
+                self.payout_account.tenant_id != self.tenant_id
+                or self.payout_account.technician_id != self.technician_id
+            ):
+                errors["payout_account"] = "Choose an account belonging to this batch's Technician."
+            if (
+                self.payout_bank_name_snapshot != self.payout_account.bank_name
+                or self.payout_account_last4_snapshot != self.payout_account.account_number_last4
+            ):
+                errors["payout_account"] = "Payment account snapshot does not match the selected account."
+        elif self.payment_method == TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER and self.pk is None:
+            errors["payout_account"] = "Select the Technician's payout account used for this bank transfer."
+        elif self.payout_bank_name_snapshot or self.payout_account_last4_snapshot:
+            errors["payout_account"] = "A payout account snapshot requires a linked account."
         if self.recorded_by_id and self.recorded_by.tenant_id != self.tenant_id:
             errors["recorded_by"] = "Recording Manager belongs to another tenant."
         if self.payment_method == TechnicianPaymentRecord.PaymentMethod.OTHER and not self.method_description.strip():
@@ -653,6 +831,9 @@ class TechnicianPaymentBatch(models.Model):
             "allocations": allocations,
             "payment_date": self.payment_date.isoformat(),
             "payment_method": self.payment_method,
+            "payout_account_id": self.payout_account_id,
+            "payout_bank_name": self.payout_bank_name_snapshot,
+            "payout_account_last4": self.payout_account_last4_snapshot,
             "method_description": self.method_description,
             "reference": self.reference,
             "manager_note": self.manager_note,
@@ -689,6 +870,7 @@ class WorkReportHistory(models.Model):
         REJECTED = "REJECTED", "Rejected"
         APPROVED = "APPROVED", "Approved"
         CORRECTED = "CORRECTED", "Approved report corrected"
+        ARCHIVED = "ARCHIVED", "Needs-correction report deleted"
         PAYMENT_RECORDED = "PAYMENT_RECORDED", "Technician payment recorded"
         PAYMENT_ADJUSTMENT_APPROVED = "PAYMENT_ADJUSTMENT_APPROVED", "Adjusted payment approved"
         PAYMENT_CONFIRMED = "PAYMENT_CONFIRMED", "Payment acknowledgement confirmed"

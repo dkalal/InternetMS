@@ -6,7 +6,7 @@ from .models import TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianW
 
 def work_report_queryset_for(user, tenant, queryset=None, *, membership=None):
     queryset = queryset if queryset is not None else TechnicianWorkReport.objects.unscoped().all()
-    queryset = queryset.filter(tenant=tenant)
+    queryset = queryset.filter(tenant=tenant, archived_at__isnull=True)
     membership = membership or TenantMembership.objects.filter(
         user=user, tenant=tenant, is_active=True,
     ).first()
