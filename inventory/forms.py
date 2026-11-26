@@ -304,6 +304,8 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
 
 
 class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
+    purchase_packaging = forms.ChoiceField(required=False, label='Purchase unit', choices=[('', 'Base unit')])
+    purchase_configuration = forms.IntegerField(required=False, widget=forms.HiddenInput)
     product = PurchaseProductChoiceField(
         queryset=Product.objects.none(),
         empty_label='Select a product',
@@ -341,6 +343,17 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['product'].widget.attrs.pop('data-searchable-select', None)
         self.fields['product'].widget.attrs.pop('data-search-label', None)
         self.fields['product'].widget.attrs.pop('data-search-placeholder', None)
+        selected_id = self.data.get(self.add_prefix('product')) if self.is_bound else self.instance.product_id
+        selected = self.fields['product'].queryset.filter(pk=selected_id).first() if str(selected_id or '').isdigit() else None
+        self.has_packaging = bool(selected and selected.packaging_enabled)
+        if self.has_packaging:
+            from .packaging_receipts import packaging_options
+            self.fields['purchase_packaging'].choices = [('', selected.get_measure_unit_display())] + [
+                (str(row['id']), row['label']) for row in packaging_options(selected)]
+            self.initial['purchase_configuration'] = selected.packaging_version
+            if self.instance.unit_factor is not None:
+                self.initial.update(quantity=self.instance.entered_quantity, unit_cost=self.instance.entered_unit_cost,
+                    purchase_packaging=str(self.instance.packaging_id or ''), purchase_configuration=self.instance.packaging_version)
         self.fields['quantity'].label = 'Quantity'
         self.fields['unit_cost'].label = 'Unit cost'
         self.fields['batch_reference'].label = 'Batch reference (optional)'
@@ -359,6 +372,24 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
             for value in (cleaned.get('serial_numbers') or '').replace(',', '\n').splitlines()
             if value.strip()
         ]
+        if product and product.packaging_enabled and cleaned.get('quantity') is not None and cleaned.get('unit_cost') is not None:
+            from .packaging_receipts import purchase_snapshot
+            try:
+                snapshot = purchase_snapshot(organization=self.organization, product=product,
+                    packaging_id=cleaned.get('purchase_packaging'), quantity=quantity, unit_cost=cleaned['unit_cost'],
+                    version=cleaned.get('purchase_configuration'))
+                for name, value in snapshot.items():
+                    if name in ('quantity', 'unit_cost'):
+                        cleaned[name] = value
+                    else:
+                        setattr(self.instance, name, value)
+            except forms.ValidationError as exc:
+                self.add_error(None, exc)
+        elif product and cleaned.get('purchase_packaging'):
+            self.add_error('purchase_packaging', 'This product does not support packaging.')
+        elif product and not product.packaging_enabled:
+            for name in ('packaging', 'packaging_version', 'unit_factor', 'entered_quantity', 'entered_unit_cost', 'commercial_total', 'selected_unit_snapshot'):
+                setattr(self.instance, name, None)
         if product and product.is_serialized:
             if quantity != quantity.to_integral_value():
                 self.add_error('quantity', 'Serialized products require a whole-number quantity.')

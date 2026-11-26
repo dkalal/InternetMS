@@ -15,6 +15,9 @@ from .models import (CartLine, InventoryBalance, PackagingActivation, StockConta
 
 def _open_documents(product):
     from billing.models import BillingLineItem
+    from .models import PurchaseLine
+    if PurchaseLine.objects.unscoped().filter(product=product, purchase__status='draft').exists():
+        raise policy.PackagingError('Resolve draft purchases before changing packaging activation.')
     if CartLine.objects.unscoped().filter(product=product, cart__status='draft').exists():
         raise policy.PackagingError('Resolve open carts before changing packaging activation.')
     if BillingLineItem.objects.unscoped().filter(product=product).filter(

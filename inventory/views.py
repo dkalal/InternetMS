@@ -523,7 +523,7 @@ def purchase_product_search(request):
             | Q(brand__icontains=query)
             | Q(model_number__icontains=query)
         )
-    products = products.select_related('sales_unit').order_by('name', 'sku', 'pk')
+    products = products.select_related('sales_unit').prefetch_related(_packaging_prefetch(organization)).order_by('name', 'sku', 'pk')
     start = (page - 1) * PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
     rows = list(products[start:start + PURCHASE_PRODUCT_SEARCH_PAGE_SIZE + 1])
     more = len(rows) > PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
@@ -544,6 +544,7 @@ def purchase_product_search(request):
                 'model_number': product.model_number,
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
+                **_packaging_meta(product),
                 **({'buying_price': str(product.buying_price)} if can_view_costs else {}),
             }
             for product in rows[:PURCHASE_PRODUCT_SEARCH_PAGE_SIZE]
@@ -702,6 +703,7 @@ def _quick_product_response(product, *, status):
         'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
         'unit': product.sales_unit.label, 'serialized': product.is_serialized,
         'expiry': product.track_expiry,
+                **_packaging_meta(product),
     }}, status=status)
 
 
@@ -746,6 +748,20 @@ def purchase_supplier_quick_create(request):
     }, status=201)
 
 
+def _packaging_prefetch(organization):
+    from django.db.models import Prefetch
+    from products.models import ProductPackaging
+    return Prefetch('packaging_definitions', queryset=ProductPackaging.objects.unscoped().filter(
+        tenant=organization, is_active=True, unit__is_active=True, unit__tenant=organization).select_related('unit').order_by('pk'),
+        to_attr='available_purchase_packages')
+
+
+def _packaging_meta(product):
+    from .packaging_receipts import packaging_options
+    return {'packaging_enabled': product.packaging_enabled, 'packaging_version': product.packaging_version,
+            'packaging_options': packaging_options(product)}
+
+
 def _purchase_product_meta(organization, formset):
     product_ids = {
         form.instance.product_id
@@ -757,6 +773,7 @@ def _purchase_product_meta(organization, formset):
             'name': product.name,
             'serialized': product.is_serialized,
             'expiry': product.track_expiry,
+                **_packaging_meta(product),
             'sku': product.sku,
             'base_unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
         }
@@ -766,7 +783,7 @@ def _purchase_product_meta(organization, formset):
             is_active=True,
             item_type=Product.ItemType.PHYSICAL,
             track_stock=True,
-        ).select_related('sales_unit').order_by('name')
+        ).select_related('sales_unit').prefetch_related(_packaging_prefetch(organization)).order_by('name')
     }
 
 
@@ -819,52 +836,9 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
     })
 
 
-def _save_purchase_draft(*, form, formset, organization, actor, creating,
-                         import_rows=None, import_token=None, import_fingerprint=None, membership=None):
-    with transaction.atomic():
-        if import_rows:
-            type(organization).objects.select_for_update().get(pk=organization.pk)
-            previous = PurchaseImportSubmission.objects.filter(tenant=organization, token=import_token).first()
-            if previous:
-                if previous.fingerprint != import_fingerprint:
-                    raise ImportInputError('This import token was already used with different content. Review and apply a new batch.')
-                return previous.purchase
-        purchase = form.save(commit=False)
-        purchase.organization = purchase.tenant = organization
-        if creating:
-            purchase.created_by = actor
-            if form.cleaned_data['auto_generated_reference'] == purchase.reference_number:
-                purchase.reference_number = PurchaseReferenceNumberService.next_number(
-                    organization=organization,
-                    purchase_date=purchase.purchase_date,
-                )
-        purchase.save()
-        formset.instance = purchase
-        formset.save()
-        # The workspace submits the complete proposal snapshot on edit.
-        purchase.product_proposals.filter(tenant=organization).delete()
-        if import_rows:
-            apply_purchase_batch(purchase=purchase, rows=import_rows, organization=organization,
-                                 actor=actor, membership=membership)
-        from .purchase_batch import proposal_lines
-        total = sum((line.line_total for line in list(purchase.lines.all()) + proposal_lines(purchase)), Decimal('0.00'))
-        total = total.quantize(Decimal('0.01'))
-        DecimalValidator(14, 2)(total)
-        Purchase.objects.filter(tenant=organization, pk=purchase.pk).update(total_cost=total)
-        purchase.total_cost = total
-        audit(
-            organization=organization,
-            actor=actor,
-            action='inventory.purchase.created' if creating else 'inventory.purchase.updated',
-            obj=purchase,
-            new_value={'reference_number': purchase.reference_number, 'total_cost': str(total)},
-        )
-        if import_rows:
-            PurchaseImportSubmission.objects.create(
-                organization=organization, tenant=organization, token=import_token,
-                fingerprint=import_fingerprint, purchase=purchase,
-            )
-    return purchase
+def _save_purchase_draft(**kwargs):
+    from .purchase_drafts import save_purchase_draft
+    return save_purchase_draft(**kwargs)
 
 
 def _import_request(request, organization):
@@ -949,7 +923,7 @@ def purchase_create(request):
                 purchase = _save_purchase_draft(
                     form=form, formset=formset, organization=organization, actor=request.user, creating=True,
                     import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
-                    membership=request.membership,
+                    membership=request.membership, support_session=getattr(request, "support_access", None),
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
@@ -1007,7 +981,7 @@ def purchase_edit(request, pk):
                 purchase = _save_purchase_draft(
                     form=form, formset=formset, organization=organization, actor=request.user, creating=False,
                     import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
-                    membership=request.membership,
+                    membership=request.membership, support_session=getattr(request, "support_access", None),
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
@@ -1111,6 +1085,7 @@ def purchase_detail(request, pk):
         'serialized_line_count': sum(1 for line in purchase_lines if line.product.is_serialized),
         'expiry_line_count': sum(1 for line in purchase_lines if line.product.track_expiry),
         'pricing_reviews': pricing_reviews,
+        'receipt_containers': purchase.lines.filter(containers__isnull=False).values('containers__id', 'containers__label', 'product__name', 'product__measure_unit', 'containers__remaining_quantity', 'containers__state').order_by('containers__id')[:2000],
     })
 
 
@@ -1120,7 +1095,7 @@ def purchase_confirm(request, pk):
     if request.method != 'POST':
         raise Http404
     try:
-        purchase = InventoryService.confirm_purchase(organization=organization, purchase_id=pk, actor=request.user)
+        purchase = InventoryService.confirm_purchase(organization=organization, purchase_id=pk, actor=request.user, **({"support_session": request.support_access} if getattr(request, "support_access", None) else {}))
         messages.success(request, f'Purchase {purchase.reference_number} confirmed and stock received.')
         if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership):
             warnings = {

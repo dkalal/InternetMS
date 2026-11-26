@@ -437,6 +437,8 @@ def validate_rows(rows, *, organization, for_save=False):
                 errors.append('No active stock product matches this SKU. Choose an existing product or Create new.')
             elif not row['sku']:
                 errors.append('SKU is missing. Choose an existing product or Create new.')
+        if product and product.packaging_enabled:
+            errors.append('Packaged products require manual unit-aware purchase entry; spreadsheet import is not supported for them yet.')
         if product:
             status = 'matched'
             row['product'] = {'id': product.pk, 'name': product.name, 'sku': product.sku,

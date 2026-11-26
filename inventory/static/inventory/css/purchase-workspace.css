@@ -274,3 +274,6 @@ body.jims-purchase-workspace { background: #fff; }
   .purchase-receive-action { width: 100%; }
   .purchase-receive-action .jims-btn { width: 100%; }
 }
+
+.purchase-cell-unit select { max-width: 100%; }
+[data-base-impact] { display: block; white-space: normal; overflow-wrap: anywhere; color: #475569; font-size: 11px; }
