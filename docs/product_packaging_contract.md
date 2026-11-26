@@ -1,7 +1,8 @@
 # Optional product packaging and divisible containers
 
-Status: Phase 0 architecture; no active packaging workflow is enabled by this
-document. Authorized on 2026-11-05. Baseline: main
+Status: Phases 0-4 implemented and verified; stacked PRs #5-#9 await review/merge.
+Products remain disabled until explicit audited activation. This document does not
+authorize production deployment. Authorized on 2026-11-05. Baseline: main
 `81ec3f8ae924acd11bf6f335a628c2fc94add906`.
 
 The approved feature replaces the blanket package-conversion deferral only for
@@ -288,10 +289,19 @@ Phase checklist (unchecked means not delivered):
   Evidence: [Phase 1 verification](product_packaging_phase1.md).
 - [x] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; [PR #7](https://github.com/dkalal/InternetMS/pull/7) targets Phase 1. Final local full suite: 866 passed; both CI runs passed.
 - [x] Phase 3 sales paths and explicit legacy HTML rejection, concurrency, historical snapshots and browser tests; [PR #8](https://github.com/dkalal/InternetMS/pull/8) targets Phase 2. CI: 878 full tests, 6 browser tests. Evidence: [Phase 3](product_packaging_phase3.md).
-- [ ] Phase 4 returns/wastage/reports/maintenance and rollout runbook; PR targets Phase 3.
+- [x] Phase 4 returns/wastage/reports/maintenance, direct invoice/quotation completion and rollout runbook; [PR #9](https://github.com/dkalal/InternetMS/pull/9) targets Phase 3. Implementation `5c698f595b15ae364a69ea304327e71bcd2cc9fe`: 913 full tests and 10 browser tests; both exact-source CI runs passed. Evidence: [Phase 4](product_packaging_phase4.md).
 
 Every phase records exact tested SHA, commands/results, schema status, dependency
 PR and limitations. Required gates: Django check; makemigrations --check --dry-run;
 focused tests --keepdb; full tests --keepdb; git diff --check; secret/private-data
 review. Stock mutation phases add PostgreSQL concurrency tests. UI phases add
 actual browser checks. No automatic merges or production operations.
+
+## Delivery closure - 2026-11-26
+
+All implementation phase gates are complete. The final source commit is
+`5c698f595b15ae364a69ea304327e71bcd2cc9fe`; subsequent documentation-only
+closure does not change application, migration, test or UI source. See the
+[final handoff](product_packaging_final_handoff.md) for branch/PR dependencies,
+exact CI evidence, acceptance results and the separate operator release gates.
+Review and merge remain pending; no production deployment is included.

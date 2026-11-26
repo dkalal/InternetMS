@@ -26,7 +26,7 @@ Direct invoice and quotation line forms now accept tenant/product/version-bound 
 
 Continuation validation: 913 full PostgreSQL tests passed in 297.895 seconds with four workers; three direct-unit/form regressions passed; the new actual Edge selector/mobile browser gate passed in 4.579 seconds. Migration drift reports no changes. The browser test initially needed corrections for the existing Items tab and fixture-specific unit label; no production assertion was removed. Duplicate encoded physical-piece payload fields now fail closed; all four transport tests passed.
 
-Direct billing browser acceptance now covers save, quotation-to-invoice conversion, physical review and issuance. It verifies 2 Box / 610 base units, independent package price 900, two reviewed containers and unchanged stock before payment. Automatic commercial prices/totals explicitly say Confirmed on save instead of displaying base-unit price estimates; saved documents use authoritative tier/discount/tax calculations. Final source verification is recorded below. Exact-commit CI remains a delivery gate; production release is a separate approval.
+Direct billing browser acceptance now covers save, quotation-to-invoice conversion, physical review and issuance. It verifies 2 Box / 610 base units, independent package price 900, two reviewed containers and unchanged stock before payment. Automatic commercial prices/totals explicitly say Confirmed on save instead of displaying base-unit price estimates; saved documents use authoritative tier/discount/tax calculations. Final source verification is recorded below. Exact-source CI passed on both push and PR runs; production release is a separate approval.
 
 ## Verification evidence
 
@@ -35,11 +35,11 @@ Direct billing browser acceptance now covers save, quotation-to-invoice conversi
 - Real Edge browser: 2 passed in 9.125 seconds, including unpatched explicit activation, dynamic counted rows, returned-piece wastage, mobile layout and no JavaScript errors.
 - check: zero issues; migration drift: no changes.
 - A development full run correctly rejected a stale maintenance plan while source was being edited. No test or protection was weakened; final maintenance/full gates run with source and HEAD frozen.
-- Exact final full/maintenance results and tested commit are recorded in the PR; this phase is not marked ready until those gates pass.
+- Final source commit `5c698f595b15ae364a69ea304327e71bcd2cc9fe` passed all local and CI gates; PR #9 is ready for review, not merged or deployed.
 
-- Continuation verification: isolated PostgreSQL full suite 908 passed in 780.271 seconds before adding the acceptance test; Django check and migration drift passed. Eight Edge browser smoke tests passed in 28.436 seconds. The added ten-box sales and separate physical-return acceptance test passed in 1.199 seconds on synthetic PostgreSQL. The full suite must be repeated after remaining source changes.
+- Continuation verification: isolated PostgreSQL full suite 908 passed in 780.271 seconds before adding the acceptance test; Django check and migration drift passed. Eight Edge browser smoke tests passed in 28.436 seconds. The added ten-box sales and separate physical-return acceptance test passed in 1.199 seconds on synthetic PostgreSQL. This earlier run is superseded by the final 913-test source verification below.
 
-## Final local verification ? 2026-11-26
+## Final local verification - 2026-11-26
 
 - Configured Python 3.13 / synthetic PostgreSQL 16 Compose runtime, separate project and tmpfs database; no office environment or volumes inherited.
 - `python manage.py check`: zero issues.
@@ -52,3 +52,18 @@ Direct billing browser acceptance now covers save, quotation-to-invoice conversi
 - Exact implementation commit and remote CI results are recorded in the stacked Phase 4 PR. This document's earlier runs remain historical evidence, not substitutes for the final result.
 
 Limitations: commercial price previews are confirmed on save; physical cutting/dispatch follows successful full payment; returned full containers are never resealed automatically; monetary refund accounting, QR/phone scanning and production deployment remain outside this feature. All production backup/restore and rollout evidence remains operator-controlled under the rollout runbook.
+
+## Final remote verification and closure
+
+Implementation commit: `5c698f595b15ae364a69ea304327e71bcd2cc9fe`.
+Both exact-source CI runs succeeded:
+[PR run](https://github.com/dkalal/InternetMS/actions/runs/45785535320) and
+[push run](https://github.com/dkalal/InternetMS/actions/runs/45785479077).
+The PR run passed 100 focused tests in 51.661s, 913 full tests in 320.567s,
+and 10 Chromium browser tests in 36.224s, plus checks, migration drift,
+fresh migrations and nine JavaScript regressions.
+
+[PR #9](https://github.com/dkalal/InternetMS/pull/9) is ready for review and
+stacked on Phase 3. No merge or deployment occurred. The final handoff and
+remaining operator-only release gates are in
+[product_packaging_final_handoff.md](product_packaging_final_handoff.md).
