@@ -42,7 +42,7 @@ files and separately named disposable PostgreSQL test databases. Commands run:
 tests, full suite with `--keepdb --parallel 4`, and Node serial/purchase tests.
 Final results are recorded in the delivery message; CI must also run after push.
 
-Observed release blockers: both the baseline and Django 5.2.19 sequential suites
+Initial release blockers: both the baseline and Django 5.2.19 sequential suites
 ran 875 tests and failed 9 receipt regressions. Eight involve the receipt label /
 breakdown contract (including PDF); one expects a foreign-owner request to return
 404 but receives 200. The changed receivables policy must be reconciled with that
@@ -50,7 +50,19 @@ ownership test before classifying this as either intended access or disclosure.
 Do not weaken the assertion to pass the gate. System and migration-drift checks
 passed, and all eight Node tests passed. The initial parallel full run failed to
 serialize a traceback; sequential runs provide the accepted failure evidence.
-Application and dependency changes therefore remain uncommitted pending repair.
+Follow-up repair restores the explicit gross-subtotal label and installment
+explanation in the shared print/PDF template. The access fixture now distinguishes
+another Sales member's invoice (denied) from a Manager-issued invoice (allowed by
+the existing architecture collections contract). Cross-tenant and foreign-owner
+404 assertions remain; a separate Manager-receipt 200 regression was added.
+No permission implementation was loosened. All 24 focused receipt/RBAC tests and
+all eight JavaScript tests pass. The final sequential PostgreSQL suite under
+Django 5.2.19 passed all **876 tests in 506.472 seconds**, exit code 0. System
+check reported no issues and migration-drift validation detected no changes.
+Focused receipt/RBAC tests passed **24 tests in 11.250 seconds**. Source was
+mounted read-only; static files were built inside the disposable container.
+The dependency patch was installed only in that container for verification;
+the deployed image still requires a normal rebuild and controlled rollout.
 
 No production deployment, repository visibility change, license grant, live data
 cleanup or history rewrite is included. Public portfolio readiness remains
