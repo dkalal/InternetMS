@@ -586,7 +586,10 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         raw_id = str(self.data.get('product', ''))
         if not (raw_id.isascii() and raw_id.isdecimal() and len(raw_id) <= 18):
             raise forms.ValidationError('Select a valid product.')
-        return self.cleaned_data['product']
+        product = self.cleaned_data['product']
+        if product.packaging_enabled:
+            raise forms.ValidationError('Packaging sales are unavailable until the allocation workflow is verified.')
+        return product
 
     def clean(self):
         cleaned = super().clean()

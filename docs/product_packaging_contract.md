@@ -46,7 +46,10 @@ round quantities. Arithmetic uses ROUND_HALF_UP at six decimals for cost and two
 for money. Reject overflow before writing. Conversion is exact in whole mode.
 Keep weighted-average costing; container provenance is not FIFO valuation.
 
-## Schema map (additive proposal, not a migration)
+## Schema map
+
+The gated implementation and concrete migration/compatibility notes are tracked
+in [Phase 1 foundation](product_packaging_phase1.md).
 
 1. Product adds disabled-by-default packaging configuration and a version.
    ProductPackaging has tenant, product, commercial unit, factor, version,
@@ -55,6 +58,8 @@ Keep weighted-average costing; container provenance is not FIFO valuation.
    eligibility retains the category/allow/price/minimum checks. Never fall back
    to meter price multiplied by a factor. Base prices remain on Product.
    Retire and replace used packaging definitions; never edit a used factor/unit.
+   Price-only updates retain physical identity, append an audit event and advance
+   the configuration version; stored transaction prices never change.
 2. StockContainer has tenant, product, UUID internal label, source purchase line
    or activation/return provenance, packaging revision, immutable capacity,
    original base quantity, current remaining base quantity, supplier identifier,
@@ -279,7 +284,8 @@ Phase checklist (unchecked means not delivered):
 - [x] Architecture, lifecycle, posting, precision and compatibility defined.
 - [x] Phase 0 focused/full PostgreSQL verification, commit, push and PR #5.
   Evidence: [Phase 0 verification](product_packaging_phase0_verification.md).
-- [ ] Phase 1 gated foundation, migrations, activation and isolation tests; PR targets Phase 0.
+- [x] Phase 1 gated foundation, migrations, activation and isolation tests; [PR #6](https://github.com/dkalal/InternetMS/pull/6) targets Phase 0.
+  Evidence: [Phase 1 verification](product_packaging_phase1.md).
 - [ ] Phase 2 receiving/UI/import gates and PostgreSQL retry tests; PR targets Phase 1.
 - [ ] Phase 3 all sales paths, concurrency, historical print and browser tests; PR targets Phase 2.
 - [ ] Phase 4 returns/wastage/reports/maintenance and rollout runbook; PR targets Phase 3.

@@ -1,0 +1,33 @@
+# Standalone synthetic verification only. Never combine with office Compose.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jims_packaging
+      POSTGRES_USER: packaging
+      POSTGRES_PASSWORD: synthetic-only-packaging
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U packaging -d jims_packaging]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [verification]
+  web:
+    build: .
+    image: jims-packaging-test:phase1
+    user: root
+    command: python manage.py check
+    environment:
+      DATABASE_URL: postgresql://packaging:synthetic-only-packaging@db:5432/jims_packaging
+      DJANGO_DEBUG: '1'
+      DJANGO_SECRET_KEY: synthetic-packaging-verification-only
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+    volumes:
+      - .:/app
+      - /app/staticfiles
+    networks: [verification]
+networks:
+  verification:
+    internal: true

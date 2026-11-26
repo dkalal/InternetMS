@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.db.models import Q
-from django.db.models.functions import Upper, Trim
+from django.db.models.functions import Upper, Trim, Floor
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
 from django.urls import reverse
@@ -253,6 +253,8 @@ class Product(models.Model):
     brand = models.CharField(max_length=120, blank=True, default='')
     model_number = models.CharField(max_length=120, blank=True, default='')
     track_stock = models.BooleanField(default=True, db_index=True)
+    packaging_enabled = models.BooleanField(default=False, db_default=False, editable=False)
+    packaging_version = models.PositiveIntegerField(default=0, db_default=0, editable=False)
     is_serialized = models.BooleanField(default=False, db_index=True)
     track_expiry = models.BooleanField(default=False)
     tax_eligible = models.BooleanField(default=True)
@@ -296,6 +298,8 @@ class Product(models.Model):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(condition=Q(packaging_enabled=False) | Q(quantity__gte=0, quantity__lt=10000000000,
+                quantity=Floor('quantity'), stock=models.F('quantity')), name='pack_product_whole_stock'),
             models.UniqueConstraint(
                 fields=['tenant', 'sku'],
                 condition=~Q(sku=''),
@@ -359,6 +363,8 @@ class Product(models.Model):
             self.purchase_lines.exists(),
             self.cart_lines.exists(),
             self.billinglineitem_set.exists(),
+            self.packaging_definitions.exists(),
+            self.packaging_activations.exists(),
         ))
     
     def get_buying_price_display(self):
@@ -504,7 +510,7 @@ class Product(models.Model):
         super().clean()
         if self.pk:
             previous = type(self).objects.unscoped().filter(pk=self.pk).values(
-                'sales_unit_id', 'measure_unit', 'sku',
+                'sales_unit_id', 'measure_unit', 'sku', 'packaging_enabled', 'packaging_version',
             ).first()
             if previous and previous['sku'] and self.sku and self.sku.strip().upper() != previous['sku'].strip().upper():
                 from .sku import validate_manual_sku
@@ -516,7 +522,12 @@ class Product(models.Model):
                 or (previous['measure_unit'] or '').strip().casefold()
                 != (self.measure_unit or '').strip().casefold()
             )
-            if unit_changed and self.has_unit_history():
+            if previous and not getattr(self, '_packaging_service_update', False) and (
+                previous['packaging_enabled'] != self.packaging_enabled
+                or previous['packaging_version'] != self.packaging_version
+            ):
+                raise ValidationError('Packaging configuration must use the authorized packaging service.')
+            if unit_changed and (self.has_unit_history() or self.packaging_definitions.exists()):
                 raise ValidationError({
                     'sales_unit': (
                         'Sales/stock unit cannot be changed after transaction history exists. '
@@ -524,6 +535,10 @@ class Product(models.Model):
                         'the approved inventory workflow.'
                     ),
                 })
+        if not self.pk and (self.packaging_enabled or self.packaging_version):
+            raise ValidationError('Create products without packaging, then use the packaging service.')
+        if self.packaging_enabled and (self.item_type != self.ItemType.PHYSICAL or not self.track_stock or self.is_serialized):
+            raise ValidationError('Packaging requires a non-serialized stock-tracked physical product.')
         if self.catalog_category_id and self.tenant_id:
             category_tenant_id = getattr(self.catalog_category, 'tenant_id', None)
             if category_tenant_id != self.tenant_id:
@@ -576,3 +591,7 @@ class Product(models.Model):
     def pricing_warnings(self):
         from .pricing import underpriced_categories
         return underpriced_categories(self) if self.pk else []
+
+
+# Imported after Product so Django registers the owning app models.
+from .packaging_models import ProductPackaging  # noqa: E402,F401

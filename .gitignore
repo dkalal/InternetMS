@@ -20,3 +20,6 @@ htmlcov/
 
 .DS_Store
 Thumbs.db
+
+# Isolated packaging verification output (synthetic test diagnostics).
+/.packaging-*.log
