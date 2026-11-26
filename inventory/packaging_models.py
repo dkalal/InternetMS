@@ -198,3 +198,55 @@ class ProvisionalContainerAllocation(TenantModel):
     def delete(self, *args, **kwargs):
         self._validate_parent()
         return super().delete(*args, **kwargs)
+
+
+class ContainerStockEvent(TenantModel):
+    """Append-only physical correction; monetary credit/refund remains separate."""
+    class Kind(models.TextChoices):
+        RETURN = 'return', 'Physical return'
+        WASTE = 'waste', 'Wastage or damage'
+
+    request_key = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='container_stock_events')
+    source_allocation = models.ForeignKey(ContainerAllocation, on_delete=models.PROTECT, null=True, blank=True, related_name='return_events')
+    container = models.ForeignKey(StockContainer, on_delete=models.PROTECT, related_name='stock_events')
+    movement = models.OneToOneField('inventory.StockMovement', on_delete=models.PROTECT, related_name='container_event')
+    base_quantity = models.DecimalField(max_digits=16, decimal_places=6)
+    cost_total = models.DecimalField(max_digits=16, decimal_places=2)
+    reason = models.CharField(max_length=500)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = TenantScopedManager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'request_key'], name='container_event_tenant_key'),
+            models.CheckConstraint(condition=Q(tenant=F('organization')), name='container_event_tenant_matches'),
+            models.CheckConstraint(condition=Q(base_quantity__gt=0, base_quantity__lt=10000000000,
+                base_quantity=Floor('base_quantity'), cost_total__gte=0, cost_total__lt=100000000000000), name='container_event_valid_values'),
+            models.CheckConstraint(condition=Q(kind='return', source_allocation__isnull=False) | Q(kind='waste', source_allocation__isnull=True), name='container_event_source_kind'),
+        ]
+        indexes = [models.Index(fields=['tenant', 'product', 'created_at'])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Physical correction history is immutable.')
+        self._sync_tenant()
+        for source in (self.product, self.container, self.movement, self.source_allocation):
+            if source is not None and (source.tenant_id != self.tenant_id or getattr(source, 'product_id', self.product_id) != self.product_id):
+                raise ValidationError('Physical correction relationships must match product and tenant.')
+        if self.kind == self.Kind.RETURN:
+            if (self.container.returned_allocation_id != self.source_allocation_id
+                    or self.movement.quantity != self.base_quantity or self.movement.movement_type != 'adjustment_in'):
+                raise ValidationError('Physical return provenance and stock-in must match the source allocation.')
+        elif self.movement.quantity != -self.base_quantity or self.movement.movement_type != 'adjustment_out':
+            raise ValidationError('Wastage must match its stock-out movement.')
+        if not self.reason.strip():
+            raise ValidationError('A physical correction reason is required.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Physical correction history cannot be deleted.')

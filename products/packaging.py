@@ -16,9 +16,9 @@ class PackagingError(ValidationError):
 
 
 def workflows_ready():
-    # Deliberately not an environment setting. Later verified phases replace this
-    # gate only after every inventory/billing entry point understands snapshots.
-    return False
+    # A code capability, never an environment bypass or automatic product activation.
+    # Phases 1-4 provide snapshots, counted activation, physical posting and corrections.
+    return True
 
 
 def whole_quantity(value, *, label='Quantity', allow_zero=False):

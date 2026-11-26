@@ -104,6 +104,9 @@ class InventoryService:
         if balance.tenant_id != organization.pk or balance.organization_id != organization.pk:
             raise PermissionDenied('Cross-tenant inventory balance denied.')
         if product.packaging_enabled:
+            average = Decimal(balance.average_cost)
+            if not average.is_finite() or average < 0 or average >= Decimal('10000000000'):
+                raise InventoryError('Inventory valuation requires reconciliation before this stock operation.')
             from .models import StockContainer
             containers = StockContainer.objects.unscoped().filter(product=product)
             if containers.exclude(tenant=organization, organization=organization).exists():
@@ -115,6 +118,11 @@ class InventoryService:
 
     @staticmethod
     def _sync_legacy_stock(product, balance):
+        if product.packaging_enabled:
+            from django.db import connection
+            maximum = connection.ops.integer_field_range(Product._meta.get_field('stock').get_internal_type())[1]
+            if maximum is not None and balance.quantity > maximum:
+                raise InventoryError('Base stock exceeds the supported catalog stock limit. Split or reduce this receipt/correction before posting.')
         whole_stock = max(int(balance.quantity), 0)
         Product.objects.unscoped().filter(pk=product.pk).update(quantity=balance.quantity, stock=whole_stock)
 
@@ -741,6 +749,7 @@ class CartService:
                                 sale_pricing_category=cart.sale_pricing_category, membership=membership)
         if not incoming.is_valid():
             raise ValidationError(dict(incoming.errors))
+        data = incoming.data
         product = incoming.cleaned_data['product']
         if not line_id:
             line = cart.lines.filter(tenant=organization, product=product, packaging_id=incoming.instance.packaging_id).first()
@@ -1015,6 +1024,8 @@ class CartService:
         line_count = cart.lines.count()
         subtotal = money(cart.subtotal)
         old_value = {'status': cart.status, 'line_count': line_count, 'subtotal': str(subtotal)}
+        from .models import ProvisionalContainerAllocation
+        ProvisionalContainerAllocation.objects.unscoped().filter(tenant=organization, cart_line__cart=cart).delete()
         cart.status = Cart.Status.ABANDONED
         cart.abandoned_at = timezone.now()
         cart.abandoned_by = actor

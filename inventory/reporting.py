@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django import forms
-from django.db.models import F, Sum
+from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 from products.models import Product
 from .models import (HistoricalInventoryRecord, InventoryBalance, InventorySaleLine,
@@ -10,7 +10,7 @@ from .models import (HistoricalInventoryRecord, InventoryBalance, InventorySaleL
 from .services import money
 from internetservices.tailwind import apply_tailwind
 
-DATED_REPORTS = {'purchases', 'sales', 'gross-profit', 'movements', 'historical-purchases', 'historical-sales'}
+DATED_REPORTS = {'physical-corrections', 'purchases', 'sales', 'gross-profit', 'movements', 'historical-purchases', 'historical-sales'}
 
 
 class ReportFilterForm(forms.Form):
@@ -82,17 +82,56 @@ def report_rows(organization, report_name, filters=None):
             [l.purchase.purchase_date, l.purchase.reference_number, l.purchase.supplier.company_name, l.product.sku, l.product.name, l.quantity, l.unit_cost, l.line_total] for l in lines
         ]
     if report_name in {'sales', 'gross-profit'}:
-        lines = InventorySaleLine.objects.filter(tenant=organization, billing_line__tenant=organization, sale__invoice__tenant=organization, sale__tenant=organization, sale__stock_deducted=True, sale__completed_at__isnull=False).select_related('sale__invoice', 'billing_line__product')
-        lines = date_filter(lines, 'sale__completed_at__date', filters)
-        if report_name == 'sales':
-            return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue', 'Currency'], [
-                [timezone.localdate(l.sale.completed_at), l.sale.invoice.number, l.billing_line.product.sku if l.billing_line.product_id else '', l.billing_line.description or (l.billing_line.product.name if l.billing_line.product_id else ''), l.billing_line.quantity, l.net_revenue, l.sale.invoice.currency]
-                for l in lines
-            ]
-        return ['Date', 'Invoice', 'SKU', 'Item', 'Quantity', 'Net revenue', 'Cost (TZS)', 'Gross profit (TZS)', 'Result', 'Revenue currency'], [
-            [timezone.localdate(l.sale.completed_at), l.sale.invoice.number, l.billing_line.product.sku if l.billing_line.product_id else '', l.billing_line.description or (l.billing_line.product.name if l.billing_line.product_id else ''), l.billing_line.quantity, l.net_revenue, l.cost_total, l.gross_profit if l.sale.invoice.currency == 'TZS' else None, profit_result(l.gross_profit) if l.sale.invoice.currency == 'TZS' else 'FX required', l.sale.invoice.currency]
-            for l in lines
-        ]
+        lines = InventorySaleLine.objects.filter(tenant=organization, billing_line__tenant=organization,
+            sale__invoice__tenant=organization, sale__tenant=organization, sale__stock_deducted=True,
+            sale__completed_at__isnull=False).select_related('sale__invoice', 'billing_line__product__sales_unit')
+        lines = list(date_filter(lines, 'sale__completed_at__date', filters))
+        commercial = any(line.billing_line.base_quantity is not None for line in lines)
+        headers = ['Date', 'Invoice', 'SKU', 'Item', 'Base quantity' if commercial else 'Quantity', 'Net revenue']
+        if report_name == 'gross-profit':
+            headers += ['Cost (TZS)', 'Gross profit (TZS)', 'Result']
+        if commercial:
+            headers += ['Commercial quantity', 'Commercial unit', 'Base unit']
+        headers += ['Currency' if report_name == 'sales' else 'Revenue currency']
+        rows = []
+        for sale_line in lines:
+            line = sale_line.billing_line
+            currency = sale_line.sale.invoice.currency
+            row = [timezone.localdate(sale_line.sale.completed_at), sale_line.sale.invoice.number,
+                line.product.sku if line.product_id else '', line.description or (line.product.name if line.product_id else ''),
+                line.base_quantity if line.base_quantity is not None else line.quantity, sale_line.net_revenue]
+            if report_name == 'gross-profit':
+                row += [sale_line.cost_total, sale_line.gross_profit if currency == 'TZS' else None,
+                        profit_result(sale_line.gross_profit) if currency == 'TZS' else 'FX required']
+            if commercial:
+                row += [line.quantity, line.unit_snapshot,
+                        line.product.get_measure_unit_display() if line.base_quantity is not None else line.unit_snapshot]
+            rows.append(row + [currency])
+        return headers, rows
+    if report_name == 'physical-corrections':
+        from .models import ContainerStockEvent
+        events = ContainerStockEvent.objects.filter(tenant=organization, organization=organization,
+            product__tenant=organization).select_related('product__sales_unit', 'container', 'source_allocation__billing_line__document')
+        events = date_filter(events, 'created_at__date', filters).order_by('-created_at', '-pk')
+        return ['Date', 'SKU', 'Product', 'Base unit', 'Correction', 'Base quantity change', 'Stock value change (TZS)', 'Physical piece', 'Source invoice', 'Reason'], [
+            [timezone.localtime(event.created_at), event.product.sku, event.product.name, event.product.get_measure_unit_display(),
+             event.get_kind_display(), event.base_quantity if event.kind == 'return' else -event.base_quantity,
+             event.cost_total if event.kind == 'return' else -event.cost_total, str(event.container.label),
+             event.source_allocation.billing_line.document.number if event.source_allocation_id else '', event.reason]
+            for event in events]
+    if report_name == 'container-reconciliation':
+        from .models import StockContainer
+        containers = StockContainer.objects.filter(tenant=organization, organization=organization, product__tenant=organization).values('product_id').annotate(
+            remaining=Sum('remaining_quantity'), sealed=Count('pk', filter=Q(state='sealed', remaining_quantity__gt=0)))
+        physical = {row['product_id']: row for row in containers}
+        balances = InventoryBalance.objects.filter(tenant=organization, organization=organization,
+            product__tenant=organization, product__packaging_enabled=True).select_related('product__sales_unit').order_by('product__sku')
+        return ['SKU', 'Product', 'Base unit', 'Base quantity', 'Container quantity', 'Quantity difference', 'Sealed containers', 'Average cost', 'Value'], [
+            [balance.product.sku, balance.product.name, balance.product.get_measure_unit_display(), balance.quantity,
+             physical.get(balance.product_id, {}).get('remaining', Decimal('0')),
+             balance.quantity - physical.get(balance.product_id, {}).get('remaining', Decimal('0')),
+             physical.get(balance.product_id, {}).get('sealed', 0), balance.average_cost, money(balance.quantity * balance.average_cost)]
+            for balance in balances]
     if report_name == 'movements':
         movements = StockMovement.objects.filter(tenant=organization, product__tenant=organization).select_related('product')
         movements = date_filter(movements, 'created_at__date', filters)
@@ -148,7 +187,7 @@ def report_totals(report_name, rows):
 
 
 SEARCH_COLUMNS = {
-    'stock-valuation': (0, 1), 'low-stock': (0, 1), 'out-of-stock': (0, 1), 'dead-stock': (0, 1),
+    'physical-corrections': (1, 2, 7, 8, 9), 'container-reconciliation': (0, 1), 'stock-valuation': (0, 1), 'low-stock': (0, 1), 'out-of-stock': (0, 1), 'dead-stock': (0, 1),
     'purchases': (1, 2, 3, 4), 'sales': (1, 2, 3), 'gross-profit': (1, 2, 3),
     'movements': (1, 2, 3), 'serialized': (0, 1, 2, 3, 4, 6),
     'historical-purchases': (1, 2, 3, 7), 'historical-sales': (1, 2, 3, 7),
@@ -196,7 +235,7 @@ def report_display(headers, rows):
     """Presentation metadata, keeping canonical Decimal/date values for exports."""
     numeric = [header in {'Quantity', 'Average cost', 'Value', 'Threshold', 'Unit cost', 'Total',
                          'Net revenue', 'Cost (TZS)', 'Gross profit (TZS)', 'Balance after',
-                         'Unit amount', 'Units sold', 'Period days'} for header in headers]
+                         'Unit amount', 'Units sold', 'Period days', 'Base quantity', 'Container quantity', 'Quantity difference', 'Sealed containers', 'Commercial quantity', 'Base quantity change', 'Stock value change (TZS)'} for header in headers]
     columns = [{'label': label, 'numeric': numeric[index]} for index, label in enumerate(headers)]
     records = []
     for row in rows:

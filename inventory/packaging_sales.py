@@ -145,12 +145,26 @@ def post_allocations(*, organization, line, movement, pairs, cost_total, unit_co
 
 class PackagingSelectionService:
     @staticmethod
-    def review_document(*, organization, actor, document_id, selections, membership=None, issue=False):
+    def review_document(*, organization, actor, document_id, selections, membership=None, issue=False, support_session=None):
         from django.db import transaction
         from django.core.exceptions import PermissionDenied
         from billing.models import BillingDocument
         from users.permissions import PermissionCode, has_tenant_permission, can_view_sales_document
         from .services import audit
+        from users.models import TenantMembership, SupportAccessSession
+        from users.permissions import membership_for
+        if not actor or not actor.is_active or not organization.is_active:
+            raise PermissionDenied('An active tenant membership is required.')
+        membership = membership_for(actor, organization)
+        if support_session is not None:
+            support = SupportAccessSession.objects.filter(pk=support_session.pk, actor=actor, tenant=organization,
+                ended_at__isnull=True).exclude(reason='').exclude(session_key='').first()
+            if support is None:
+                raise PermissionDenied('An active audited support session is required.')
+            membership = TenantMembership.objects.filter(user=actor, is_active=True,
+                tenant__is_active=True, base_role=TenantMembership.BaseRole.SUPER_ADMIN).first()
+        if membership is None or (membership.base_role == TenantMembership.BaseRole.SUPER_ADMIN and support_session is None):
+            raise PermissionDenied('An active tenant membership or audited support session is required.')
         with transaction.atomic():
             document = BillingDocument.objects.unscoped().select_for_update().filter(
                 tenant=organization, organization=organization, pk=document_id, document_type='invoice',

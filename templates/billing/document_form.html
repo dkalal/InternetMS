@@ -425,6 +425,12 @@
       if (summarySubtotal) summarySubtotal.textContent = formatMoney(subtotal);
       if (summaryTax) summaryTax.textContent = formatMoney(taxAmount);
       if (summaryTotal) summaryTotal.textContent = formatMoney(total);
+      if (activeRows.some(row => row.querySelector('[name$="-commercial_unit"]')?.value)) {
+        [summarySubtotal, summaryTax, summaryTotal].forEach(node => {
+          if (node) node.textContent = 'Confirmed on save';
+        });
+      }
+
     };
 
     const setLineDetailsState = (row, isOpen) => {
@@ -509,6 +515,20 @@
       }
       const total = Math.max((quantity * parseMoney(controls.unitPrice?.value)) - parseMoney(controls.discount?.value), 0);
       controls.lineTotal.textContent = formatMoney(total);
+      const commercial = row.querySelector('[name$="-commercial_unit"]')?.value;
+      const automaticCommercial = Boolean(commercial) && controls.pricingMode?.value !== 'manual';
+      if (controls.unitPrice) {
+        controls.unitPrice.classList.toggle('hidden', automaticCommercial);
+        let note = row.querySelector('.js-commercial-price-note');
+        if (!note) {
+          note = document.createElement('span');
+          note.className = 'js-commercial-price-note text-xs text-slate-600';
+          note.textContent = 'Price confirmed on save';
+          controls.unitPrice.after(note);
+        }
+        note.classList.toggle('hidden', !automaticCommercial);
+      }
+      if (commercial) controls.lineTotal.textContent = 'Confirmed on save';
       updateAdvancedSummary(controls);
       refreshSummary();
     };
@@ -615,7 +635,7 @@
           controls.discountReason.dataset.autofilled = '0';
         });
       }
-      [controls.unit, controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
+      [row.querySelector('[name$="-commercial_unit"]'), controls.unit, controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
         if (field) {
           field.addEventListener('input', () => syncRow(row));
           field.addEventListener('change', () => syncRow(row));
@@ -723,5 +743,32 @@
     refreshSummary();
     document.getElementById('document-error-summary')?.focus();
   })();
+</script>
+<script>
+(() => {
+  document.addEventListener('change', async (event) => {
+    if (!event.target.matches('select[name$="-product"]')) return;
+    const row = event.target.closest('.js-line-item');
+    if (!row) return;
+    const field = row.querySelector('[name$="-commercial_unit"]');
+    const wrapper = row.querySelector('.js-commercial-unit-wrap');
+    const product = event.target.value;
+    field.replaceChildren(new Option('Choose selling unit', ''));
+    wrapper.classList.add('hidden');
+    if (!product) return;
+    try {
+      const response = await fetch('{% url "billing:commercial_units" 0 %}'.replace('/0/', '/' + encodeURIComponent(product) + '/'), {credentials: 'same-origin'});
+      if (!response.ok) throw new Error('Unit lookup failed');
+      const data = await response.json();
+      if (event.target.value !== product) return;
+      for (const [value, label] of data.options) field.add(new Option(label, value));
+      wrapper.classList.toggle('hidden', !data.options.length);
+    } catch (_) {
+      if (event.target.value !== product) return;
+      wrapper.classList.remove('hidden');
+      field.replaceChildren(new Option('Unable to load units. Save to review available choices.', ''));
+    }
+  });
+})();
 </script>
 {% endblock %}

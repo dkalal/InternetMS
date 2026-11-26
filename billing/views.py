@@ -302,6 +302,8 @@ def _extract_items(formset) -> list[LineItemInput]:
             LineItemInput(
                 product_id=product.id if product else None,
                 package_id=package.id if package else None,
+                product_packaging_id=form.cleaned_data.get('product_packaging_id'),
+                packaging_version=form.cleaned_data.get('packaging_version'),
                 description=form.cleaned_data.get("description") or "",
                 unit_snapshot=form.cleaned_data.get("unit_snapshot") or "",
                 quantity=form.cleaned_data.get("quantity") or Decimal("0.00"),
@@ -1735,3 +1737,14 @@ def billing_sheet_generate_invoice(request, pk: int):
         "billing/billing_sheet_generate.html",
         {"form": form, "sheet": sheet},
     )
+
+
+@login_required
+def commercial_units(request, pk):
+    from django.http import JsonResponse
+    from products.models import Product
+    from .commercial_units import unit_options
+    organization = require_organization(request)
+    _require_billing_write(request)
+    product = get_object_or_404(Product.objects.filter(tenant=organization, organization=organization, is_active=True).select_related('sales_unit'), pk=pk)
+    return JsonResponse({'options': unit_options(organization, product)})
