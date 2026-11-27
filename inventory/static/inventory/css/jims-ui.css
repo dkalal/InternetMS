@@ -617,6 +617,16 @@ body.jims-auth-shell {
 .pos-cart-tabs button { min-height: 3rem; padding: .5rem .2rem; font-size: .8rem; font-weight: 600; color: #475569; border-bottom: 2px solid transparent; }
 .pos-cart-tabs button[aria-selected="true"] { color: #5643e8; border-bottom-color: #6154f5; background: #f7f6ff; }
 .pos-detail-panel[hidden], [data-pos-control-panel][hidden], .pos-edit-modal[hidden], .pos-edit-modal-feedback[hidden] { display: none; }
+#pos-customer-fields { container-type: inline-size; }
+.pos-customer-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; align-items: start; }
+.pos-customer-grid > div { min-width: 0; }
+.pos-customer-grid input:not([type="hidden"]),
+.pos-customer-grid select { width: 100%; min-width: 0; min-height: 2.5rem; font-size: .8125rem; }
+.pos-customer-grid label { font-size: .75rem; white-space: nowrap; }
+.pos-customer-grid p { line-height: 1.4; }
+@container (min-width: 360px) {
+  .pos-customer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .625rem; }
+}
 #pos-cart-items { container-type: inline-size; }
 #pos-cart-items:not([hidden]) { flex: 1 1 auto; }
 .pos-cart-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .65rem .8rem; border-bottom: 1px solid var(--jims-border); }

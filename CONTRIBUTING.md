@@ -60,3 +60,5 @@ that separate verified transition.
 Repository administrators should require the `tests` status from Django CI on
 `main`, require a PR and review, and prohibit force pushes/deletion. Verify the
 actual GitHub settings; documentation alone does not enable branch protection.
+
+No redistribution license is currently provided. Obtain the owner's permission before public redistribution.

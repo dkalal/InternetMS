@@ -1,5 +1,17 @@
 # Customer subscription billing overview
 
+## Invoice service-period descriptions
+
+Subscription renewal captures the inclusive service-period start/end and package
+speed in the persisted billing line description. Both sales print/PDF and the
+legacy document print template show that saved description below the package name
+when nonempty and distinct from the name. Historical wording is retained; printing
+does not infer dates from invoice issue/due dates or today's subscription/package.
+Product duplicate descriptions remain suppressed and internal document notes stay
+staff-only. This presentation is read-only and requires no migration/backfill.
+
+## Reporting
+
 The four cards on `/customers/` use tenant-wide subscription data, independent
 of search, status, and pagination. They require the existing finance-all
 permission. Sales and Technician users receive no monetary summary.
@@ -32,6 +44,27 @@ existing periods remain historical evidence. Cancelled agreements contribute
 existing periods but no invented future charges. A free-month promotion has no
 safe future placement without a persisted renewal period, so only persisted
 complimentary months are forecast as zero.
+
+## Customer package-change report
+
+The customer Reports workspace exposes tenant-scoped package-change events from
+the append-only `AuditLog` action `internet_service.package_changed`. Viewing
+requires `customers.package_changes_report.view`; XLSX export additionally
+requires `reports.export`. The report is operational customer history and does
+not inherit finance-report permissions. Sales and Technician memberships do
+not receive the view permission by default.
+
+New package-change audit events preserve a versioned snapshot of customer, site,
+service identity, old/new package name/type/speed, agreed monthly subscription
+fee, effective date, reason, actor and recorded timestamp. Those values are
+report evidence and must not be recomputed from today's package catalog. Legacy
+events without a versioned snapshot may use retained related records for
+display, but are labeled incomplete; missing history is never synthesized.
+
+The report is read-only. It may flag a non-cancelled subscription billing period
+that spans the package's effective date for staff review. That flag does not
+alter invoice, receipt, credit, subscription-period or coverage history. Any
+financial correction follows the existing billing reversal/credit workflow.
 
 Paid and Unpaid pills select customers with respective subscription periods
 overlapping the selected service month. A mixed-status customer may appear in

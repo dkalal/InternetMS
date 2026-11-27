@@ -16,7 +16,13 @@ from django.utils.text import slugify
 from django.views.generic import CreateView, ListView, UpdateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 
-from users.permissions import PermissionCode, permissions_for_membership, require_permission, sales_document_queryset_for
+from users.permissions import (
+    PermissionCode,
+    permissions_for_membership,
+    receivables_document_queryset_for,
+    require_permission,
+    sales_document_queryset_for,
+)
 from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, paginate_queryset, positive_decimal
 
@@ -80,6 +86,26 @@ def _receipt_print_context(*, document, organization, logo_data_uri=None):
         .select_related("product", "package")
         .order_by("id")
     )
+    subscription_source_line = (
+        BillingService._subscription_receipt_source_line(
+            organization=organization, invoice=source_invoice,
+        )
+        if source_invoice is not None else None
+    )
+    if subscription_source_line is not None:
+        subscription_item = next((item for item in items if item.pk == subscription_source_line.pk), None)
+        receipt_line = document.items.filter(
+            tenant=organization, organization=organization,
+        ).order_by("id").first()
+        if (
+            subscription_item is not None
+            and receipt_line is not None
+            and receipt_line.description
+            and receipt_line.description != f"Payment for invoice {source_invoice.number}"
+        ):
+            # Keep invoice amounts and units as the source of financial truth,
+            # while honoring the description snapshot captured on this receipt.
+            subscription_item.description = receipt_line.description
 
     is_walk_in = document.is_walk_in_sale or (source_invoice is not None and source_invoice.is_walk_in_sale)
     customer_name = (
@@ -291,15 +317,22 @@ def _ordered_document_forms(formset):
     return [form for _, form in sorted(enumerate(formset), key=display_order)]
 
 
-def _extract_items(formset) -> list[LineItemInput]:
+def _extract_items(formset, *, reprice=False) -> list[LineItemInput]:
     items: list[LineItemInput] = []
     for form in _ordered_document_forms(formset):
         if not form.cleaned_data or form.cleaned_data.get("DELETE"):
             continue
         product = form.cleaned_data.get("product")
         package = form.cleaned_data.get("package")
+        preserve_price = not reprice and bool(form.instance.pk) and not bool(
+            set(form.changed_data) & {
+                "product", "package", "quantity", "unit_price", "pricing_mode",
+                "billing_behavior", "promotion", "unit_snapshot",
+            }
+        )
         items.append(
             LineItemInput(
+                source_line_id=form.instance.pk,
                 product_id=product.id if product else None,
                 package_id=package.id if package else None,
                 product_packaging_id=form.cleaned_data.get('product_packaging_id'),
@@ -313,6 +346,10 @@ def _extract_items(formset) -> list[LineItemInput]:
                 pricing_mode=form.cleaned_data.get("pricing_mode") or BillingLineItem.PricingMode.RETAIL,
                 billing_behavior=form.cleaned_data.get("billing_behavior") or BillingLineItem.BillingBehavior.ONE_TIME,
                 promotion_id=form.cleaned_data["promotion"].id if form.cleaned_data.get("promotion") else None,
+                # Existing snapshots survive non-pricing edits. Never accept a
+                # browser-supplied flag to bypass catalog pricing validation.
+                preserve_unit_price=preserve_price,
+                base_unit_price=form.instance.base_unit_price if preserve_price else None,
             )
         )
     return items
@@ -411,9 +448,12 @@ def document_list(request, doc_type: str):
     _require_billing_read(request)
     doc_type_display = _require_valid_doc_type(doc_type)
 
-    documents = sales_document_queryset_for(
-        request.user, organization, membership=request.membership
-    ).filter(document_type=doc_type).select_related("customer", "invoice")
+    document_queryset = (
+        receivables_document_queryset_for(request.user, organization, membership=request.membership)
+        if doc_type in {BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.RECEIPT}
+        else sales_document_queryset_for(request.user, organization, membership=request.membership)
+    )
+    documents = document_queryset.filter(document_type=doc_type).select_related("customer", "invoice")
     if doc_type == BillingDocument.DocumentType.QUOTATION and request.GET.get("include_history") != "1":
         documents = documents.filter(is_current_version=True)
 
@@ -489,7 +529,7 @@ def document_list(request, doc_type: str):
     pagination = paginate_queryset(request, documents)
     page_obj = pagination["page_obj"]
 
-    invoice_base = sales_document_queryset_for(
+    invoice_base = receivables_document_queryset_for(
         request.user, organization, membership=request.membership
     ).filter(document_type=BillingDocument.DocumentType.INVOICE)
     invoice_worklists = {}
@@ -536,8 +576,16 @@ def document_detail(request, doc_type: str, pk: int):
     _require_billing_read(request)
     _require_valid_doc_type(doc_type)
 
+    document_queryset = (
+        receivables_document_queryset_for(request.user, organization, membership=request.membership)
+        if doc_type in {BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.RECEIPT}
+        else sales_document_queryset_for(request.user, organization, membership=request.membership)
+    )
     document = get_object_or_404(
-        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "created_by", "source_quotation", "converted_invoice", "invoice", "superseded_by", "corrected_invoice"),
+        document_queryset.select_related(
+            "customer", "created_by", "source_quotation", "converted_invoice",
+            "invoice", "superseded_by", "corrected_invoice",
+        ),
         document_type=doc_type,
         pk=pk,
     )
@@ -800,7 +848,12 @@ def document_edit(request, doc_type: str, pk: int):
         formset = BillingLineItemFormSet(request.POST, prefix="items", form_kwargs={"organization": organization}, instance=document)
         if form.is_valid() and formset.is_valid():
             try:
-                items = _extract_items(formset)
+                items = _extract_items(formset, reprice=(
+                    doc_type == BillingDocument.DocumentType.QUOTATION and (
+                        form.cleaned_data["customer"].pk != document.customer_id
+                        or form.cleaned_data["sale_pricing_category"] != document.sale_pricing_category
+                    )
+                ))
                 if doc_type == BillingDocument.DocumentType.QUOTATION:
                     edited = BillingService.create_quotation_version(
                         organization=organization,
@@ -871,8 +924,13 @@ def document_pdf(request, doc_type: str, pk: int):
     _require_billing_read(request)
     _require_valid_doc_type(doc_type)
 
+    document_queryset = (
+        receivables_document_queryset_for(request.user, organization, membership=request.membership)
+        if doc_type in {BillingDocument.DocumentType.INVOICE, BillingDocument.DocumentType.RECEIPT}
+        else sales_document_queryset_for(request.user, organization, membership=request.membership)
+    )
     document = get_object_or_404(
-        sales_document_queryset_for(request.user, organization, membership=request.membership).select_related("customer", "organization"),
+        document_queryset.select_related("customer", "organization"),
         document_type=doc_type,
         pk=pk,
     )
@@ -942,7 +1000,7 @@ def receipt_print(request, pk: int):
     organization = require_organization(request)
     _require_billing_read(request)
     document = get_object_or_404(
-        sales_document_queryset_for(
+        receivables_document_queryset_for(
             request.user, organization, membership=request.membership
         ).select_related("customer", "created_by", "invoice", "organization"),
         document_type=BillingDocument.DocumentType.RECEIPT,
@@ -1252,7 +1310,7 @@ def create_receipt_from_invoice(request, pk: int):
     require_permission(request, PermissionCode.PAYMENT_REGISTER)
 
     invoice = get_object_or_404(
-        sales_document_queryset_for(request.user, organization, membership=request.membership),
+        receivables_document_queryset_for(request.user, organization, membership=request.membership),
         document_type=BillingDocument.DocumentType.INVOICE,
         pk=pk,
     )
@@ -1268,6 +1326,12 @@ def create_receipt_from_invoice(request, pk: int):
         .order_by("period_start", "id")
         .first()
     )
+    subscription_receipt_line = BillingService._subscription_receipt_source_line(
+        organization=organization, invoice=invoice,
+    )
+    subscription_description = (
+        subscription_receipt_line.description if subscription_receipt_line is not None else None
+    )
 
     invoice_state = BillingService.get_invoice_action_state(organization=organization, invoice=invoice)
     if not invoice_state["can_register_payment"] and request.method != "POST":
@@ -1275,7 +1339,12 @@ def create_receipt_from_invoice(request, pk: int):
         return redirect("billing:document_detail", doc_type="invoice", pk=invoice.id)
 
     if request.method == "POST":
-        form = ReceiptCreateForm(request.POST, organization=organization, invoice=invoice)
+        form = ReceiptCreateForm(
+            request.POST,
+            organization=organization,
+            invoice=invoice,
+            subscription_description=subscription_description,
+        )
         if form.is_valid():
             try:
                 receipt = BillingService.create_receipt_from_invoice(
@@ -1287,6 +1356,7 @@ def create_receipt_from_invoice(request, pk: int):
                     payment_method=form.cleaned_data["payment_method"],
                     payment_reference=form.cleaned_data.get("payment_reference") or "",
                     notes=form.cleaned_data.get("notes") or "",
+                    subscription_description=form.cleaned_data.get("subscription_description"),
                 )
             except BillingServiceError as exc:
                 messages.error(request, str(exc))
@@ -1315,6 +1385,7 @@ def create_receipt_from_invoice(request, pk: int):
         form = ReceiptCreateForm(
             organization=organization,
             invoice=invoice,
+            subscription_description=subscription_description,
             initial={"payment_date": timezone.now().date(), "amount_paid": initial_amount},
         )
 

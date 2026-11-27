@@ -70,6 +70,9 @@ class PackageListViewTests(TestCase):
         self.assertContains(response, 'max-w-[1100px]')
         self.assertContains(response, 'data-unsaved-form')
         self.assertContains(response, "Active and assignable")
+        self.assertContains(response, 'md:col-span-4')
+        self.assertContains(response, 'md:col-span-3')
+        self.assertContains(response, 'md:col-span-2')
         self.assertEqual(response.content.decode().count("Save package"), 1)
 
     def test_package_collected_kpi_includes_partial_subscription_receipts(self):

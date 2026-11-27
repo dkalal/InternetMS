@@ -54,6 +54,14 @@ def save_purchase_draft(*, form, formset, organization, actor, creating,
                 raise PermissionDenied('Cross-tenant purchase product denied.')
             if products[line.product_id].packaging_enabled:
                 validate_receipt_line(organization=organization, line=line, product=products[line.product_id])
+        from products.pricing import update_standard_selling_price
+        for line_form in formset.forms:
+            data = getattr(line_form, 'cleaned_data', {})
+            product = data.get('product')
+            standard_price = data.get('standard_selling_price')
+            if product and standard_price is not None and standard_price != product.selling_price:
+                update_standard_selling_price(product_id=product.pk, organization=organization,
+                    price=standard_price, actor=actor, membership=actual)
         # The workspace submits the complete proposal snapshot on edit.
         purchase.product_proposals.filter(tenant=organization).delete()
         if import_rows:

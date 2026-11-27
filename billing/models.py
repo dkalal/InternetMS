@@ -211,6 +211,14 @@ class BillingDocument(models.Model):
     )
     payment_date = models.DateField(blank=True, null=True)
     payment_method = models.CharField(max_length=50, blank=True, default="")
+    cash_received = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        editable=False,
+        help_text="Cash tendered for a receipt; null for non-cash and legacy records.",
+    )
     payment_reference = models.CharField(
         max_length=80,
         blank=True,

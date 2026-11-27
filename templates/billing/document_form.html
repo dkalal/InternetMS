@@ -1,10 +1,12 @@
 {% extends "base.html" %}
+{% load l10n static %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'inventory/css/entry-tables.css' %}">{% endblock %}
 {% block topbar_new_invoice %}{% if doc_type != "invoice" %}{{ block.super }}{% endif %}{% endblock %}
 
 {% block title %}{{ doc_type_display }}{% endblock %}
 
 {% block content %}
-<div class="jims-document-builder mx-auto max-w-[1400px] space-y-3">
+<div class="jims-document-builder jims-entry-workspace space-y-3">
   <header class="jims-page-header">
     <div>
       <p class="jims-page-eyebrow"><a href="{% url 'billing:document_list' doc_type=doc_type %}">{{ doc_type|capfirst }}s</a> / {% if document %}Edit{% else %}New{% endif %}</p>
@@ -98,10 +100,10 @@
             </div>
           {% endif %}
 
-          <div>
+          <div class="jims-billing-entry-table">
             {{ formset.management_form }}
             <div class="jims-line-item-grid jims-line-item-header border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">
-              <div class="sr-only">Add below</div><div>Item / description</div><div>Qty</div><div>Unit</div><div>Unit price</div><div>Billing</div><div class="text-right">Total</div><div class="text-right">Actions</div>
+              <div class="text-center" aria-label="Add row below">+</div><div>Item / description</div><div>Qty</div><div>Unit</div><div>Unit price</div><div>Billing</div><div class="text-right">Total</div><div class="text-right">Actions</div>
             </div>
             <div id="line-items-container">
               {% for item_form in display_item_forms %}
@@ -133,6 +135,10 @@
             <div class="flex items-center gap-2">
               <dt class="text-slate-600">Subtotal</dt>
               <dd class="font-semibold text-slate-950" id="summary-subtotal">0</dd>
+            </div>
+            <div class="flex items-center gap-2">
+              <dt class="text-slate-600">Document discount</dt>
+              <dd class="font-semibold text-slate-950" id="summary-document-discount">{% if document %}{{ document.discount_amount }}{% else %}0{% endif %}</dd>
             </div>
             <div class="flex items-center gap-2">
               <dt class="text-slate-600">Tax <span id="summary-tax-rate-label">({{ form.tax_rate.value|default:"0" }}%)</span></dt>
@@ -211,9 +217,13 @@
     const summarySubtotal = document.getElementById('summary-subtotal');
     const summaryTax = document.getElementById('summary-tax');
     const summaryTotal = document.getElementById('summary-total');
-    const summaryTaxRateLabel = document.getElementById('summary-tax-rate-label');
+    const summaryTaxRateLabel = document.getElementById('summary-tax-rate-label'
+    );
     const submitButton = form?.querySelector('[type="submit"]');
     const savedDocumentCurrency = '{% if document %}{{ document.currency|escapejs }}{% else %}TZS{% endif %}';
+    const savedDocumentDiscount = Number('{% if document %}{{ document.discount_amount|unlocalize }}{% else %}0{% endif %}');
+    const savedDocumentTax = Number('{% if document %}{{ document.tax_amount|unlocalize }}{% else %}0{% endif %}');
+    let savedFinancialSignature = null;
     const tabs = document.getElementById('document-editor-tabs');
     const editorPanels = [...document.querySelectorAll('[data-document-panel]')];
 
@@ -382,7 +392,8 @@
 
     const isActiveRow = (row) => {
       const controls = getRowControls(row);
-      return !row.classList.contains('hidden') && !isDeleteMarked(controls.deleteBox);
+      return !row.classList.contains('hidden') && !isDeleteMarked(controls.deleteBox)
+        && Boolean(controls.product?.value || controls.package?.value || controls.description?.value.trim());
     };
 
     const refreshLabels = () => {
@@ -403,6 +414,15 @@
       }
     };
 
+    const financialSignature = () => JSON.stringify([
+      parseMoney(taxRateField?.value),
+      [...container.querySelectorAll('.js-line-item')].filter(isActiveRow).map((row) => {
+        const controls = getRowControls(row);
+        return [controls.product?.value, controls.package?.value, parseMoney(controls.quantity?.value),
+          parseMoney(controls.unitPrice?.value), parseMoney(controls.discount?.value)];
+      }),
+    ]);
+
     const refreshSummary = () => {
       refreshLabels();
       const activeRows = [...container.querySelectorAll('.js-line-item')].filter(isActiveRow);
@@ -416,8 +436,11 @@
         return sum + normalizedLine;
       }, 0);
       const taxRate = parseMoney(taxRateField?.value);
-      const taxAmount = taxableSubtotal * (taxRate / 100);
-      const total = subtotal + taxAmount;
+      const taxableDiscount = subtotal > 0 ? savedDocumentDiscount * taxableSubtotal / subtotal : 0;
+      const taxAmount = savedFinancialSignature !== null && financialSignature() === savedFinancialSignature
+        ? savedDocumentTax
+        : Math.round((taxableSubtotal - taxableDiscount) * taxRate + Number.EPSILON) / 100;
+      const total = subtotal - savedDocumentDiscount + taxAmount;
       const currency = (currencyField?.value || savedDocumentCurrency || 'TZS').toUpperCase();
 
       if (summaryCurrency) summaryCurrency.textContent = currency;
@@ -450,7 +473,7 @@
       controls.advancedSummary.classList.toggle('hidden', details.length === 0);
     };
 
-    const syncRow = (row) => {
+    const syncRow = (row, reprice = false) => {
       const controls = getRowControls(row);
       const productId = controls.product?.value || '';
       const packageId = controls.package?.value || '';
@@ -472,7 +495,7 @@
 
       if (activeType === 'product' && product) {
         const qualifiesWholesale = product.allow_wholesale && product.wholesale_price && quantity >= parseMoney(product.wholesale_min_quantity);
-        if (controls.pricingMode?.value !== 'manual') {
+        if (reprice && controls.pricingMode?.value !== 'manual') {
           let category = pricingCategoryField?.value || 'customer_tier';
           if (category === 'customer_tier') {
             const tier = getSelectedCustomer()?.pricing_tier || 'retail';
@@ -484,7 +507,7 @@
         controls.summary.textContent = 'Product';
         if (controls.unit && (!controls.unit.value || !product.allowed_units.includes(controls.unit.value))) controls.unit.value = product.unit;
       } else if (activeType === 'package' && packageItem) {
-        if (controls.pricingMode?.value !== 'manual') {
+        if (reprice && controls.pricingMode?.value !== 'manual') {
           const packagePrice = controls.billingBehavior?.value === 'recurring_monthly' ? packageItem.monthly_fee : packageItem.price;
           controls.unitPrice.value = formatMoneyInput(parseMoney(packagePrice));
         }
@@ -495,7 +518,7 @@
       }
 
       const gross = quantity * parseMoney(controls.unitPrice?.value);
-      if (controls.pricingMode?.value !== 'manual') {
+      if (reprice && controls.pricingMode?.value !== 'manual') {
         const selectedPromotion = promotionCatalog.get(controls.promotion?.value || '') || findBestPromotion(productId, packageId, quantity, gross);
         if (selectedPromotion && controls.promotion && !controls.promotion.value) {
           controls.promotion.value = selectedPromotion.id;
@@ -548,7 +571,7 @@
         if (controls.product) controls.product.value = '';
         if (controls.package) controls.package.value = '';
       }
-      syncRow(row);
+      syncRow(row, true);
     };
 
     const applyCatalogSelection = (row, kind, itemId) => {
@@ -637,8 +660,9 @@
       }
       [row.querySelector('[name$="-commercial_unit"]'), controls.unit, controls.quantity, controls.unitPrice, controls.discount, controls.pricingMode, controls.billingBehavior, controls.promotion].forEach((field) => {
         if (field) {
-          field.addEventListener('input', () => syncRow(row));
-          field.addEventListener('change', () => syncRow(row));
+          const reprice = [controls.quantity, controls.pricingMode, controls.billingBehavior, controls.promotion].includes(field);
+          field.addEventListener('input', () => syncRow(row, reprice));
+          field.addEventListener('change', () => syncRow(row, reprice));
         }
       });
       controls.detailsToggle?.addEventListener('click', () => {
@@ -718,7 +742,7 @@
         if (customer && taxRateField) {
           taxRateField.value = customer.tax_rate;
         }
-        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row));
+        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row, true));
         refreshSummary();
       });
     }
@@ -727,7 +751,7 @@
     }
     if (pricingCategoryField) {
       pricingCategoryField.addEventListener('change', () => {
-        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row));
+        container.querySelectorAll('.js-line-item').forEach((row) => syncRow(row, true));
         refreshSummary();
       });
     }
@@ -739,6 +763,7 @@
       submitButton.textContent = 'Saving…';
     });
 
+    {% if document and not form.is_bound %}savedFinancialSignature = financialSignature();{% endif %}
     container.querySelectorAll('.js-line-item').forEach((row) => bindRow(row));
     refreshSummary();
     document.getElementById('document-error-summary')?.focus();

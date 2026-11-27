@@ -92,7 +92,8 @@ policy and display the saved prices for review.
 
 ## Direct cart payment
 
-The cart builder collects only payment method and optional payment reference.
+The cart builder collects payment method, optional payment reference and (for
+cash only) the amount handed to the cashier.
 `cart_checkout` requires canonical sales creation and payment registration permissions
 and the existing tenant/owner cart scope. The server saves validated draft details,
 converts to the internal invoice and records its full total using the current local
@@ -100,6 +101,16 @@ payment date in one transaction. Client-supplied payment amounts/dates are ignor
 The user is redirected directly to `billing:receipt_print`
 (`/billing/receipt/<receipt_id>/print/`), including successful retries. The invoice remains the internal
 billing and inventory link. No schema or historical record changes are required.
+
+For cash checkout, the form additionally accepts the amount physically handed to
+the cashier. The cart builder shows an advisory live change/shortfall calculation
+against its current total. Checkout revalidates the submitted cash amount against
+the final server-created invoice total inside the existing atomic workflow; a
+short payment creates no invoice, receipt or stock movement. The invoice and
+receipt still record only the amount due. Cash received and change are deliberately
+not persisted, included in audit/payment history, or shown on receipt preview or
+reprint. Non-cash payment methods do not require or use a cash amount. This feature
+does not add split tender or cash-drawer reconciliation.
 
 The cart row lock serializes retries, including cash payments without references.
 A completed paid cart returns its existing receipt without saving submitted fields.

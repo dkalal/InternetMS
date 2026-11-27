@@ -11,33 +11,83 @@ from users.models import TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission
 
 from .models import (
-    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianPayoutAccount,
+    TechnicianWorkReport, WorkReportHistory,
     WorkReportServiceDay,
 )
+from .bank_account_security import encrypt_payout_account_number
 
 
 def _require(membership, action, *, tenant=None):
     tenant = tenant or (membership.tenant if membership else None)
-    if membership is None or not membership.is_active or not has_tenant_permission(
-        membership.user, tenant, action, membership=membership,
+    current = TenantMembership.objects.select_related("user", "tenant").filter(
+        pk=getattr(membership, "pk", None), is_active=True, user__is_active=True,
+        tenant__is_active=True,
+    ).first()
+    if current is None or not has_tenant_permission(
+        current.user, tenant, action, membership=current,
     ):
         raise PermissionDenied("Insufficient work report permissions.")
 
 
 def _history(report, membership, event, *, from_status="", reason=""):
+    snapshot = report.snapshot()
+    if event == WorkReportHistory.Event.ARCHIVED:
+        snapshot.update({
+            "archived_at": report.archived_at.isoformat(),
+            "archived_by_id": report.archived_by_id,
+        })
     WorkReportHistory.objects.create(
         tenant=report.tenant, report=report, actor_membership=membership,
         event=event, from_status=from_status, to_status=report.status,
-        reason=reason, snapshot=report.snapshot(),
+        reason=reason, snapshot=snapshot,
     )
     AuditLog.objects.create(
         organization=report.tenant, tenant=report.tenant, actor=membership.user,
         action=f"technician_work_report.{event.lower()}",
         object_type="TechnicianWorkReport", object_id=str(report.pk),
         old_value={"status": from_status} if from_status else {},
-        new_value={"status": report.status},
+        new_value={
+            "status": report.status,
+            **({"archived": True} if event == WorkReportHistory.Event.ARCHIVED else {}),
+        },
         metadata={"history_event": event, "reason": reason},
     )
+
+
+@transaction.atomic
+def archive_needs_correction_report(*, report_id, membership):
+    """Hide an eligible rejected report while preserving its immutable record."""
+    _require(membership, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN)
+    if membership.base_role != TenantMembership.BaseRole.TECHNICIAN:
+        raise PermissionDenied("Only a Technician may remove their own report.")
+    report = TechnicianWorkReport.objects.unscoped().select_for_update().filter(
+        pk=report_id, tenant=membership.tenant, technician=membership,
+    ).first()
+    if report is None:
+        raise PermissionDenied("Work report is not available.")
+    if report.archived_at:
+        return report
+    if report.status != TechnicianWorkReport.Status.REJECTED:
+        raise ValidationError("Only reports marked Needs correction may be deleted.")
+    if report.assignment_id:
+        raise ValidationError("Reports linked to an assignment cannot be deleted.")
+    if TechnicianPaymentRecord.objects.unscoped().filter(
+        tenant=report.tenant, report=report,
+    ).exists():
+        raise ValidationError("Reports with payment history cannot be deleted.")
+
+    from_status = report.status
+    report.archived_at = timezone.now()
+    report.archived_by = membership
+    report._archive_write = True
+    report.save(update_fields=("archived_at", "archived_by", "updated_at"))
+    _history(
+        report, membership, WorkReportHistory.Event.ARCHIVED,
+        from_status=from_status,
+        reason="Technician removed a report after correction was requested.",
+    )
+    return report
 
 
 def _validated_service_days(service_days):
@@ -72,6 +122,13 @@ def _service_days_from_legacy(cleaned_data, service_days):
     return cleaned_data, service_days
 
 
+def _validate_report_fields(cleaned_data, *, allow_assignment=False):
+    from .forms import REPORT_FIELDS
+    allowed = set(REPORT_FIELDS) | ({"assignment"} if allow_assignment else set())
+    if set(cleaned_data) - allowed:
+        raise ValidationError("Unsupported Work Report fields.")
+
+
 def _replace_service_days(*, report, service_days, approved_correction=False):
     rows = _validated_service_days(service_days)
     existing = WorkReportServiceDay.objects.unscoped().select_for_update().filter(
@@ -98,6 +155,20 @@ def create_report(*, membership, cleaned_data, service_days=None):
     if membership.base_role != TenantMembership.BaseRole.TECHNICIAN:
         raise PermissionDenied("Only Technicians create work reports for themselves.")
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data, allow_assignment=True)
+    if cleaned_data.get("assignment"):
+        from .models import WorkAssignment
+        assignment = WorkAssignment.objects.unscoped().select_for_update().get(
+            pk=cleaned_data["assignment"].pk, tenant=membership.tenant,
+        )
+        if (assignment.technician_id != membership.pk or assignment.status != "ACCEPTED"
+                or assignment.accepted_revision != assignment.revision):
+            raise PermissionDenied("A current accepted assignment owned by you is required.")
+        existing = TechnicianWorkReport.objects.unscoped().filter(assignment=assignment).first()
+        if existing:
+            return existing
+        cleaned_data["assignment"] = assignment
+        cleaned_data["agreed_amount"] = Decimal(assignment.accepted_terms["proposed_amount"])
     rows = _validated_service_days(service_days)
     report = TechnicianWorkReport(
         tenant=membership.tenant, technician=membership,
@@ -112,16 +183,32 @@ def create_report(*, membership, cleaned_data, service_days=None):
 
 
 @transaction.atomic
+def create_and_submit_report(*, membership, cleaned_data, service_days=None):
+    """Create and submit as one unit so a failed transition leaves no draft behind."""
+    report = create_report(
+        membership=membership, cleaned_data=cleaned_data, service_days=service_days,
+    )
+    return submit_report(report_id=report.pk, membership=membership)
+
+
+@transaction.atomic
 def update_own_report(*, report_id, membership, cleaned_data, service_days=None):
     _require(membership, PermissionCode.TECHNICIAN_WORK_REPORTS_UPDATE_OWN)
     report = TechnicianWorkReport.objects.unscoped().select_for_update().filter(
         pk=report_id, tenant=membership.tenant, technician=membership,
+        archived_at__isnull=True,
     ).first()
     if report is None:
         raise PermissionDenied("Work report is not available.")
     if report.status not in {TechnicianWorkReport.Status.DRAFT, TechnicianWorkReport.Status.REJECTED}:
         raise ValidationError("Only draft or rejected reports may be edited.")
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data)
+    if report.assignment_id and any(
+        field in cleaned_data and cleaned_data[field] != getattr(report, field)
+        for field in ("agreed_amount", "assignment", "technician", "tenant")
+    ):
+        raise ValidationError("Accepted assignment payment and ownership cannot be changed.")
     rows = _validated_service_days(service_days) if service_days is not None else None
     for field, value in cleaned_data.items():
         setattr(report, field, value)
@@ -135,10 +222,21 @@ def update_own_report(*, report_id, membership, cleaned_data, service_days=None)
 
 
 @transaction.atomic
+def update_and_submit_own_report(*, report_id, membership, cleaned_data, service_days=None):
+    """Save edits and submit within one transaction."""
+    report = update_own_report(
+        report_id=report_id, membership=membership,
+        cleaned_data=cleaned_data, service_days=service_days,
+    )
+    return submit_report(report_id=report.pk, membership=membership)
+
+
+@transaction.atomic
 def submit_report(*, report_id, membership):
     _require(membership, PermissionCode.TECHNICIAN_WORK_REPORTS_SUBMIT_OWN)
     report = TechnicianWorkReport.objects.unscoped().select_for_update().filter(
         pk=report_id, tenant=membership.tenant, technician=membership,
+        archived_at__isnull=True,
     ).first()
     if report is None:
         raise PermissionDenied("Work report is not available.")
@@ -180,6 +278,8 @@ def approve_report(*, report_id, membership, tenant=None):
     report.rejection_reason = ""
     report.save()
     _history(report, membership, WorkReportHistory.Event.APPROVED, from_status=old_status)
+    from .assignment_services import complete_assignment
+    complete_assignment(report, membership)
     return report
 
 
@@ -217,6 +317,7 @@ def correct_approved_report(
         raise ValidationError("Only approved reports use the correction workflow.")
     before = report.snapshot()
     cleaned_data, service_days = _service_days_from_legacy(cleaned_data, service_days)
+    _validate_report_fields(cleaned_data)
     rows = _validated_service_days(service_days) if service_days is not None else None
     if (
         "agreed_amount" in cleaned_data
@@ -269,6 +370,129 @@ def _require_payment_technician(membership, permission, *, tenant):
         or not tenant.is_active
     ):
         raise PermissionDenied("Technician payment is not available.")
+
+
+def _payout_account_for_payment(account_id, *, tenant, technician, required):
+    if not account_id:
+        if required:
+            raise ValidationError("Choose the Technician's payout account for this bank transfer.")
+        return None
+    account = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+        pk=account_id, tenant=tenant, technician=technician, is_active=True,
+    ).first()
+    if account is None or not required:
+        raise ValidationError("The selected payout account is not available for this payment method.")
+    return account
+
+
+def _set_payout_account_default(account):
+    defaults = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+        tenant=account.tenant, technician=account.technician, is_default=True,
+    ).exclude(pk=account.pk)
+    for previous in defaults:
+        previous.is_default = False
+        previous._lifecycle_transition = True
+        previous.save(update_fields=["is_default", "updated_at"])
+    if not account.is_default:
+        account.is_default = True
+        account._lifecycle_transition = True
+        account.save(update_fields=["is_default", "updated_at"])
+
+
+def _locked_payout_owner(membership, tenant):
+    current = TenantMembership.objects.select_for_update().select_related(
+        "user", "tenant",
+    ).filter(
+        pk=membership.pk, tenant=tenant, is_active=True, user__is_active=True,
+        tenant__is_active=True, base_role=TenantMembership.BaseRole.TECHNICIAN,
+    ).first()
+    if current is None:
+        raise PermissionDenied("Technician payout account is not available.")
+    return current
+
+
+@transaction.atomic
+def add_technician_payout_account(*, membership, tenant, label, bank_name,
+                                  account_number, make_default=False):
+    _require_payment_technician(
+        membership, PermissionCode.TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN, tenant=tenant,
+    )
+    current = _locked_payout_owner(membership, tenant)
+    has_existing = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+        tenant=tenant, technician=current, is_active=True,
+    ).exists()
+    encrypted = encrypt_payout_account_number(account_number)
+    account = TechnicianPayoutAccount(
+        tenant=tenant, technician=current, label=(label or "").strip(),
+        bank_name=bank_name.strip(),
+        account_number_encrypted=encrypted, account_number_last4=account_number[-4:],
+        is_default=False, is_active=True,
+    )
+    account.save()
+    if make_default or not has_existing:
+        _set_payout_account_default(account)
+    AuditLog.objects.create(
+        organization=tenant, tenant=tenant, actor=current.user,
+        action="technician_payout_account.created", object_type="TechnicianPayoutAccount",
+        object_id=str(account.pk), old_value={},
+        new_value={"is_default": account.is_default},
+        metadata={"technician_membership_id": current.pk},
+    )
+    return account
+
+
+@transaction.atomic
+def set_technician_payout_account_default(*, account_id, membership, tenant):
+    _require_payment_technician(
+        membership, PermissionCode.TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN, tenant=tenant,
+    )
+    owner = _locked_payout_owner(membership, tenant)
+    account = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+        pk=account_id, tenant=tenant, technician=owner, is_active=True,
+    ).first()
+    if account is None:
+        raise ValidationError("This payout account is not available.")
+    _set_payout_account_default(account)
+    AuditLog.objects.create(
+        organization=tenant, tenant=tenant, actor=owner.user,
+        action="technician_payout_account.default_changed", object_type="TechnicianPayoutAccount",
+        object_id=str(account.pk), old_value={},
+        new_value={"is_default": True},
+        metadata={"technician_membership_id": owner.pk},
+    )
+    return account
+
+
+@transaction.atomic
+def deactivate_technician_payout_account(*, account_id, membership, tenant):
+    _require_payment_technician(
+        membership, PermissionCode.TECHNICIAN_PAYOUT_ACCOUNTS_MANAGE_OWN, tenant=tenant,
+    )
+    owner = _locked_payout_owner(membership, tenant)
+    account = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+        pk=account_id, tenant=tenant, technician=owner, is_active=True,
+    ).first()
+    if account is None:
+        raise ValidationError("This payout account is not available.")
+    was_default = account.is_default
+    account.is_default = False
+    account.is_active = False
+    account._lifecycle_transition = True
+    account.save(update_fields=["is_default", "is_active", "updated_at"])
+    if was_default:
+        next_account = TechnicianPayoutAccount.objects.unscoped().select_for_update().filter(
+            tenant=tenant, technician=owner, is_active=True,
+        ).exclude(pk=account.pk).order_by("-created_at", "-pk").first()
+        if next_account:
+            _set_payout_account_default(next_account)
+    AuditLog.objects.create(
+        organization=tenant, tenant=tenant, actor=owner.user,
+        action="technician_payout_account.deactivated", object_type="TechnicianPayoutAccount",
+        object_id=str(account.pk), old_value={"is_active": True},
+        new_value={"is_active": False},
+        metadata={"technician_membership_id": owner.pk},
+    )
+    return account
 
 
 def _payment_history(payment, membership, event, *, from_status="", reason="", request_metadata=None):
@@ -364,7 +588,7 @@ def _normalize_batch_allocations(report_allocations):
 @transaction.atomic
 def record_technician_payment_batch(
     *, report_allocations, membership, payment_date, payment_method,
-    method_description="", reference="", manager_note="", tenant=None,
+    payout_account_id=None, method_description="", reference="", manager_note="", tenant=None,
     replaces_batch_id=None, request_metadata=None,
 ):
     tenant = tenant or membership.tenant
@@ -398,6 +622,10 @@ def record_technician_payment_batch(
         or technician.base_role != TenantMembership.BaseRole.TECHNICIAN
     ):
         raise ValidationError("The Technician membership is not active in this tenant.")
+    payout_account = _payout_account_for_payment(
+        payout_account_id, tenant=tenant, technician=technician,
+        required=payment_method == TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+    )
     if any(report.status != TechnicianWorkReport.Status.APPROVED for report in reports):
         raise ValidationError("Every Work Report in a batch must be approved.")
 
@@ -449,6 +677,9 @@ def record_technician_payment_batch(
                 technician=technician,
                 payment_date=payment_date,
                 payment_method=payment_method,
+                payout_account=payout_account,
+                payout_bank_name_snapshot=payout_account.bank_name if payout_account else "",
+                payout_account_last4_snapshot=payout_account.account_number_last4 if payout_account else "",
                 method_description=method_description,
                 reference=(reference or "").strip(),
                 manager_note=(manager_note or "").strip(),
@@ -469,6 +700,9 @@ def record_technician_payment_batch(
                     amount_paid=row["amount_paid"],
                     payment_date=payment_date,
                     payment_method=payment_method,
+                    payout_account=payout_account,
+                    payout_bank_name_snapshot=payout_account.bank_name if payout_account else "",
+                    payout_account_last4_snapshot=payout_account.account_number_last4 if payout_account else "",
                     reference=batch.reference,
                     manager_note=batch.manager_note,
                     adjustment_reason=row["adjustment_reason"],
@@ -635,6 +869,7 @@ def replace_technician_payment_batch(*, voided_batch_id, membership, **payment_d
 @transaction.atomic
 def record_technician_payment(
     *, report_id, membership, amount_paid, payment_date, payment_method,
+    payout_account_id=None,
     reference="", manager_note="", adjustment_reason="",
     confirm_adjusted_amount=False, replaces_id=None, tenant=None,
     request_metadata=None,
@@ -654,6 +889,10 @@ def record_technician_payment(
         or report.technician.base_role != TenantMembership.BaseRole.TECHNICIAN
     ):
         raise ValidationError("The report Technician membership is not active in this tenant.")
+    payout_account = _payout_account_for_payment(
+        payout_account_id, tenant=tenant, technician=report.technician,
+        required=payment_method == TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+    )
     if TechnicianPaymentRecord.objects.unscoped().filter(
         tenant=tenant, report=report,
     ).exclude(status=TechnicianPaymentRecord.Status.VOIDED).exists():
@@ -683,6 +922,9 @@ def record_technician_payment(
         amount_paid=amount_paid,
         payment_date=payment_date,
         payment_method=payment_method,
+        payout_account=payout_account,
+        payout_bank_name_snapshot=payout_account.bank_name if payout_account else "",
+        payout_account_last4_snapshot=payout_account.account_number_last4 if payout_account else "",
         reference=(reference or "").strip(),
         manager_note=(manager_note or "").strip(),
         adjustment_reason=adjustment_reason,

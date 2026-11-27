@@ -116,7 +116,7 @@
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <div>{% include "components/form_field.html" with field=item_form.pricing_mode hide_help=True %}</div>
       <div>{% include "components/form_field.html" with field=item_form.discount_amount hide_help=True %}</div>
-      <div>{% include "components/form_field.html" with field=item_form.promotion hide_help=True %}</div>
+      {% comment %} <div>{% include "components/form_field.html" with field=item_form.promotion hide_help=True %}</div> {% endcomment %}
       <div>{% include "components/form_field.html" with field=item_form.discount_reason hide_help=True %}</div>
     </div>
   </div>

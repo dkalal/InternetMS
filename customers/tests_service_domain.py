@@ -209,6 +209,7 @@ class InternetServiceDomainTests(TestCase):
 class InternetServiceCommandTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="Command Tenant", slug="command-tenant")
+        self.other_org = Organization.objects.create(name="Other Command Tenant", slug="other-command-tenant")
         self.user = get_user_model().objects.create_user(username="domain-admin", password="test")
         TenantMembership.objects.create(
             tenant=self.org, user=self.user,
@@ -258,6 +259,82 @@ class InternetServiceCommandTests(TestCase):
         self.assertEqual(replacement.package_id, self.new_package.id)
         self.assertEqual(replacement.monthly_fee_at_signup, self.new_package.monthly_fee)
         self.assertEqual(replacement.start_date, date(2026, 8, 1))
+
+    def test_package_change_report_uses_event_snapshots_after_catalog_edits(self):
+        InternetServiceDomainService.change_service_package(
+            organization=self.org, actor=self.user, service_id=self.service.id,
+            package_id=self.new_package.id, effective_date=date(2026, 8, 1),
+            reason="Customer approved capacity upgrade",
+        )
+        Package.objects.filter(pk=self.new_package.pk).update(
+            name="Renamed current catalog package", speed="90 Mbps", monthly_fee=Decimal("210000.00"),
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["active_tenant_id"] = self.org.id
+        session.save()
+
+        response = self.client.get(reverse("package-change-report"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Upgrade 50 · 20 Mbps")
+        self.assertContains(response, "Customer approved capacity upgrade")
+        self.assertNotIn("Renamed current catalog package", response.context["rows"][0]["new_package"])
+        filtered_response = self.client.get(reverse("package-change-report"), {
+            "date_from": "2026-08-01", "date_to": "2026-08-01",
+            "package": str(self.new_package.pk), "q": "Command Customer",
+        })
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(filtered_response.context["result_count"], 1)
+        event = AuditLog.objects.get(tenant=self.org, action="internet_service.package_changed")
+        self.assertEqual(event.new_value["snapshot"]["package_name"], "Upgrade 50")
+        self.assertEqual(event.new_value["snapshot"]["speed"], "20 Mbps")
+
+    def test_package_change_report_is_tenant_scoped_and_export_permission_checked(self):
+        InternetServiceDomainService.change_service_package(
+            organization=self.org, actor=self.user, service_id=self.service.id,
+            package_id=self.new_package.id, effective_date=date(2026, 8, 1),
+            reason="Tenant-local package change",
+        )
+        other_event = AuditLog.objects.create(
+            organization=self.other_org, tenant=self.other_org, actor=self.user,
+            action="internet_service.package_changed", object_type="InternetService",
+            object_id="90001", old_value={"package_id": 1},
+            new_value={"package_id": 2},
+            metadata={"effective_date": "2026-08-01", "reason": "Other tenant secret"},
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["active_tenant_id"] = self.org.id
+        session.save()
+
+        response = self.client.get(reverse("package-change-report"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Tenant-local package change")
+        self.assertNotContains(response, "Other tenant secret")
+        self.assertEqual(other_event.tenant_id, self.other_org.id)
+
+        export_response = self.client.get(reverse("package-change-report"), {"export": "xlsx"})
+        self.assertEqual(export_response.status_code, 200)
+        self.assertIn(
+            "customer-package-changes.xlsx",
+            export_response["Content-Disposition"],
+        )
+
+    def test_package_change_report_denies_sales_without_explicit_report_access(self):
+        sales_user = get_user_model().objects.create_user(username="domain-sales-report", password="test")
+        TenantMembership.objects.create(
+            tenant=self.org, user=sales_user,
+            base_role=TenantMembership.BaseRole.SALES,
+        )
+        self.client.force_login(sales_user)
+        session = self.client.session
+        session["active_tenant_id"] = self.org.id
+        session.save()
+
+        response = self.client.get(reverse("package-change-report"))
+
+        self.assertEqual(response.status_code, 403)
 
     def test_block_and_disconnect_do_not_cancel_commercial_agreement(self):
         InternetServiceDomainService.block_service(

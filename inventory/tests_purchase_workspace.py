@@ -286,6 +286,31 @@ class UnifiedPurchaseWorkspaceTests(TestCase):
         self.assertEqual(line.unit_cost, Decimal('750.000000'))
         self.assertEqual(purchase.total_cost, Decimal('2625.00'))
 
+    def test_standard_selling_price_updates_catalog_without_changing_purchase_amount_or_stock(self):
+        response = self.client.post(
+            reverse('inventory:purchase_create'),
+            self.payload(action='save_review', standard_selling_price='225.00'),
+        )
+        self.assertRedirects(response, reverse('inventory:purchase_detail', args=[Purchase.objects.get(reference_number='PUR-WS-NEW').pk]))
+        self.product.refresh_from_db()
+        purchase = Purchase.objects.get(reference_number='PUR-WS-NEW')
+        self.assertEqual(self.product.selling_price, Decimal('225.00'))
+        self.assertEqual(purchase.total_cost, Decimal('200.00'))
+        self.assertEqual(purchase.lines.get().line_total, Decimal('200.00'))
+        self.assertFalse(StockMovement.objects.exists())
+
+    def test_standard_selling_price_at_or_below_cost_rejects_the_whole_draft(self):
+        response = self.client.post(
+            reverse('inventory:purchase_create'),
+            self.payload(action='save_review', standard_selling_price='100.00'),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Standard selling price must be greater than the current cost')
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.selling_price, Decimal('150.00'))
+        self.assertFalse(Purchase.objects.exists())
+        self.assertFalse(StockMovement.objects.exists())
+
     def test_existing_serial_validation_blocks_invalid_draft_and_stock(self):
         response = self.client.post(
             reverse('inventory:purchase_create'),

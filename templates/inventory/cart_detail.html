@@ -104,8 +104,7 @@
           {% if cart_form.non_field_errors %}<div class="p-3 text-sm text-rose-700" role="alert">{{ cart_form.non_field_errors }}</div>{% endif %}
           {% if cart.status == 'draft' %}
             <div id="pos-customer-fields" class="pos-detail-panel p-4" data-pos-detail-panel="customer" role="tabpanel" {% if not cart_form.customer.errors and not cart_form.walk_in_name.errors and not cart_form.sale_pricing_category.errors %}hidden{% endif %}>
-              <div class="space-y-3">{% include "components/form_field.html" with field=cart_form.customer %}{% include "components/form_field.html" with field=cart_form.walk_in_name %}{% include "components/form_field.html" with field=cart_form.sale_pricing_category %}</div>
-              <button class="jims-btn jims-btn-secondary mt-4 w-full" type="submit">Save customer</button>
+              <div class="pos-customer-grid">{% include "components/form_field.html" with field=cart_form.customer %}{% include "components/form_field.html" with field=cart_form.walk_in_name %}{% include "components/form_field.html" with field=cart_form.sale_pricing_category %}</div>
             </div>
             {% comment %} <div id="pos-address-fields" class="pos-detail-panel p-4" data-pos-detail-panel="address" role="tabpanel" {% if not cart_form.shipping_address.errors %}hidden{% endif %}>
               <h3 class="text-sm font-semibold text-slate-950">Delivery address</h3>
@@ -147,9 +146,12 @@
             <h3 id="pos-payment-title" class="mb-2 text-sm font-semibold text-slate-950">Payment details</h3>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {% include "components/form_field.html" with field=payment_form.payment_method %}
+              <div data-pos-cash-fields>
+                {% include "components/form_field.html" with field=payment_form.cash_received %}
+                <p class="mt-2 text-sm font-semibold text-slate-700" data-pos-change-wrap hidden role="status" aria-live="polite"><span data-pos-change-label>Change to give</span>: <span data-pos-change-due>0.00</span> TZS</p>
+              </div>
               {% include "components/form_field.html" with field=payment_form.payment_reference %}
             </div>
-            {% comment %} <p class="mt-2 text-xs text-slate-500">The full cart total will be recorded as paid today. Completing payment deducts stock.</p> {% endcomment %}
           </section>
         {% endif %}
         <div class="pos-total-dock"><dl class="pos-totals text-sm"><div><dt>Subtotal</dt><dd><span data-pos-subtotal>{{ subtotal|money_display }}</span> TZS</dd></div><div><dt>Discount</dt><dd data-live-discount>-{{ cart.discount_amount|money_display }}</dd></div><div><dt>VAT (<span data-live-tax-rate>{{ cart.tax_rate|number_display:2 }}</span>%)</dt><dd data-live-tax>{{ tax|money_display }}</dd></div><div class="pos-grand-total"><dt>Total</dt><dd><span data-live-total>{{ grand_total|money_display }}</span> TZS</dd></div></dl><div class="pos-checkout-actions" data-pos-checkout-container>{% include "inventory/includes/pos_checkout.html" %}</div></div>

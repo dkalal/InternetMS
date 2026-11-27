@@ -45,14 +45,14 @@
                         <p class="mt-1 text-sm text-slate-500">The package identity and technical speed shown during customer assignment.</p>
                     </div>
                     <div class="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-12">
-                        <div class="min-w-0 md:col-span-6 md:max-w-[23rem]">{% include "components/form_field.html" with field=form.name %}</div>
-                        <div class="min-w-0 md:col-span-4">{% include "components/form_field.html" with field=form.package_type %}</div>
-                        <div class="md:col-span-4">{% include "components/form_field.html" with field=form.speed %}</div>
-                        <div class="md:col-span-8 md:flex md:items-end">
+                        <div class="min-w-0 md:col-span-4">{% include "components/form_field.html" with field=form.name %}</div>
+                        <div class="min-w-0 md:col-span-3">{% include "components/form_field.html" with field=form.package_type %}</div>
+                        <div class="min-w-0 md:col-span-2">{% include "components/form_field.html" with field=form.speed %}</div>
+                        <div class="min-w-0 md:col-span-3 md:flex md:items-end">
                             <div class="w-full rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                                 <div class="flex min-h-11 items-center gap-3">
                                     {{ form.is_active }}
-                                    <div><label for="{{ form.is_active.id_for_label }}" class="text-sm font-semibold text-slate-900">Active and assignable</label><p class="mt-0.5 text-xs leading-5 text-slate-500">Inactive packages remain in history and are excluded from normal new assignments.</p></div>
+                                    <div><label for="{{ form.is_active.id_for_label }}" class="text-sm font-semibold text-slate-900">Active and assignable</label></div>
                                 </div>
                                 {% for error in form.is_active.errors %}<p class="mt-1 text-sm text-rose-600" role="alert">{{ error }}</p>{% endfor %}
                             </div>

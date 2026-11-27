@@ -22,6 +22,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20m9.5-12.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Zm2.5 2a3 3 0 0 1 0 5.8M19.5 20v-1.5a3.5 3.5 0 0 0-2-3.16"/></svg>
           <span>Customers</span>
         </a>{% endif %}
+        {% comment %} {% if "customers.package_changes_report.view" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link pl-12" href="{% url 'package-change-report' %}" {% if "report" in request.resolver_match.url_name and request.resolver_match.app_name != "inventory" %}aria-current="page"{% endif %}><span>Customer reports</span></a>{% endif %} {% endcomment %}
         {% if "packages.view" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link" href="{% url 'package-list' %}" {% if request.resolver_match.app_name == "services" or "package-" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 7.5 12 3l8 4.5-8 4.5-8-4.5Zm0 4.5 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>
           <span>Services & packages</span>
@@ -32,8 +33,11 @@
             <span>Inventory</span>
           </a>
         {% endif %}
+        {% if "work_assignments.view_own" in ACTIVE_PERMISSIONS or "work_assignments.view_all" in ACTIVE_PERMISSIONS %}
+          <a class="jims-sidebar-link" href="{% url 'work_reports:assignment_list' %}" {% if request.resolver_match.app_name == "work_reports" and "assignment" in request.resolver_match.url_name %}aria-current="page"{% endif %}><span class="flex-1">Work Assignments</span>{% if PENDING_ASSIGNMENTS %}<span class="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800">{{ PENDING_ASSIGNMENTS }}</span>{% endif %}</a>
+        {% endif %}
         {% if "technician_work_reports.view_own" in ACTIVE_PERMISSIONS or "technician_work_reports.view_all" in ACTIVE_PERMISSIONS %}
-          <a class="jims-sidebar-link" href="{% url 'work_reports:list' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name != "approval_queue" %}aria-current="page"{% endif %}>
+          <a class="jims-sidebar-link" href="{% url 'work_reports:list' %}" {% if request.resolver_match.app_name == "work_reports" and request.resolver_match.url_name != "approval_queue" and "assignment" not in request.resolver_match.url_name %}aria-current="page"{% endif %}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 3h10a2 2 0 0 1 2 2v16H5V5a2 2 0 0 1 2-2Zm2 5h6m-6 4h6m-6 4h4"/></svg>
             <span>{% if request.user_role == "TECHNICIAN" %}My Work Reports{% else %}Work Reports{% endif %}</span>
           </a>
@@ -50,15 +54,15 @@
       <div class="jims-sidebar-section space-y-1">
         <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='invoice' %}" {% if request.resolver_match.app_name == "billing" and "invoice" in request.path %}aria-current="page"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 3h8l4 4v14H7V3Zm8 0v5h4M10 12h6m-6 4h6"/></svg>
-          <span>{% if request.user_role == "SALES" %}My Invoices{% else %}Invoices{% endif %}</span>
+          <span>{% if request.user_role == "SALES" %}Invoices{% else %}Invoices{% endif %}</span>
         </a>
         <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='quotation' %}" {% if request.resolver_match.app_name == "billing" and "quotation" in request.path %}aria-current="page"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 3h12v18H6V3Zm3 5h6m-6 4h6m-6 4h4"/></svg>
-          <span>{% if request.user_role == "SALES" %}My Quotations{% else %}Quotations{% endif %}</span>
+          <span>{% if request.user_role == "SALES" %}Quotations{% else %}Quotations{% endif %}</span>
         </a>
         <a class="jims-sidebar-link" href="{% url 'billing:document_list' doc_type='receipt' %}" {% if request.resolver_match.app_name == "billing" and "receipt" in request.path %}aria-current="page"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Zm3 5h6m-6 4h6"/></svg>
-          <span>{% if request.user_role == "SALES" %}My Receipts{% else %}Receipts{% endif %}</span>
+          <span>{% if request.user_role == "SALES" %}Receipts{% else %}Receipts{% endif %}</span>
         </a>
         {% if "finance.sales.view_all" in ACTIVE_PERMISSIONS %}<a class="jims-sidebar-link" href="{% url 'billing:billing_sheet_list' %}" {% if request.resolver_match.url_name == "billing_sheet_list" or "billing_sheet" in request.resolver_match.url_name %}aria-current="page"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5h16v14H4V5Zm0 5h16M9 5v14m6-9v9"/></svg>
@@ -86,7 +90,17 @@
         </details>
       {% endif %}
       <div class="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5">
-        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-800">{{ user.username|slice:":1"|upper }}</span>
+        {% if "technician_payout_accounts.manage_own" in ACTIVE_PERMISSIONS %}
+          <a href="{% url 'work_reports:technician_profile' %}"
+             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-800 transition-colors hover:bg-brand-200 hover:text-brand-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 {% if request.resolver_match.url_name == 'technician_profile' %}ring-2 ring-brand-300{% endif %}"
+             aria-label="Open my profile and payout details"
+             title="My profile and payout details"
+             {% if request.resolver_match.url_name == "technician_profile" %}aria-current="page"{% endif %}>
+            {{ user.get_short_name|default:user.username|slice:":1"|upper }}
+          </a>
+        {% else %}
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-800">{{ user.get_short_name|default:user.username|slice:":1"|upper }}</span>
+        {% endif %}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-semibold text-slate-900">{{ user.get_short_name|default:user.username }}</span>
           <span class="block truncate text-xs text-slate-500">{{ request.user_role|default:"Team member" }}</span>

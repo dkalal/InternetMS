@@ -29,6 +29,7 @@ ZERO_TAX_RATE = Decimal("0.00")
 
 @dataclass(frozen=True)
 class LineItemInput:
+    source_line_id: int | None = None
     product_id: int | None = None
     package_id: int | None = None
     internet_service_id: int | None = None
@@ -236,10 +237,13 @@ class BillingService:
         return invoice
 
     @classmethod
-    def _resolve_quotation(cls, *, organization: Organization, quotation_id: int) -> BillingDocument:
+    def _resolve_quotation(cls, *, organization: Organization, quotation_id: int, lock=False) -> BillingDocument:
+        queryset = BillingDocument.objects.unscoped()
+        if lock:
+            queryset = queryset.select_for_update(of=("self",))
         quotation = (
-            BillingDocument.objects.unscoped()
-            .select_related("customer", "converted_invoice")
+            queryset
+            .select_related("customer")
             .prefetch_related("items")
             .filter(pk=quotation_id, document_type=BillingDocument.DocumentType.QUOTATION)
             .first()
@@ -1012,6 +1016,7 @@ class BillingService:
         corrected_invoice: BillingDocument | None = None,
         payment_date: date | None = None,
         payment_method: str = "",
+        cash_received: Decimal | None = None,
         payment_reference: str = "",
         balance_brought_forward: Decimal = Decimal("0.00"),
         walk_in_name: str | None = None,
@@ -1084,6 +1089,7 @@ class BillingService:
             corrected_invoice=corrected_invoice,
             payment_date=payment_date,
             payment_method=payment_method,
+            cash_received=cash_received,
             payment_reference=payment_reference,
             version_number=version_number,
             parent_quotation=parent_quotation,
@@ -1337,6 +1343,7 @@ class BillingService:
         return {"from": left_snapshot, "to": right_snapshot, "changes": diff}
 
     @classmethod
+    @transaction.atomic
     def create_quotation_version(
         cls,
         *,
@@ -1359,7 +1366,9 @@ class BillingService:
         if items is None:
             items = []
         cls._validate_document_status(document_type=BillingDocument.DocumentType.QUOTATION, status=status)
-        previous = cls._resolve_quotation(organization=organization, quotation_id=quotation_id)
+        previous = cls._resolve_quotation(organization=organization, quotation_id=quotation_id, lock=True)
+        if not previous.is_current_version or previous.status != BillingDocument.Status.DRAFT:
+            raise BillingServiceError("Only the current draft quotation can be revised.")
         customer = cls._resolve_customer(organization=organization, customer_id=customer_id)
         site = None
         if site_id is not None:
@@ -1412,6 +1421,7 @@ class BillingService:
             return version
 
     @classmethod
+    @transaction.atomic
     def update_draft_invoice(
         cls,
         *,
@@ -1422,7 +1432,7 @@ class BillingService:
         status: str = BillingDocument.Status.DRAFT,
         items: list[LineItemInput],
     ) -> BillingDocument:
-        invoice = BillingDocument.objects.unscoped().filter(
+        invoice = BillingDocument.objects.unscoped().select_for_update().filter(
             pk=invoice_id,
             document_type=BillingDocument.DocumentType.INVOICE,
         ).prefetch_related("items").first()
@@ -1443,7 +1453,7 @@ class BillingService:
                 raise BillingServiceError(ISSUED_INVOICE_EDIT_ERROR)
             from inventory.models import ProvisionalContainerAllocation
             ProvisionalContainerAllocation.objects.unscoped().filter(tenant=organization, billing_line__document=invoice).delete()
-            BillingLineItem.objects.filter(document=invoice).delete()
+            original_items = {line.pk: line for line in invoice.items.all()}
             created_items = cls._build_line_items(organization=organization, document=invoice, items=items)
             cls._validate_product_cost_floors(
                 organization=organization,
@@ -1451,15 +1461,55 @@ class BillingService:
                 line_items=created_items,
                 document_discount=invoice.discount_amount,
             )
-            if created_items:
-                BillingLineItem.objects.bulk_create(created_items)
-                from inventory.packaging_sales import replace_selections
-                used = {}
-                for source, line in zip(items, created_items):
-                    if line.unit_factor is not None and source.container_selections:
-                        pairs = replace_selections(organization=organization, line=line, selections=source.container_selections, used=used)
-                        for container, amount in pairs:
-                            used[container.pk] = used.get(container.pk, Decimal('0')) + amount
+            retained_ids = set()
+            submitted_ids = set()
+            retained_items = []
+            new_items = []
+            for submitted, replacement in zip(items, created_items):
+                original = original_items.get(submitted.source_line_id)
+                if submitted.source_line_id is not None and (
+                    original is None or original.pk in submitted_ids
+                ):
+                    raise BillingServiceError("Invalid or repeated invoice line.")
+                if original is None:
+                    new_items.append(replacement)
+                    continue
+                submitted_ids.add(original.pk)
+                has_serial_selections = original.serial_selections.exists()
+                if not has_serial_selections:
+                    # Keep the established submitted row order for ordinary
+                    # drafts, whose presentation is ordered by generated IDs.
+                    new_items.append(replacement)
+                    continue
+                if (
+                    original.product_id != replacement.product_id
+                    or original.quantity != replacement.quantity
+                ):
+                    raise BillingServiceError("Update serial selections before changing this line's product or quantity.")
+                replacement.pk = original.pk
+                retained_ids.add(original.pk)
+                retained_items.append(replacement)
+            removed = invoice.items.exclude(pk__in=retained_ids)
+            if removed.filter(serial_selections__isnull=False).exists():
+                raise BillingServiceError("Remove serial selections before removing this invoice line.")
+            removed.delete()
+            if retained_items:
+                BillingLineItem.objects.bulk_update(retained_items, [
+                    "product", "package", "internet_service", "subscription", "description",
+                    "unit_snapshot", "quantity", "unit_price", "base_unit_price", "discount_amount",
+                    "discount_percent", "discount_reason", "pricing_mode", "billing_behavior",
+                    "promotion", "line_total",
+                ])
+            if new_items:
+                BillingLineItem.objects.bulk_create(new_items)
+            from inventory.packaging_sales import replace_selections
+            used = {}
+            for source, line in zip(items, created_items):
+                if line.unit_factor is not None and source.container_selections:
+                    pairs = replace_selections(organization=organization, line=line,
+                        selections=source.container_selections, used=used)
+                    for container, amount in pairs:
+                        used[container.pk] = used.get(container.pk, Decimal('0')) + amount
             linked_periods = list(
                 SubscriptionPeriod.objects.filter(organization=organization, invoice=invoice).select_related("subscription")
             )
@@ -1492,6 +1542,17 @@ class BillingService:
                 line_items=created_items,
                 discount_amount=invoice.discount_amount,
             )
+            def tax_signature(lines):
+                return sorted((
+                    line.product_id or 0, line.package_id or 0,
+                    line.quantity, line.unit_price, line.discount_amount,
+                ) for line in lines)
+
+            if tax_rate == invoice.tax_rate and tax_signature(original_items.values()) == tax_signature(created_items):
+                # A description/status-only edit must not pick up a later
+                # catalog tax change when publishing the agreed snapshot.
+                tax_amount = invoice.tax_amount
+                total = (subtotal - invoice.discount_amount + tax_amount).quantize(Decimal('0.01'))
             updates = {
                 "tax_rate": tax_rate,
                 "subtotal": subtotal,
@@ -1571,6 +1632,7 @@ class BillingService:
         return inferred_months
 
     @classmethod
+    @transaction.atomic
     def transition_quotation_status(
         cls,
         *,
@@ -1580,7 +1642,7 @@ class BillingService:
         to_status: str,
         reason: str = "",
     ) -> BillingDocument:
-        quotation = cls._resolve_quotation(organization=organization, quotation_id=quotation_id)
+        quotation = cls._resolve_quotation(organization=organization, quotation_id=quotation_id, lock=True)
         state = cls.get_quotation_action_state(organization=organization, quotation=quotation)
         allowed = {
             BillingDocument.Status.SENT: state["can_send"],
@@ -1629,8 +1691,9 @@ class BillingService:
             return quotation
 
     @classmethod
+    @transaction.atomic
     def create_invoice_from_quotation(cls, *, organization: Organization, created_by, quotation_id: int) -> BillingDocument:
-        quotation = cls._resolve_quotation(organization=organization, quotation_id=quotation_id)
+        quotation = cls._resolve_quotation(organization=organization, quotation_id=quotation_id, lock=True)
         if not quotation.is_current_version:
             raise BillingServiceError("Only the latest quotation version can be converted to an invoice.")
         if quotation.converted_invoice_id:
@@ -1682,7 +1745,14 @@ class BillingService:
                 walk_in_name=quotation.walk_in_name_snapshot if quotation.is_walk_in_sale else None,
                 shipping_address=quotation.shipping_address_snapshot,
             )
-            BillingDocument.objects.filter(pk=invoice.pk).update(source_quotation=quotation)
+            # Conversion carries the agreed financial snapshot; catalog tax
+            # changes must not silently change the accepted quotation's total.
+            BillingDocument.objects.filter(pk=invoice.pk).update(
+                source_quotation=quotation,
+                subtotal=quotation.subtotal,
+                tax_amount=quotation.tax_amount,
+                total=quotation.total,
+            )
             BillingDocument.objects.filter(pk=quotation.pk).update(
                 status=BillingDocument.Status.CONVERTED,
                 converted_at=timezone.now(),
@@ -2165,6 +2235,35 @@ class BillingService:
             return credit_note
 
     @classmethod
+    def _subscription_receipt_source_line(cls, *, organization: Organization, invoice: BillingDocument):
+        # POS payments use cart-backed receipt workflows, even if an invoice
+        # later acquires other service metadata. Keep this option exclusive to
+        # the dedicated subscription invoice flow.
+        from inventory.models import Cart
+
+        if Cart.objects.unscoped().filter(tenant=organization, invoice=invoice).exists():
+            return None
+        period = (
+            SubscriptionPeriod.objects.filter(
+                organization=organization,
+                tenant=organization,
+                invoice=invoice,
+            )
+            .select_related("subscription")
+            .order_by("period_start", "id")
+            .first()
+        )
+        if period is None:
+            return None
+        lines = BillingLineItem.objects.filter(
+            organization=organization,
+            tenant=organization,
+            document=invoice,
+            package_id=period.subscription.package_id,
+        ).order_by("id")
+        return lines.filter(subscription_id=period.subscription_id).first() or lines.first()
+
+    @classmethod
     def create_receipt_from_invoice(
         cls,
         *,
@@ -2174,8 +2273,10 @@ class BillingService:
         amount_paid: Decimal,
         payment_date: date | None = None,
         payment_method: str = "",
+        cash_received: Decimal | None = None,
         payment_reference: str = "",
         notes: str = "",
+        subscription_description: str | None = None,
     ) -> BillingDocument:
         with transaction.atomic():
             invoice = (
@@ -2193,6 +2294,20 @@ class BillingService:
             if amount_paid <= Decimal("0.00"):
                 raise BillingServiceError("Amount paid must be greater than zero.")
 
+            payment_method = (payment_method or '').strip().lower()
+            tendered_cash = None
+            if payment_method == "cash":
+                try:
+                    tendered_cash = amount_paid if cash_received is None else Decimal(str(cash_received))
+                    normalized_tendered = tendered_cash.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                except (ArithmeticError, TypeError, ValueError):
+                    raise BillingServiceError("Enter a valid cash amount.") from None
+                if tendered_cash != normalized_tendered or normalized_tendered < amount_paid:
+                    raise BillingServiceError("Cash received must be at least the amount paid, with no more than two decimal places.")
+                tendered_cash = normalized_tendered
+            elif cash_received is not None:
+                raise BillingServiceError("Cash received can only be recorded for cash payments.")
+
             payment_reference = (payment_reference or "").strip()
             if payment_reference:
                 reference_owner = BillingDocument.objects.unscoped().filter(
@@ -2204,7 +2319,13 @@ class BillingService:
                         reference_owner.document_type == BillingDocument.DocumentType.RECEIPT
                         and reference_owner.invoice_id == invoice.id
                     ):
-                        if reference_owner.total != amount_paid:
+                        if (
+                            reference_owner.total != amount_paid
+                            or (
+                                reference_owner.cash_received is not None
+                                and reference_owner.cash_received != tendered_cash
+                            )
+                        ):
                             raise BillingServiceError(
                                 "This payment reference was already used for a different payment amount."
                             )
@@ -2224,9 +2345,24 @@ class BillingService:
             from inventory.services import InventoryError, InventoryService
 
             inventory_sale = policy['requires_full_payment']
+            subscription_line = cls._subscription_receipt_source_line(
+                organization=organization, invoice=invoice,
+            )
+            if subscription_description is not None and subscription_line is None:
+                raise BillingServiceError("A custom receipt description is only available for a subscription package invoice.")
+            if subscription_line is not None:
+                if subscription_description is None:
+                    receipt_description = subscription_line.description
+                else:
+                    receipt_description = subscription_description.strip()
+                    if not receipt_description:
+                        raise BillingServiceError("Subscription receipt description cannot be empty.")
+                    if len(receipt_description) > 500:
+                        raise BillingServiceError("Subscription receipt description cannot exceed 500 characters.")
+            else:
+                receipt_description = f"Payment for invoice {invoice.number}"
             if inventory_sale and amount_paid != remaining_balance:
                 raise BillingServiceError('Inventory sales require complete payment of the full remaining balance.')
-            payment_method = (payment_method or '').strip().lower()
             if inventory_sale and payment_method not in {'cash', 'bank', 'mobile_money', 'other'}:
                 raise BillingServiceError('Select Cash, Bank, Mobile money, or Other.')
             if payment_date is None:
@@ -2234,7 +2370,7 @@ class BillingService:
             remaining_after_payment = (remaining_balance - amount_paid).quantize(Decimal('0.01'))
             is_partial = remaining_after_payment > Decimal('0.00')
             receipt_item = LineItemInput(
-                description=f"Payment for invoice {invoice.number}",
+                description=receipt_description,
                 quantity=Decimal("1.00"),
                 unit_price=amount_paid,
                 pricing_mode=BillingLineItem.PricingMode.MANUAL,
@@ -2257,6 +2393,7 @@ class BillingService:
                     invoice=invoice,
                     payment_date=payment_date,
                     payment_method=payment_method,
+                    cash_received=tendered_cash,
                     payment_reference=payment_reference,
                     walk_in_name=invoice.walk_in_name_snapshot if invoice.is_walk_in_sale else None,
                     shipping_address=invoice.shipping_address_snapshot,
@@ -2303,6 +2440,17 @@ class BillingService:
                             paid_through_date=period.period_end
                         )
 
+            payment_audit_metadata = {
+                "invoice_id": invoice.id,
+                "amount_paid": str(amount_paid),
+                "credited_total": str(state["credited_total"]),
+                "is_partial": is_partial,
+                "payment_reference": payment_reference,
+                "remaining_balance_after": str(remaining_after_payment),
+            }
+            if subscription_line is not None:
+                payment_audit_metadata["receipt_description"] = receipt_description
+
             AuditLog.objects.create(
                 organization=organization,
                 tenant=organization,
@@ -2314,23 +2462,8 @@ class BillingService:
                 object_id=str(receipt.id),
                 document_id=str(receipt.id),
                 old_value={},
-                new_value={
-                    "invoice_id": invoice.id,
-                    "amount_paid": str(amount_paid),
-                    "invoice_total": str(invoice.total),
-                    "credited_total": str(state["credited_total"]),
-                    "is_partial": is_partial,
-                    "payment_reference": payment_reference,
-                    "remaining_balance_after": str(remaining_after_payment),
-                },
-                metadata={
-                    "invoice_id": invoice.id,
-                    "amount_paid": str(amount_paid),
-                    "credited_total": str(state["credited_total"]),
-                    "is_partial": is_partial,
-                    "payment_reference": payment_reference,
-                    "remaining_balance_after": str(remaining_after_payment),
-                },
+                new_value={**payment_audit_metadata, "invoice_total": str(invoice.total)},
+                metadata=payment_audit_metadata,
                 performed_at=timezone.now(),
             )
 

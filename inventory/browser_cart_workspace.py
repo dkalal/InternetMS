@@ -71,14 +71,38 @@ class CartWorkspaceBrowserChecks(fixtures.CartFixture, StaticLiveServerTestCase)
         self.assertEqual(Cart.objects.count(), 1)
         self.assertEqual(BillingDocument.objects.filter(document_type='receipt').count(), 1)
 
-    def test_first_customer_save_uses_ajax_redirect(self):
+    def test_customer_layout_and_quotation_preserve_customer_without_separate_save(self):
+        self.product.item_type = "service"
+        self.product.save(update_fields=["item_type"])
         with sync_playwright() as playwright:
             browser, page = self.browser(playwright)
             self.open_workspace(page)
-            page.get_by_role('tab', name='Customer', exact=True).click()
-            page.locator('[name=walk_in_name]').fill('Workspace buyer')
-            page.get_by_role('button', name='Save customer', exact=True).click()
+            page.get_by_role('button', name='Add Router to sale', exact=True).click()
             page.wait_for_url(re.compile(r'/inventory/carts/\d+/$'))
+            page.get_by_role('tab', name='Customer', exact=True).click()
+            expect(page.get_by_role('button', name='Save customer', exact=True)).to_have_count(0)
+            output = Path(settings.BASE_DIR) / '.backups/pos-workspace'
+            output.mkdir(parents=True, exist_ok=True)
+            for width in (1440, 800, 390):
+                page.set_viewport_size({'width': width, 'height': 1000})
+                if width < 1200:
+                    page.locator('[data-cart-tab=cart]').click()
+                page.get_by_role('tab', name='Customer', exact=True).click()
+                fields = page.locator('.pos-customer-grid > div')
+                boxes = [fields.nth(index).bounding_box() for index in range(3)]
+                available = page.locator('#pos-customer-fields').evaluate('(el) => el.clientWidth - 32')
+                if available >= 360:
+                    self.assertLess(max(box['y'] for box in boxes) - min(box['y'] for box in boxes), 2)
+                    self.assertLess(boxes[0]['x'], boxes[1]['x'])
+                    self.assertLess(boxes[1]['x'], boxes[2]['x'])
+                else:
+                    self.assertLess(boxes[0]['y'], boxes[1]['y'])
+                    self.assertLess(boxes[1]['y'], boxes[2]['y'])
+                self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+                page.screenshot(path=str(output / f'compact-customer-{width}.png'), full_page=True)
+            page.locator('[name=walk_in_name]').fill('Workspace buyer')
+            page.get_by_role('button', name='Save as quotation', exact=True).click()
+            page.wait_for_url('**/billing/quotation/*/')
             browser.close()
         self.assertEqual(Cart.objects.get().walk_in_name, 'Workspace buyer')
 

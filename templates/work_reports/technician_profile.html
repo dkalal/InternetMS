@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}My payout details{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-6">
+  <header>
+    <p class="text-xs font-semibold uppercase tracking-wide text-brand-700">Technician profile</p>
+    <h1 class="mt-1 text-2xl font-bold tracking-tight text-slate-950">Payout details</h1>
+    <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Add the bank account where you receive work payments. You manage these details yourself; only you can see the masked account in this profile.</p>
+  </header>
+
+  <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="saved-accounts-title">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 id="saved-accounts-title" class="font-bold text-slate-950">Saved bank accounts</h2><p class="mt-1 text-sm text-slate-500">The full number is encrypted at rest and is never shown after you save it.</p></div>
+      {% if payout_accounts %}<span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ payout_accounts|length }} saved</span>{% endif %}
+    </div>
+    {% if payout_accounts %}
+      <ul class="mt-4 divide-y divide-slate-100">
+        {% for account in payout_accounts %}
+          <li class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2"><p class="font-semibold text-slate-900">{{ account.label|default:account.bank_name }}</p>{% if account.is_default %}<span class="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-800">Default</span>{% endif %}{% if not account.is_active %}<span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Inactive</span>{% endif %}</div>
+              <p class="mt-1 text-sm text-slate-600">{{ account.bank_name }} <span class="font-mono">•••• {{ account.account_number_last4 }}</span></p>
+            </div>
+            {% if account.is_active %}<div class="flex shrink-0 gap-2">
+              {% if not account.is_default %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="default"><input type="hidden" name="account_id" value="{{ account.pk }}"><button class="jims-btn jims-btn-secondary">Make default</button></form>{% endif %}
+              <form method="post">{% csrf_token %}<input type="hidden" name="action" value="deactivate"><input type="hidden" name="account_id" value="{{ account.pk }}"><button class="jims-btn jims-btn-quiet text-rose-700">Deactivate</button></form>
+            </div>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">No payout account saved yet. Add one below to let a Manager select it when recording a bank transfer.</div>
+    {% endif %}
+  </section>
+
+  <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="add-account-title">
+    <div class="mb-4"><h2 id="add-account-title" class="font-bold text-slate-950">Add bank account</h2><p class="mt-1 text-sm text-slate-500">Confirm the number carefully. For security, it is not returned in this form if there is a validation error.</p></div>
+    <form method="post" class="space-y-4" autocomplete="off" novalidate>{% csrf_token %}<input type="hidden" name="action" value="add">
+      {% if form.non_field_errors %}<div class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="grid gap-4 sm:grid-cols-2">
+        {% for field in form %}<div class="{% if field.name == 'make_default' %}sm:col-span-2{% endif %}">
+          {% if field.name == 'make_default' %}<label class="flex items-start gap-2 text-sm font-medium text-slate-700">{{ field }}<span>{{ field.label }}{% if field.help_text %}<span class="mt-1 block text-xs text-slate-500">{{ field.help_text }}</span>{% endif %}</span></label>
+          {% else %}<label for="{{ field.id_for_label }}" class="mb-1 block text-sm font-semibold text-slate-700">{{ field.label }}</label>{{ field }}{% if field.help_text %}<p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>{% endif %}{% endif %}
+          {% for error in field.errors %}<p class="mt-1 text-sm text-rose-700">{{ error }}</p>{% endfor %}
+        </div>{% endfor %}
+      </div>
+      <div class="flex justify-end"><button class="jims-btn jims-btn-primary">Save payout account</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

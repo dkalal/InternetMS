@@ -10,6 +10,14 @@ After changing only `.env`, recreate the web container with `docker compose up -
 docker compose exec web python manage.py shell -c "from django.conf import settings; print(settings.EMAIL_BACKEND, settings.EMAIL_HOST, settings.EMAIL_PORT, settings.APP_BASE_URL)"
 ```
 
+If an invitation reports `SMTPServerDisconnected`, the SMTP server closed the connection unexpectedly. That exception alone cannot identify whether the cause is provider availability, blocked outbound SMTP, a host/port mismatch, TLS mode, or authentication. Run the transport check inside the web container; it prints only whether credentials are configured, never their values, and does not send an email:
+
+```sh
+docker compose exec web python manage.py diagnose_email
+```
+
+For the usual submission ports, port 587 uses STARTTLS (`EMAIL_USE_TLS=1`, `EMAIL_USE_SSL=0`) and port 465 uses implicit TLS (`EMAIL_USE_TLS=0`, `EMAIL_USE_SSL=1`). Use the exact host, port, and authentication method required by your mail provider; providers may block SMTP egress or require an app-specific credential/OAuth. If the check fails, correct the deployment `.env`, recreate the container, and run it again. If it succeeds, send a manual test to an address you control using the command below. A successful transport check does not test sender authorization, provider spam policy, or inbox delivery.
+
 To send one manual test to an address you control, replace the placeholder recipient and run:
 
 ```sh

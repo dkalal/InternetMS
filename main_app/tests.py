@@ -55,8 +55,8 @@ class WorkspaceLandingTests(TestCase):
         client, response = self._login(self.technician)
         self.assertRedirects(response, reverse("main_app:workspace_home"), fetch_redirect_response=False)
         response = client.get(reverse("main_app:workspace_home"), follow=True)
-        self.assertEqual(response.redirect_chain[-1][0], reverse("work_reports:list"))
-        self.assertContains(response, "My Work Reports")
+        self.assertEqual(response.redirect_chain[-1][0], reverse("work_reports:assignment_list"))
+        self.assertContains(response, "Work Assignments")
 
     def test_super_administrator_must_choose_audited_support_context(self):
         client, response = self._login(self.super_admin)

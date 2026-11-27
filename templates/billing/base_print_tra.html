@@ -135,6 +135,19 @@
       word-break: break-word;
     }
 
+    .receipt-items {
+      table-layout: fixed;
+    }
+
+    .receipt-items .desc { width: 36%; padding-right: 3px; }
+    .receipt-items .qty { width: 20%; padding-left: 3px; }
+    .receipt-items .discount { width: 21%; text-align: right; padding-left: 3px; }
+    .receipt-items .amt { width: 23%; padding-left: 3px; }
+    .receipt-items .qty,
+    .receipt-items .discount,
+    .receipt-items .amt { overflow-wrap: anywhere; }
+    .receipt-items th { font-size: 10px; }
+
     .items tr,
     .totals,
     footer {

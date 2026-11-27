@@ -38,7 +38,7 @@ class CartCheckoutTests(TestCase):
         self.payload = {
             'customer': '', 'walk_in_name': 'Cash buyer', 'sale_pricing_category': 'customer_tier',
             'discount_amount': '0', 'tax_rate': '0', 'notes': 'Sale note',
-            'payment_method': 'cash', 'payment_reference': '',
+            'payment_method': 'cash', 'cash_received': '200', 'payment_reference': '',
         }
 
     def receipts(self):
@@ -86,6 +86,32 @@ class CartCheckoutTests(TestCase):
         self.assertContains(response, 'KEEP-ME', status_code=422)
         self.assertContains(response, 'Cash buyer', status_code=422)
         self.assert_draft_unchanged()
+
+    def test_cash_below_server_total_is_rejected_without_mutation(self):
+        response = self.client.post(self.url, {**self.payload, 'cash_received': '199.99'})
+        self.assertEqual(response.status_code, 422)
+        self.assertContains(response, 'Cash received is below the sale total', status_code=422)
+        self.assertContains(response, '199.99', status_code=422)
+        self.assert_draft_unchanged()
+
+    def test_cash_checkout_requires_received_amount(self):
+        response = self.client.post(self.url, {**self.payload, 'cash_received': ''})
+        self.assertEqual(response.status_code, 422)
+        self.assertContains(response, 'Enter the amount of cash received', status_code=422)
+        self.assert_draft_unchanged()
+
+    def test_cash_overpayment_is_saved_as_tender_and_change_on_receipt(self):
+        response = self.client.post(self.url, {**self.payload, 'cash_received': '1000'})
+        receipt = self.receipts().get()
+        self.assertRedirects(response, reverse('billing:receipt_print', args=[receipt.pk]))
+        self.assertEqual(receipt.total, Decimal('200'))
+        self.assertEqual(receipt.cash_received, Decimal('1000.00'))
+        print_response = self.client.get(reverse('billing:receipt_print', args=[receipt.pk]))
+        self.assertContains(print_response, 'Cash received')
+        self.assertContains(print_response, 'Change')
+        self.assertContains(print_response, '800')
+        self.balance.refresh_from_db()
+        self.assertEqual(self.balance.quantity, Decimal('3'))
 
     def test_insufficient_stock_rolls_back_invoice_receipt_and_cart_details(self):
         self.balance.quantity = 1
@@ -139,6 +165,7 @@ class CartCheckoutTests(TestCase):
         response = self.client.get(reverse('inventory:cart_detail', args=[self.cart.pk]))
         self.assertContains(response, 'name="payment_method"')
         self.assertContains(response, 'name="payment_reference"')
+        self.assertContains(response, 'name="cash_received"')
         self.assertNotContains(response, 'name="amount_paid"')
         self.assertNotContains(response, 'name="payment_date"')
         response = self.client.post(reverse('inventory:cart_convert', args=[self.cart.pk, 'quotation']), {
@@ -182,7 +209,7 @@ class ConcurrentCartCheckoutTests(TransactionTestCase):
     def test_simultaneous_cash_checkouts_issue_one_receipt_and_movement(self):
         from concurrent.futures import ThreadPoolExecutor
         from threading import Barrier
-        from django.db import close_old_connections
+        from django.db import connections, close_old_connections
         barrier = Barrier(2)
 
         def checkout():
@@ -193,9 +220,10 @@ class ConcurrentCartCheckoutTests(TransactionTestCase):
                 barrier.wait(timeout=10)
                 return CartService.checkout(
                     organization=org, cart_id=self.cart.pk, actor=user, payment_method='cash',
+                    cash_received=Decimal('200'),
                 ).pk
             finally:
-                close_old_connections()
+                connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(checkout) for _ in range(2)]

@@ -1175,7 +1175,7 @@ class CartService:
 
     @classmethod
     @transaction.atomic
-    def checkout(cls, *, organization, cart_id, actor, payment_method, payment_reference='', membership=None):
+    def checkout(cls, *, organization, cart_id, actor, payment_method, cash_received=None, payment_reference='', membership=None):
         """Complete a full cart payment once, including reference-free retries."""
         from billing.services import BillingService
         from users.permissions import PermissionCode, has_tenant_permission, can_view_sales_document
@@ -1209,10 +1209,25 @@ class CartService:
             organization=organization, cart_id=cart_id, target=BillingDocument.DocumentType.INVOICE,
             actor=actor, membership=membership,
         )
+        if payment_method == 'cash':
+            if cash_received is None:
+                raise InventoryError('Enter the amount of cash received.')
+            try:
+                tendered = Decimal(str(cash_received))
+                normalized_tendered = money(tendered)
+            except (ArithmeticError, TypeError, ValueError):
+                raise InventoryError('Enter a valid cash amount.') from None
+            if tendered != normalized_tendered or normalized_tendered <= Decimal('0.00'):
+                raise InventoryError('Cash received must be a positive amount with no more than two decimal places.')
+            if normalized_tendered < invoice.total:
+                raise InventoryError(
+                    f'Cash received is below the sale total ({invoice.total:,.2f} TZS).'
+                )
         return BillingService.create_receipt_from_invoice(
             organization=organization, created_by=actor, invoice_id=invoice.pk,
             amount_paid=invoice.total, payment_date=timezone.localdate(),
             payment_method=payment_method, payment_reference=payment_reference,
+            cash_received=tendered if payment_method == 'cash' else None,
         )
 
     @classmethod

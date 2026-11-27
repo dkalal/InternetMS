@@ -1,14 +1,21 @@
 from django.urls import path
 
 from . import views
+from . import assignment_views as assignments
 
 app_name = "work_reports"
 
 urlpatterns = [
+    path("assignments/", assignments.assignment_list, name="assignment_list"),
+    path("assignments/new/", assignments.assignment_edit, name="assignment_create"),
+    path("assignments/<int:pk>/", assignments.assignment_detail, name="assignment_detail"),
+    path("assignments/<int:pk>/edit/", assignments.assignment_edit, name="assignment_edit"),
+    path("assignments/<int:pk>/report/", assignments.assignment_report, name="assignment_report"),
     path("", views.report_list, name="list"),
     path("new/", views.report_create, name="create"),
     path("approvals/", views.approval_queue, name="approval_queue"),
     path("payments/", views.payment_workspace, name="payment_workspace"),
+    path("profile/", views.technician_profile, name="technician_profile"),
     path("payments/batches/record/", views.payment_batch_record, name="payment_batch_record"),
     path("payments/batches/<int:pk>/", views.payment_batch_detail, name="payment_batch_detail"),
     path("payments/batches/<int:pk>/confirm/", views.payment_batch_confirm, name="payment_batch_confirm"),
@@ -17,6 +24,7 @@ urlpatterns = [
     path("payments/batches/<int:pk>/replace/", views.payment_batch_replace, name="payment_batch_replace"),
     path("<int:pk>/", views.report_detail, name="detail"),
     path("<int:pk>/edit/", views.report_edit, name="edit"),
+    path("<int:pk>/delete/", views.report_delete, name="delete"),
     path("<int:pk>/submit/", views.report_submit, name="submit"),
     path("<int:pk>/approve/", views.report_approve, name="approve"),
     path("<int:pk>/reject/", views.report_reject, name="reject"),

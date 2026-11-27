@@ -3,9 +3,12 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 from django.urls import reverse
+from openpyxl import load_workbook
+from io import BytesIO
+from unittest.mock import patch
 
 from audit.models import AuditLog
 from billing.models import BillingDocument
@@ -15,16 +18,20 @@ from users.models import Organization, TenantMembership
 from users.permissions import PermissionCode, has_tenant_permission
 
 from .models import (
-    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianWorkReport, WorkReportHistory,
+    TechnicianPaymentBatch, TechnicianPaymentRecord, TechnicianPayoutAccount,
+    TechnicianWorkReport, WorkReportHistory,
     WorkReportServiceDay,
 )
+from .bank_account_security import PayoutAccountEncryptionUnavailable
 from .services import (
-    approve_report, confirm_technician_payment, confirm_technician_payment_batch,
+    add_technician_payout_account, archive_needs_correction_report, approve_report,
+    confirm_technician_payment, confirm_technician_payment_batch,
     correct_approved_report,
     create_report,
     dispute_technician_payment, dispute_technician_payment_batch,
     record_technician_payment, record_technician_payment_batch, reject_report,
-    replace_technician_payment, submit_report, void_technician_payment,
+    replace_technician_payment, set_technician_payout_account_default,
+    deactivate_technician_payout_account, submit_report, void_technician_payment,
     update_own_report, void_technician_payment_batch,
 )
 
@@ -115,6 +122,38 @@ class WorkReportSecurityTests(TestCase):
         self.assertEqual(client.get(reverse("work_reports:detail", args=[self.report_a2.pk])).status_code, 404)
         self.assertEqual(client.get(reverse("work_reports:detail", args=[self.report_b.pk])).status_code, 404)
 
+    def test_technician_gets_filtered_personal_summary_and_payment_status_filter(self):
+        self.report_a.agreed_amount = Decimal("1000.00")
+        self.report_a.save(update_fields=["agreed_amount"])
+        self.report_b.agreed_amount = Decimal("50000.00")
+        self.report_b.save(update_fields=["agreed_amount"])
+        self._approve(self.report_a)
+        payment = self._record_payment(self.report_a)
+        confirm_technician_payment(payment_id=payment.pk, membership=self.tech_a)
+        self._approve(self.report_b)
+        self._record_payment(self.report_b, manager=self.manager_b)
+
+        response = self._client_for(self.tech_a).get(reverse("work_reports:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["can_view_personal_summary"])
+        self.assertTrue(response.context["can_filter_payment_status"])
+        self.assertEqual(response.context["financial_summary"]["agreed_total"], Decimal("1000.00"))
+        self.assertEqual(response.context["financial_summary"]["approved_total"], Decimal("1000.00"))
+        self.assertEqual(response.context["financial_summary"]["confirmed_paid_total"], Decimal("1000.00"))
+        self.assertContains(response, "My financial summary")
+        self.assertContains(response, 'id="report-search"')
+        self.assertContains(response, 'id="report-date-from"')
+        self.assertContains(response, 'id="payment-status-filter"')
+        self.assertNotContains(response, "All Technicians")
+
+        filtered = self._client_for(self.tech_a).get(
+            reverse("work_reports:list"), {"payment": "CONFIRMED"},
+        )
+        self.assertEqual(filtered.context["result_count"], 1)
+        self.assertEqual(filtered.context["reports"][0].pk, self.report_a.pk)
+        self.assertNotContains(filtered, self.report_b.work_title)
+
     def test_manager_cannot_review_another_tenant_report_by_id(self):
         client = self._client_for(self.manager_a)
         self.assertEqual(client.get(reverse("work_reports:detail", args=[self.report_b.pk])).status_code, 404)
@@ -145,6 +184,60 @@ class WorkReportSecurityTests(TestCase):
         self.assertEqual(created.tenant_id, self.tenant_a.pk)
         self.assertEqual(created.technician_id, self.tech_a.pk)
         self.assertEqual(created.service_date, date(2026, 8, 2))
+
+    def test_report_form_supports_draft_and_direct_submission_for_create_and_edit(self):
+        client = self._client_for(self.tech_a)
+        base_payload = {
+            "work_title": "Directly submitted installation",
+            "client_name": "Client A", "customer": str(self.customer_a.pk),
+            "work_location": "Client site", "activity_description": "Completed installation.",
+            "agreed_amount": "25000.00", "internal_notes": "",
+            **self._work_date_payload((timezone.localdate().isoformat(),)),
+        }
+        create_url = reverse("work_reports:create")
+        page = client.get(create_url)
+        self.assertContains(page, 'name="report_action" value="draft"')
+        self.assertContains(page, 'name="report_action" value="submit"')
+        self.assertContains(page, "Cancel")
+
+        created = client.post(create_url, {**base_payload, "report_action": "submit"})
+        self.assertEqual(created.status_code, 302)
+        report = TechnicianWorkReport.objects.unscoped().get(
+            work_title="Directly submitted installation",
+        )
+        self.assertEqual(report.status, TechnicianWorkReport.Status.SUBMITTED)
+        self.assertEqual(
+            list(report.history.order_by("created_at", "id").values_list("event", flat=True)),
+            ["CREATED", "SUBMITTED"],
+        )
+
+        draft_payload = {**base_payload, "work_title": "Draft then submitted"}
+        draft_response = client.post(create_url, draft_payload)
+        self.assertEqual(draft_response.status_code, 302)
+        draft = TechnicianWorkReport.objects.unscoped().get(work_title="Draft then submitted")
+        self.assertEqual(draft.status, TechnicianWorkReport.Status.DRAFT)
+        edit_response = client.post(
+            reverse("work_reports:edit", args=[draft.pk]),
+            {**draft_payload, "report_action": "submit"},
+        )
+        self.assertEqual(edit_response.status_code, 302)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, TechnicianWorkReport.Status.SUBMITTED)
+
+    def test_unknown_report_form_action_fails_without_creating_a_report(self):
+        client = self._client_for(self.tech_a)
+        payload = {
+            "work_title": "Must not be saved", "client_name": "", "customer": "",
+            "work_location": "Site", "activity_description": "Completed work.",
+            "agreed_amount": "10000.00", "internal_notes": "",
+            "report_action": "approve", **self._work_date_payload((timezone.localdate().isoformat(),)),
+        }
+        response = client.post(reverse("work_reports:create"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Choose Save draft or Submit for review.")
+        self.assertFalse(TechnicianWorkReport.objects.unscoped().filter(
+            work_title="Must not be saved",
+        ).exists())
 
     def test_client_name_is_optional_through_the_full_report_lifecycle(self):
         client = self._client_for(self.tech_a)
@@ -192,6 +285,96 @@ class WorkReportSecurityTests(TestCase):
             list(self.report_a.history.order_by("created_at", "id").values_list("event", flat=True)),
             ["SUBMITTED", "REJECTED", "RESUBMITTED", "APPROVED"],
         )
+
+    def test_technician_can_remove_own_needs_correction_report_with_audit_retained(self):
+        report = self._report(self.tech_a, self.customer_a, title="Remove rejected report")
+        submit_report(report_id=report.pk, membership=self.tech_a)
+        reject_report(
+            report_id=report.pk, membership=self.manager_a,
+            reason="The report needs a clearer completion note.",
+        )
+        client = self._client_for(self.tech_a)
+        detail_url = reverse("work_reports:detail", args=[report.pk])
+        delete_url = reverse("work_reports:delete", args=[report.pk])
+        self.assertContains(client.get(detail_url), delete_url)
+        self.assertContains(
+            client.get(reverse("work_reports:list"), {"status": "REJECTED"}), delete_url,
+        )
+        self.assertNotContains(
+            self._client_for(self.manager_a).get(
+                reverse("work_reports:list"), {"status": "REJECTED"},
+            ),
+            delete_url,
+        )
+        confirmation = client.get(delete_url)
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertContains(confirmation, "The report and its audit history will be retained")
+        self.assertContains(confirmation, "The report needs a clearer completion note.")
+
+        response = client.post(delete_url)
+
+        self.assertRedirects(response, reverse("work_reports:list"))
+        report.refresh_from_db()
+        self.assertIsNotNone(report.archived_at)
+        self.assertEqual(report.archived_by_id, self.tech_a.pk)
+        self.assertTrue(WorkReportServiceDay.objects.unscoped().filter(report=report).exists())
+        archive_event = report.history.get(event=WorkReportHistory.Event.ARCHIVED)
+        self.assertEqual(archive_event.from_status, TechnicianWorkReport.Status.REJECTED)
+        self.assertEqual(archive_event.actor_membership_id, self.tech_a.pk)
+        self.assertEqual(archive_event.snapshot["archived_by_id"], self.tech_a.pk)
+        audit = AuditLog.objects.get(
+            action="technician_work_report.archived", object_id=str(report.pk),
+        )
+        self.assertTrue(audit.new_value["archived"])
+        self.assertEqual(client.get(detail_url).status_code, 404)
+        self.assertNotContains(client.get(reverse("work_reports:list")), report.work_title)
+
+        archive_needs_correction_report(report_id=report.pk, membership=self.tech_a)
+        self.assertEqual(report.history.filter(event=WorkReportHistory.Event.ARCHIVED).count(), 1)
+        with self.assertRaises(ValidationError):
+            report.delete()
+        with self.assertRaises(ValidationError):
+            TechnicianWorkReport.objects.unscoped().filter(pk=report.pk).delete()
+
+    def test_only_owner_can_open_delete_confirmation_for_needs_correction_report(self):
+        report = self._report(self.tech_a, self.customer_a, title="Private rejected report")
+        submit_report(report_id=report.pk, membership=self.tech_a)
+        reject_report(report_id=report.pk, membership=self.manager_a, reason="Please add details.")
+        delete_url = reverse("work_reports:delete", args=[report.pk])
+
+        self.assertEqual(self._client_for(self.manager_a).get(delete_url).status_code, 403)
+        self.assertEqual(self._client_for(self.tech_a2).get(delete_url).status_code, 404)
+        self.assertEqual(self._client_for(self.tech_b).get(delete_url).status_code, 404)
+        self.assertEqual(self._client_for(self.tech_a).get(
+            reverse("work_reports:delete", args=[self.report_a.pk]),
+        ).status_code, 404)
+
+    def test_submitted_and_approved_reports_cannot_be_archived(self):
+        submitted = self._report(self.tech_a, self.customer_a, title="Submitted report stays")
+        submit_report(report_id=submitted.pk, membership=self.tech_a)
+        approved = self._report(self.tech_a, self.customer_a, title="Approved report stays")
+        submit_report(report_id=approved.pk, membership=self.tech_a)
+        approve_report(report_id=approved.pk, membership=self.manager_a)
+
+        for report in (submitted, approved):
+            with self.subTest(status=report.status), self.assertRaises(ValidationError):
+                archive_needs_correction_report(report_id=report.pk, membership=self.tech_a)
+            report.refresh_from_db()
+            self.assertIsNone(report.archived_at)
+
+    def test_archive_history_failure_rolls_back_report_archive(self):
+        report = self._report(self.tech_a, self.customer_a, title="Archive rollback")
+        submit_report(report_id=report.pk, membership=self.tech_a)
+        reject_report(report_id=report.pk, membership=self.manager_a, reason="Please correct this report.")
+
+        with patch("work_reports.services._history", side_effect=RuntimeError("audit unavailable")):
+            with self.assertRaises(RuntimeError):
+                archive_needs_correction_report(report_id=report.pk, membership=self.tech_a)
+
+        report.refresh_from_db()
+        self.assertIsNone(report.archived_at)
+        self.assertIsNone(report.archived_by_id)
+        self.assertFalse(report.history.filter(event=WorkReportHistory.Event.ARCHIVED).exists())
 
     def test_rejection_requires_reason(self):
         submit_report(report_id=self.report_a.pk, membership=self.tech_a)
@@ -808,7 +991,7 @@ class WorkReportSecurityTests(TestCase):
             membership=self.manager_a,
             amount_paid=voided.agreed_amount_snapshot,
             payment_date=date(2026, 8, 11),
-            payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+            payment_method=TechnicianPaymentRecord.PaymentMethod.CASH,
         )
         self.assertEqual(replacement.replaces_id, voided.pk)
         self.assertTrue(TechnicianPaymentRecord.objects.unscoped().filter(pk=voided.pk).exists())
@@ -1132,6 +1315,35 @@ class WorkReportSecurityTests(TestCase):
         self.assertContains(page, f'value="{self.tech_a.pk}" selected', html=False)
         self.assertContains(page, "payment=NOT_RECORDED&amp;q=Second", html=False)
 
+    def test_financial_summary_and_export_use_all_matching_filtered_reports(self):
+        matching = self._report(self.tech_a, self.customer_a, title="Filtered export match")
+        WorkReportServiceDay.objects.create(
+            tenant=self.tenant_a, report=matching, service_date=date(2026, 8, 12),
+        )
+        self._report(self.tech_a2, self.customer_a, title="Outside filtered export")
+        client = self._client_for(self.manager_a)
+        params = {"q": "Filtered export", "date_from": "2026-08-10", "date_to": "2026-08-15"}
+        page = client.get(reverse("work_reports:list"), params)
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.context["financial_summary"]["report_count"], 1)
+        self.assertEqual(page.context["financial_summary"]["agreed_total"], matching.agreed_amount)
+        self.assertContains(page, "Financial summary")
+        exported = client.get(reverse("work_reports:list"), {**params, "export": "xlsx"})
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(exported["Cache-Control"], "private, no-store")
+        workbook = load_workbook(BytesIO(exported.content), data_only=False)
+        sheet = workbook["Work Reports"]
+        self.assertEqual(sheet.max_row, 2)
+        self.assertEqual(sheet["C2"].value, "Filtered export match")
+        self.assertNotIn("Outside filtered export", [row[2].value for row in sheet.iter_rows(min_row=2)])
+
+    def test_work_report_export_denied_to_technician_and_sales(self):
+        for membership in (self.tech_a, self.sales_a):
+            response = self._client_for(membership).get(
+                reverse("work_reports:list"), {"export": "xlsx"},
+            )
+            self.assertEqual(response.status_code, 404)
+
     def test_batched_badges_and_pending_acknowledgements_link_from_work_reports(self):
         batch = self._record_batch()
         detail_url = reverse("work_reports:payment_batch_detail", args=[batch.pk])
@@ -1195,7 +1407,7 @@ class WorkReportSecurityTests(TestCase):
             "action": "record",
             "report_ids": [str(report.pk) for report in reports],
             "payment_date": "2026-08-15",
-            "payment_method": "BANK_TRANSFER",
+            "payment_method": "CASH",
             "method_description": "",
             "reference": "TRANSFER-42",
             "manager_note": "Recorded manually",
@@ -1240,3 +1452,144 @@ class WorkReportSecurityTests(TestCase):
             )
         with self.assertRaises(ValidationError):
             batch.delete()
+
+    def test_technician_manages_own_account_and_number_is_encrypted_and_never_rendered(self):
+        from cryptography.fernet import Fernet
+
+        key = Fernet.generate_key()
+        with override_settings(TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS=[key.decode()]):
+            client = self._client_for(self.tech_a)
+            url = reverse("work_reports:technician_profile")
+            self.assertEqual(client.get(url).status_code, 200)
+            response = client.post(url, {
+                "action": "add", "label": "Main account", "bank_name": "Example Bank",
+                "account_number": "1234-5678-9012", "account_number_confirmation": "123456789012",
+                "make_default": "on",
+            })
+            self.assertRedirects(response, url, fetch_redirect_response=False)
+            account = TechnicianPayoutAccount.objects.unscoped().get(technician=self.tech_a)
+            self.assertNotEqual(account.account_number_encrypted, "123456789012")
+            self.assertEqual(Fernet(key).decrypt(account.account_number_encrypted.encode()).decode(), "123456789012")
+            self.assertEqual(account.account_number_last4, "9012")
+            page = client.get(url)
+            self.assertContains(page, "Example Bank")
+            self.assertContains(page, "9012")
+            self.assertNotContains(page, "123456789012")
+            self.assertNotContains(page, account.account_number_encrypted)
+            self.assertEqual(page["Cache-Control"], "max-age=0, no-cache, no-store, must-revalidate, private")
+            self.assertEqual(self._client_for(self.tech_a2).get(url).status_code, 200)
+            self.assertNotContains(self._client_for(self.tech_a2).get(url), "Main account")
+            self.assertEqual(self._client_for(self.manager_a).get(url).status_code, 403)
+            with self.assertRaises(PermissionDenied):
+                add_technician_payout_account(
+                    membership=self.tech_b, tenant=self.tenant_a, label="x",
+                    bank_name="Example", account_number="999999", make_default=False,
+                )
+
+    def test_bank_transfer_requires_own_active_payout_account_and_keeps_masked_snapshot(self):
+        from cryptography.fernet import Fernet
+
+        key = Fernet.generate_key()
+        with override_settings(TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS=[key.decode()]):
+            self._approve(self.report_a)
+            with self.assertRaises(ValidationError):
+                record_technician_payment(
+                    report_id=self.report_a.pk, membership=self.manager_a,
+                    amount_paid=self.report_a.agreed_amount, payment_date=date(2026, 8, 10),
+                    payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+                )
+            account = add_technician_payout_account(
+                membership=self.tech_a, tenant=self.tenant_a, label="Payroll",
+                bank_name="Example Bank", account_number="123456789012", make_default=True,
+            )
+            other_tenant_account = add_technician_payout_account(
+                membership=self.tech_b, tenant=self.tenant_b, label="Other",
+                bank_name="Example Bank", account_number="000011112222", make_default=True,
+            )
+            with self.assertRaises(ValidationError):
+                record_technician_payment(
+                    report_id=self.report_a.pk, membership=self.manager_a,
+                    amount_paid=self.report_a.agreed_amount, payment_date=date(2026, 8, 10),
+                    payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+                    payout_account_id=other_tenant_account.pk,
+                )
+            payment = record_technician_payment(
+                report_id=self.report_a.pk, membership=self.manager_a,
+                amount_paid=self.report_a.agreed_amount, payment_date=date(2026, 8, 10),
+                payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+                payout_account_id=account.pk,
+            )
+            self.assertEqual(payment.payout_account_id, account.pk)
+            self.assertEqual(payment.payout_bank_name_snapshot, "Example Bank")
+            self.assertEqual(payment.payout_account_last4_snapshot, "9012")
+            history = self.report_a.history.filter(event=WorkReportHistory.Event.PAYMENT_RECORDED).latest("pk")
+            self.assertNotIn("123456789012", str(history.snapshot))
+            self.assertIn("9012", str(history.snapshot))
+            detail = self._client_for(self.tech_a).get(reverse("work_reports:detail", args=[self.report_a.pk]))
+            self.assertContains(detail, "Example Bank")
+            self.assertContains(detail, "9012")
+            self.assertNotContains(detail, "123456789012")
+
+    def test_bank_transfer_batch_requires_and_snapshots_technician_destination(self):
+        from cryptography.fernet import Fernet
+
+        key = Fernet.generate_key()
+        with override_settings(TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS=[key.decode()]):
+            reports = self._batch_reports()
+            account = add_technician_payout_account(
+                membership=self.tech_a, tenant=self.tenant_a, label="Main",
+                bank_name="Example Bank", account_number="998877665544", make_default=True,
+            )
+            with self.assertRaises(ValidationError):
+                self._record_batch(
+                    reports=reports,
+                    payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+                )
+            batch = self._record_batch(
+                reports=reports,
+                payment_method=TechnicianPaymentRecord.PaymentMethod.BANK_TRANSFER,
+                payout_account_id=account.pk,
+            )
+            self.assertEqual(batch.payout_account_id, account.pk)
+            self.assertEqual(batch.payout_account_last4_snapshot, "5544")
+            self.assertEqual(set(batch.allocations.values_list("payout_account_id", flat=True)), {account.pk})
+
+    def test_account_default_and_deactivation_are_atomic_and_preserve_history(self):
+        from cryptography.fernet import Fernet
+
+        key = Fernet.generate_key()
+        with override_settings(TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS=[key.decode()]):
+            first = add_technician_payout_account(
+                membership=self.tech_a, tenant=self.tenant_a, label="First",
+                bank_name="Example Bank", account_number="111122223333", make_default=True,
+            )
+            second = add_technician_payout_account(
+                membership=self.tech_a, tenant=self.tenant_a, label="Second",
+                bank_name="Example Bank", account_number="444455556666", make_default=False,
+            )
+            set_technician_payout_account_default(
+                account_id=second.pk, membership=self.tech_a, tenant=self.tenant_a,
+            )
+            first.refresh_from_db()
+            second.refresh_from_db()
+            self.assertFalse(first.is_default)
+            self.assertTrue(second.is_default)
+            deactivate_technician_payout_account(
+                account_id=second.pk, membership=self.tech_a, tenant=self.tenant_a,
+            )
+            first.refresh_from_db()
+            second.refresh_from_db()
+            self.assertTrue(first.is_active)
+            self.assertTrue(first.is_default)
+            self.assertFalse(second.is_active)
+            self.assertFalse(second.is_default)
+            self.assertTrue(TechnicianPayoutAccount.objects.unscoped().filter(pk=second.pk).exists())
+
+    def test_missing_encryption_key_fails_closed_before_account_is_saved(self):
+        with override_settings(TECHNICIAN_PAYOUT_ACCOUNT_ENCRYPTION_KEYS=[]):
+            with self.assertRaisesMessage(PayoutAccountEncryptionUnavailable, "encryption is not configured"):
+                add_technician_payout_account(
+                    membership=self.tech_a, tenant=self.tenant_a, label="",
+                    bank_name="Example Bank", account_number="11223344", make_default=True,
+                )
+        self.assertFalse(TechnicianPayoutAccount.objects.unscoped().filter(technician=self.tech_a).exists())

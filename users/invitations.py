@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import secrets
+import smtplib
 from datetime import timedelta
 from urllib.parse import urlsplit
 
@@ -74,6 +75,12 @@ def send_after_commit(invitation, token, request):
     from django.contrib import messages
     try:
         smtp = send_invitation(invitation, token)
+    except smtplib.SMTPServerDisconnected:
+        logger.warning("Invitation email server disconnected for invitation %s", invitation.pk)
+        messages.error(
+            request,
+            "Invitation saved, but the mail server closed the connection. Check the email host, port, TLS/SSL mode, and outbound network access, then resend.",
+        )
     except (OSError, ValueError, RuntimeError, ValidationError) as exc:
         logger.warning("Invitation email failed for invitation %s (%s)", invitation.pk, type(exc).__name__)
         messages.error(request, "Invitation saved, but the email could not be sent. Please retry.")

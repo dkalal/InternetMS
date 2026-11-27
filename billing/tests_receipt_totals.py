@@ -23,9 +23,9 @@ class ReceiptTotalsTests(TestCase):
         self.customer = Customer.objects.create(tenant=self.org, organization=self.org, name='Receipt buyer', customer_type='random')
         self.client.force_login(self.user)
 
-    def sale(self, *, item_discount='0', discount='3', tax='0', quantity='1', price='10', amount=None, items=None):
+    def sale(self, *, item_discount='0', discount='3', tax='0', quantity='1', price='10', amount=None, cash_received=None, payment_method='cash', items=None, actor=None):
         invoice = BillingService.create_document(
-            organization=self.org, created_by=self.user, document_type='invoice',
+            organization=self.org, created_by=actor or self.user, document_type='invoice',
             customer_id=self.customer.pk, status='issued', tax_rate=Decimal(tax),
             discount_amount=Decimal(discount),
             items=items or [LineItemInput(
@@ -35,7 +35,8 @@ class ReceiptTotalsTests(TestCase):
         )
         receipt = BillingService.create_receipt_from_invoice(
             organization=self.org, created_by=self.user, invoice_id=invoice.pk,
-            amount_paid=Decimal(amount) if amount else invoice.total, payment_method='cash',
+            amount_paid=Decimal(amount) if amount else invoice.total, payment_method=payment_method,
+            cash_received=Decimal(cash_received) if cash_received else None,
         )
         return invoice, receipt
 
@@ -67,6 +68,7 @@ class ReceiptTotalsTests(TestCase):
         self.assert_totals(response, '10', '3', '0', '7', '7')
         self.assertContains(response, '<tr><td class="label">Discount</td><td class="value">-3</td></tr>', html=True)
         self.assertContains(response, 'Unit price: 10')
+        self.assertContains(response, '<tr><td class="desc">Installation<div class="small">Unit price: 10</div></td><td class="qty">1 Job</td><td class="discount">0</td><td class="amt">10</td></tr>', html=True)
         self.assertContains(response, 'VAT (0%)')
         self.assertEqual(list(BillingDocument.objects.values()), before)
         receipt.refresh_from_db()
@@ -77,7 +79,9 @@ class ReceiptTotalsTests(TestCase):
         _, receipt = self.sale(quantity='2', item_discount='3', discount='2', tax='18')
         response = self.client.get(self.print_url(receipt))
         self.assert_totals(response, '20', '5', '2.70', '17.70', '17.70')
-        self.assertContains(response, 'Item discount: -3')
+        self.assertContains(response, '<td class="discount">-3</td>', html=True)
+        self.assertNotContains(response, 'Item discount:')
+        self.assertContains(response, '<th scope="col" class="discount">Discount</th>', html=True)
         self.assertContains(response, 'VAT (18%)')
 
     def test_zero_discounts_and_zero_vat_are_still_visible(self):
@@ -85,7 +89,29 @@ class ReceiptTotalsTests(TestCase):
         response = self.client.get(self.print_url(receipt))
         self.assert_totals(response, '10', '0', '0', '10', '10')
         self.assertNotContains(response, 'Item discount:')
+        self.assertContains(response, '<td class="discount">0</td>', html=True)
+        self.assertContains(response, '<th scope="col" class="discount">Discount</th>', html=True)
         self.assertContains(response, '<tr><td class="label">Discount</td><td class="value">0</td></tr>', html=True)
+
+    def test_cash_tender_and_change_are_compact_and_present_in_html_and_pdf(self):
+        _, receipt = self.sale(discount='0', cash_received='50')
+        response = self.client.get(self.print_url(receipt))
+        self.assertEqual(response.context['receipt_amounts']['change_due'], Decimal('40.00'))
+        self.assertContains(response, 'class="cash-tender-row"')
+        self.assertContains(response, 'Cash received')
+        self.assertContains(response, 'TZS 50')
+        self.assertContains(response, 'Change</td>')
+        self.assertContains(response, 'TZS 40')
+        pdf_response = self.client.get(self.pdf_url(receipt))
+        pdf_text = ' '.join(' '.join(page.extract_text().split()) for page in PdfReader(BytesIO(pdf_response.content)).pages)
+        self.assertIn('Cash received TZS 50', pdf_text)
+        self.assertIn('Change TZS 40', pdf_text)
+
+    def test_non_cash_and_legacy_receipts_do_not_claim_cash_tender(self):
+        _, receipt = self.sale(discount='0', payment_method='mobile_money')
+        response = self.client.get(self.print_url(receipt))
+        self.assertNotContains(response, 'Cash received')
+        self.assertNotContains(response, 'Change</td>')
 
     def test_installments_show_invoice_total_separately_from_each_payment(self):
         invoice, receipt = self.sale(discount='0', price='100', tax='18', amount='40')
@@ -138,6 +164,9 @@ class ReceiptTotalsTests(TestCase):
         text = ' '.join(' '.join(page.extract_text().split()) for page in PdfReader(BytesIO(response.content)).pages)
         for expected in ('Subtotal (before discounts) 20', 'Discount -5', 'VAT (18%) 2.7', 'TOTAL TZS 17.7'):
             self.assertIn(expected, text)
+        self.assertIn('Qty / Unit Discount Amount', text)
+        self.assertIn('-3', text)
+        self.assertNotIn('Item discount:', text)
         self.assertNotIn('AMOUNT RECEIVED', text)
         self.assertEqual(text.count('TOTAL TZS 17.7'), 1)
 
@@ -149,7 +178,11 @@ class ReceiptTotalsTests(TestCase):
         self.assert_totals(response, '10', '3', '0', '7', '7')
 
     def test_both_routes_deny_foreign_tenant_and_foreign_owner(self):
-        _, receipt = self.sale()
+        seller = get_user_model().objects.create_user(username='receipt-other-seller')
+        TenantMembership.objects.create(
+            tenant=self.org, user=seller, base_role=TenantMembership.BaseRole.SALES,
+        )
+        _, receipt = self.sale(actor=seller)
         outsider = get_user_model().objects.create_user(username='receipt-outsider')
         other_org = Organization.objects.create(name='Other', slug='receipt-other')
         membership = TenantMembership.objects.create(
@@ -164,6 +197,16 @@ class ReceiptTotalsTests(TestCase):
         self.client.force_login(outsider)
         for url in (self.print_url(receipt), self.pdf_url(receipt)):
             self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_sales_collection_access_includes_manager_receipts(self):
+        _, receipt = self.sale()
+        collector = get_user_model().objects.create_user(username='receipt-collector')
+        TenantMembership.objects.create(
+            tenant=self.org, user=collector, base_role=TenantMembership.BaseRole.SALES,
+        )
+        self.client.force_login(collector)
+        for url in (self.print_url(receipt), self.pdf_url(receipt)):
+            self.assertEqual(self.client.get(url).status_code, 200)
 
     def test_corrupt_foreign_invoice_link_fails_closed(self):
         _, receipt = self.sale()

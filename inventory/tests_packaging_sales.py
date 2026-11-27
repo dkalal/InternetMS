@@ -203,7 +203,7 @@ class PackagingSaleTests(ReceiptFixture, TestCase):
 
 
 from concurrent.futures import ThreadPoolExecutor
-from django.db import close_old_connections
+from django.db import connections, close_old_connections
 from django.test import TransactionTestCase
 
 
@@ -229,7 +229,7 @@ class PackagingSaleConcurrencyTests(ReceiptFixture, TransactionTestCase):
             except (InventoryError, BillingServiceError):
                 return False
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             result = list(pool.map(pay, invoices))
         self.assertEqual(sum(result), 1)

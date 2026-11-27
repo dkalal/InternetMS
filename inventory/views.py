@@ -545,6 +545,7 @@ def purchase_product_search(request):
                 'model_number': product.model_number,
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
+                'selling_price': str(product.selling_price),
                 **_packaging_meta(product),
                 **({'buying_price': str(product.buying_price)} if can_view_costs else {}),
             }
@@ -777,6 +778,7 @@ def _purchase_product_meta(organization, formset):
                 **_packaging_meta(product),
             'sku': product.sku,
             'base_unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
+            'selling_price': str(product.selling_price),
         }
         for product in Product.objects.filter(
             tenant=organization,
@@ -909,8 +911,13 @@ def purchase_create(request):
         purchase.reference_number = PurchaseReferenceNumberService.preview_next_number(organization=organization)
         form_initial = {'auto_generated_reference': purchase.reference_number}
     form = PurchaseForm(request.POST or None, instance=purchase, organization=organization, initial=form_initial)
-    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization,
-                                   import_present=bool(import_rows))
+    formset = PurchaseLinesFormSet(
+        request.POST or None, instance=purchase, organization=organization,
+        import_present=bool(import_rows),
+        can_update_product_price=has_tenant_permission(
+            request.user, organization, PermissionCode.PRODUCTS_UPDATE, membership=request.membership,
+        ),
+    )
     if request.method == 'POST':
         if import_error:
             form.add_error(None, import_error)
@@ -967,8 +974,13 @@ def purchase_edit(request, pk):
         except ImportInputError as exc:
             import_error = str(exc)
     form = PurchaseForm(request.POST or None, instance=purchase, organization=organization)
-    formset = PurchaseLinesFormSet(request.POST or None, instance=purchase, organization=organization,
-                                   import_present=bool(import_rows))
+    formset = PurchaseLinesFormSet(
+        request.POST or None, instance=purchase, organization=organization,
+        import_present=bool(import_rows),
+        can_update_product_price=has_tenant_permission(
+            request.user, organization, PermissionCode.PRODUCTS_UPDATE, membership=request.membership,
+        ),
+    )
     if request.method == 'POST':
         if import_error:
             form.add_error(None, import_error)
@@ -1416,6 +1428,8 @@ def cart_detail(request, pk, *, checkout_forms=None):
 
 def _render_cart_builder(request, organization, cart, cart_form, payment_form, workspace_token=None):
     workspace = _cart_workspace(cart)
+    if not payment_form.is_bound and cart.pk:
+        payment_form.initial.setdefault('cash_received', workspace['grand_total'])
     lines = workspace['lines']
     query = request.GET.get('q', '').strip()
     category_id = request.GET.get('category', '').strip()
@@ -1686,6 +1700,11 @@ def cart_checkout(request, pk):
     organization = _scope(request, PermissionCode.CART_MANAGE)
     require_permission(request, PermissionCode.PAYMENT_REGISTER)
     payment_form = CartPaymentForm(request.POST, cart_id=pk)
+    payment_data = {
+        'payment_method': request.POST.get('payment_method', '').strip(),
+        'cash_received': request.POST.get('cash_received') or None,
+        'payment_reference': request.POST.get('payment_reference', '').strip(),
+    }
     try:
         with transaction.atomic():
             cart = get_object_or_404(Cart.objects.select_for_update().filter(tenant=organization), pk=pk)
@@ -1697,6 +1716,11 @@ def cart_checkout(request, pk):
                 payment_valid = payment_form.is_valid()
                 if not details_valid or not payment_valid:
                     raise InventoryError('Check the sale and payment details below.')
+                payment_data = {
+                    'payment_method': payment_form.cleaned_data['payment_method'],
+                    'cash_received': payment_form.cleaned_data.get('cash_received'),
+                    'payment_reference': payment_form.cleaned_data.get('payment_reference', ''),
+                }
                 CartService.validate_restored(cart=cart)
                 cart = CartService.save_details(organization=organization, cart_id=cart.pk,
                                                 data=request.POST, actor=request.user, membership=request.membership)
@@ -1704,11 +1728,13 @@ def cart_checkout(request, pk):
                 _cart_workspace(cart)
             receipt = CartService.checkout(
                 organization=organization, cart_id=pk, actor=request.user, membership=request.membership,
-                payment_method=request.POST.get('payment_method', '').strip(),
-                payment_reference=request.POST.get('payment_reference', '').strip(),
+                **payment_data,
             )
     except (InventoryError, BillingServiceError, ValidationError) as exc:
-        cart_form.add_error(None, str(exc))
+        if isinstance(exc, InventoryError) and str(exc).startswith('Cash received'):
+            payment_form.add_error('cash_received', str(exc))
+        else:
+            cart_form.add_error(None, str(exc))
         response = cart_detail(request, pk=pk, checkout_forms=(cart_form, payment_form))
         response.status_code = 422
         return response

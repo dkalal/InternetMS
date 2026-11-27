@@ -41,7 +41,7 @@
                                     <a href="{% url 'billing:renew_subscription' subscription.id %}" class="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
                                         Renew
                                     </a>
-                                    {% if subscription.status == 'active' %}
+                                    {% if subscription.status == 'active' and can_manage_subscription_lifecycle %}
                                         <a href="{% url 'billing:cancel_subscription' subscription.id %}" class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">
                                             Cancel
                                         </a>
@@ -100,9 +100,7 @@
                                                 <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:create_receipt_from_invoice' pk=period.invoice.id %}">
                                                     Register payment
                                                 </a>
-                                                <a class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100" href="{% url 'billing:resolve_subscription_invoice_issue' period_id=period.id %}">
-                                                    Resolve issue
-                                                </a>
+                                                {% if can_manage_subscription_lifecycle %}<a class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100" href="{% url 'billing:resolve_subscription_invoice_issue' period_id=period.id %}">Resolve issue</a>{% endif %}
                                             {% elif period.status == 'paid' and period.receipt %}
                                                 <a class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" href="{% url 'billing:document_detail' doc_type='receipt' pk=period.receipt.id %}">
                                                     View receipt
