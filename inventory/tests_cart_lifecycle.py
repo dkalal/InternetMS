@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.management import call_command
-from django.db import close_old_connections, transaction
+from django.db import connections, close_old_connections, transaction
 from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -355,7 +355,7 @@ class CartLifecycleConcurrencyTests(CartFixture, TransactionTestCase):
             except Exception as exc:
                 errors.append(exc)
             finally:
-                close_old_connections()
+                connections.close_all()
         threads=[Thread(target=start) for _ in range(2)]
         for thread in threads: thread.start()
         for thread in threads: thread.join(timeout=20)
@@ -388,7 +388,7 @@ class CartLifecycleConcurrencyTests(CartFixture, TransactionTestCase):
                 errors.append(exc)
                 locked.set()
             finally:
-                close_old_connections()
+                connections.close_all()
         def cleanup():
             close_old_connections()
             try:
@@ -396,7 +396,7 @@ class CartLifecycleConcurrencyTests(CartFixture, TransactionTestCase):
             except Exception as exc:
                 errors.append(exc)
             finally:
-                close_old_connections()
+                connections.close_all()
         writer=Thread(target=edit)
         writer.start()
         self.assertTrue(locked.wait(timeout=10))

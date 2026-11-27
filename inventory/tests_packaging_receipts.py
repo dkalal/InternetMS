@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import close_old_connections
+from django.db import connections, close_old_connections
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from products.models import Product
@@ -192,7 +192,7 @@ class PackagingReceiptConcurrencyTests(ReceiptFixture,TransactionTestCase):
             close_old_connections()
             try:
                 return self.receive().pk
-            finally: close_old_connections()
+            finally: connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             ids=list(pool.map(receive,range(2)))
         self.assertEqual(ids[0],ids[1])

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.db import connections, IntegrityError, close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase
 
 from audit.models import AuditLog
@@ -554,7 +554,7 @@ class PackagingConcurrencyTests(PackagingFixture, TransactionTestCase):
                 return PackagingService.configure(organization=org, actor=actor, product_id=self.product.pk,
                     unit_id=self.box.pk, factor='305', prices={'standard_price':'900'}).version
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertCountEqual(pool.map(configure, range(2)), [1,2])
         self.product.refresh_from_db()
@@ -572,7 +572,7 @@ class PackagingConcurrencyTests(PackagingFixture, TransactionTestCase):
                     request_key=key, reason='Concurrent verified count', expected_quantity='305', expected_average_cost='1', expected_version=1,
                     containers=[{'quantity':'305','packaging_id':package.pk,'sealed':True}]).pk
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             ids=list(pool.map(activate, range(2)))
         self.assertEqual(ids[0],ids[1])

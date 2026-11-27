@@ -82,3 +82,17 @@ media/configuration backup with verified recovery; inspect the exact migration
 plan and rollback compatibility; approve the concrete source/runtime transition.
 Never activate or reinterpret real stocked products automatically. No active
 server process may autoreload halfway through a source/schema transition.
+
+## CI database teardown correction
+
+The first integration CI run passed all 993 assertions but failed while dropping
+the sequential test database: worker threads left healthy persistent Django
+connections open. Every concurrency worker now closes its own connections in
+its finally block using `connections.close_all()`. Initial stale-connection
+cleanup and all business assertions remain unchanged; no workflow gate was
+skipped or weakened. The focused 22 concurrency tests passed in 11.911s with
+normal test-database destruction (without `--keepdb`).
+
+The operator confirmed that they are the only current local runtime user.
+This permits planning the short maintenance window; a fresh quiesced backup
+and verified recovery remain mandatory before changing the office database.

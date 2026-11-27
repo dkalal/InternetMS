@@ -209,7 +209,7 @@ class ConcurrentCartCheckoutTests(TransactionTestCase):
     def test_simultaneous_cash_checkouts_issue_one_receipt_and_movement(self):
         from concurrent.futures import ThreadPoolExecutor
         from threading import Barrier
-        from django.db import close_old_connections
+        from django.db import connections, close_old_connections
         barrier = Barrier(2)
 
         def checkout():
@@ -223,7 +223,7 @@ class ConcurrentCartCheckoutTests(TransactionTestCase):
                     cash_received=Decimal('200'),
                 ).pk
             finally:
-                close_old_connections()
+                connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(checkout) for _ in range(2)]

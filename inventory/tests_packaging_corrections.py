@@ -318,7 +318,7 @@ class PackagingRoundingTests(ReceiptFixture, TestCase):
 
 
 from concurrent.futures import ThreadPoolExecutor
-from django.db import close_old_connections
+from django.db import connections, close_old_connections
 from django.test import TransactionTestCase
 
 
@@ -339,7 +339,7 @@ class PackagingCorrectionConcurrencyTests(ReceiptFixture, TransactionTestCase):
             except ValidationError:
                 return False
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             result = list(pool.map(returned, range(2)))
         self.assertEqual(sum(result), 1)
@@ -356,7 +356,7 @@ class PackagingCorrectionConcurrencyTests(ReceiptFixture, TransactionTestCase):
                 return ContainerCorrectionService.waste(organization=self.org, actor=self.actor,
                     container_id=container.pk, quantity='5', request_key=key, reason='Measured damaged end').pk
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             ids = list(pool.map(wasted, range(2)))
         self.assertEqual(ids[0], ids[1])

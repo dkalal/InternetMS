@@ -8,7 +8,7 @@ from uuid import uuid4
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core import signing
-from django.db import close_old_connections, connection, transaction, IntegrityError
+from django.db import connections, close_old_connections, connection, transaction, IntegrityError
 from django.test import TestCase, TransactionTestCase, Client
 from django.urls import reverse
 from django.utils import timezone
@@ -443,7 +443,7 @@ class AssignmentConcurrencyTests(AssignmentFixtures, TransactionTestCase):
                 except ValidationError:
                     return "stale"
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             return list(pool.map(run, functions))
 

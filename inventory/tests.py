@@ -7,7 +7,7 @@ from threading import Barrier, Lock, Thread
 from django.contrib.staticfiles import finders
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
-from django.db import close_old_connections, connection
+from django.db import connections, close_old_connections, connection
 from django.middleware.csrf import get_token
 from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
@@ -1650,7 +1650,7 @@ class InventoryConcurrencyTests(TransactionTestCase):
                 with mutex:
                     errors.append(exc)
             finally:
-                close_old_connections()
+                connections.close_all()
 
         threads = [Thread(target=pay, args=('concurrent-a',)), Thread(target=pay, args=('concurrent-b',))]
         for thread in threads:

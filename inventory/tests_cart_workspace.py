@@ -3,7 +3,7 @@ from decimal import Decimal
 from threading import Barrier
 from unittest.mock import patch
 
-from django.db import close_old_connections
+from django.db import connections, close_old_connections
 from django.http import QueryDict
 from django.test import Client, TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.urls import reverse
@@ -237,7 +237,7 @@ class WorkspaceConcurrencyTests(fixtures.CartFixture, TransactionTestCase):
                 return materialize(token=token, organization=self.org, actor=self.admin,
                                    membership=membership_for(self.admin,self.org), action='add', data=data).pk
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(save) for _ in range(2)]
             ids = [f.result(timeout=30) for f in futures]

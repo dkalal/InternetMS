@@ -4,7 +4,7 @@ from time import perf_counter
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.db import connections, IntegrityError, close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
@@ -248,7 +248,7 @@ class SKUConcurrencyTests(TransactionTestCase):
                 barrier.wait(timeout=15)
                 return save_purchase_product(product, organization=tenant).sku
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=3) as executor:
             codes = list(executor.map(create, range(3)))
         self.assertEqual(set(codes), {'PRD-000001', 'PRD-000002', 'PRD-000003'})
@@ -270,7 +270,7 @@ class SKUConcurrencyTests(TransactionTestCase):
                 with transaction.atomic():
                     return locked_counter(tenant).pk
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=3) as executor:
             self.assertEqual(list(executor.map(provision, range(3))), [self.tenant.pk] * 3)
         self.assertEqual(ProductSKUCounter.objects.filter(tenant=self.tenant).count(), 1)
@@ -303,7 +303,7 @@ class SKUConcurrencyTests(TransactionTestCase):
                 response = client.post(reverse('product-create'), payload)
                 return response.status_code, response.json().get('replayed')
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(submit, range(2)))
         self.assertCountEqual(results, [(200, False), (200, True)])
@@ -332,7 +332,7 @@ class SKUConcurrencyTests(TransactionTestCase):
                 barrier.wait(timeout=15)
                 return commit_import(organization=tenant, actor=user, job_id=job_id).pk
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as executor:
             self.assertEqual(set(executor.map(commit, [job.pk for job in jobs])), {job.pk for job in jobs})
         self.assertEqual(set(Product.objects.unscoped().filter(tenant=self.tenant).values_list('sku', flat=True)),

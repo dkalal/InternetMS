@@ -2,7 +2,7 @@ from decimal import Decimal
 from unittest.mock import patch
 from threading import Barrier, Thread
 
-from django.db import close_old_connections
+from django.db import connections, close_old_connections
 from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
 
@@ -131,7 +131,7 @@ class CartLineMergeConcurrencyTests(CartLineMergeFixture, TransactionTestCase):
             except Exception as exc:
                 errors.append(exc)
             finally:
-                close_old_connections()
+                connections.close_all()
 
         threads = [Thread(target=add, args=(i,)) for i in range(2)]
         for thread in threads:
