@@ -65,6 +65,8 @@ class BillingDocumentForm(forms.ModelForm):
 
 
 class BillingLineItemForm(forms.ModelForm):
+    commercial_unit = forms.CharField(required=False, widget=forms.Select, label='Selling unit')
+
     class Meta:
         model = BillingLineItem
         fields = [
@@ -95,6 +97,19 @@ class BillingLineItemForm(forms.ModelForm):
             self.fields["product"].queryset = self.fields["product"].queryset.filter(organization=organization, is_active=True)
             self.fields["package"].queryset = self.fields["package"].queryset.filter(organization=organization, is_active=True)
             self.fields["promotion"].queryset = Promotion.objects.filter(organization=organization, is_active=True)
+        self.organization = organization
+        selected = self.data.get(self.add_prefix('product')) if self.is_bound else self.instance.product_id
+        try:
+            product = self.fields['product'].queryset.filter(pk=int(selected)).first() if selected else None
+        except (TypeError, ValueError, OverflowError):
+            product = None
+        from .commercial_units import unit_options
+        options = unit_options(organization, product) if product and product.packaging_enabled else []
+        self.fields['commercial_unit'].widget.choices = [('', 'Choose selling unit')] + options
+        self.has_commercial_units = bool(options)
+        if not self.is_bound and self.instance.unit_factor is not None and product:
+            from .commercial_units import unit_token
+            self.initial['commercial_unit'] = unit_token(organization, product, self.instance.packaging_id)
         self.fields["product"].required = False
         self.fields["package"].required = False
         self.fields["product"].empty_label = "Select product"
@@ -115,11 +130,24 @@ class BillingLineItemForm(forms.ModelForm):
         description = (cleaned.get("description") or "").strip()
         unit_snapshot = (cleaned.get("unit_snapshot") or "Unit").strip()
         cleaned["unit_snapshot"] = unit_snapshot
+        if product and product.packaging_enabled:
+            from .commercial_units import resolve_unit
+            try:
+                snapshot = resolve_unit(self.organization, product, cleaned.get('commercial_unit'), cleaned.get('quantity'))
+            except forms.ValidationError as exc:
+                self.add_error('commercial_unit', exc)
+            else:
+                cleaned['product_packaging_id'] = snapshot['packaging'].pk if snapshot['packaging'] else None
+                cleaned['packaging_version'] = snapshot['packaging_version']
+                cleaned['unit_snapshot'] = snapshot['selected_unit_snapshot']
+                unit_snapshot = cleaned['unit_snapshot']
+        elif cleaned.get('commercial_unit'):
+            self.add_error('commercial_unit', 'Choose a selling unit only for an activated packaging product.')
         if product and package:
             raise forms.ValidationError("Select either a product or a package (not both).")
         if not product and not package and not description:
             raise forms.ValidationError("Provide a product, a package, or a description.")
-        if product and unit_snapshot and product.catalog_category_id:
+        if product and not product.packaging_enabled and unit_snapshot and product.catalog_category_id:
             allowed = {unit.label for unit in product.catalog_category.allowed_units.filter(is_active=True)}
             if unit_snapshot not in allowed:
                 self.add_error("unit_snapshot", "Select a unit allowed by the product category.")

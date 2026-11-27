@@ -1,4 +1,5 @@
 """Optional Edge checks using synthetic rows in an isolated test database."""
+import os
 from pathlib import Path
 import re
 
@@ -17,7 +18,7 @@ from billing.models import BillingDocument
                    CSRF_COOKIE_SECURE=False, ALLOWED_HOSTS=['localhost', 'testserver'])
 class CartWorkspaceBrowserChecks(fixtures.CartFixture, StaticLiveServerTestCase):
     def browser(self, playwright):
-        browser = playwright.chromium.launch(channel='msedge', headless=True)
+        browser = playwright.chromium.launch(channel=os.environ.get('PLAYWRIGHT_BROWSER_CHANNEL', 'msedge') or None, headless=True)
         context = browser.new_context(viewport={'width': 1440, 'height': 1000})
         cached = Path(settings.BASE_DIR) / '.backups/cart-checkout/tailwind.js'
         if cached.exists():

@@ -39,6 +39,20 @@ class WorkspaceTests(fixtures.CartFixture, TestCase):
         self.assertFalse(Cart.objects.exists())
         self.assertFalse(AuditLog.objects.filter(object_type='Cart').exists())
 
+    def test_malformed_serial_picker_ids_do_not_raise_or_materialize(self):
+        url = self.open_workspace()
+        fullwidth_id = str(self.product.pk).translate(str.maketrans('0123456789', '\uff10\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18\uff19'))
+        for product_id in ('bad', '\u00b2', '9' * 40, fullwidth_id):
+            with self.subTest(product_id=product_id):
+                response = self.client.get(url, {'line': '1', 'product': product_id})
+                self.assertEqual(response.status_code, 200)
+                response = self.client.post(url + '?line=1', {
+                    'workspace_action': 'line', 'product': product_id,
+                    'quantity': '1', 'discount_amount': '0',
+                })
+                self.assertEqual(response.status_code, 422)
+                self.assertFalse(Cart.objects.exists())
+
     def test_first_add_and_retry_persist_one_line_one_unit(self):
         url = self.open_workspace()
         first = self.add(url)

@@ -72,8 +72,7 @@ compatibility, but label it Created by. Last updated by comes from the latest
 known content/state audit; missing historical actors show Unknown. Completed by
 comes from the completed sale receipt's cashier. These are bounded subqueries,
 not per-row application queries or a historical backfill. Existing creation and
-line audit entries remain append-only. Cart 66's creator and historical records
-are not reassigned or reconstructed.
+line audit entries remain append-only. Historical creators and records are not reassigned or reconstructed.
 
 Checkout actions share one row, compact height and typography on desktop/mobile.
 Primary color distinguishes payment; quotations remain available independently.

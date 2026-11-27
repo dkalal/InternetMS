@@ -326,9 +326,11 @@ class PurchaseForm(TenantFormMixin, forms.ModelForm):
 class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
     standard_selling_price = forms.DecimalField(
         required=False, max_digits=10, decimal_places=2, min_value=Decimal('0.01'),
-        label='Standard selling price',
+        label='Standard selling price (base unit)',
         widget=forms.NumberInput(attrs={'min': '0.01', 'step': '0.01', 'inputmode': 'decimal'}),
     )
+    purchase_packaging = forms.ChoiceField(required=False, label='Purchase unit', choices=[('', 'Base unit')])
+    purchase_configuration = forms.IntegerField(required=False, widget=forms.HiddenInput)
     product = PurchaseProductChoiceField(
         queryset=Product.objects.none(),
         empty_label='Select a product',
@@ -367,6 +369,17 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
         self.fields['product'].widget.attrs.pop('data-searchable-select', None)
         self.fields['product'].widget.attrs.pop('data-search-label', None)
         self.fields['product'].widget.attrs.pop('data-search-placeholder', None)
+        selected_id = self.data.get(self.add_prefix('product')) if self.is_bound else self.instance.product_id
+        selected = self.fields['product'].queryset.filter(pk=selected_id).first() if str(selected_id or '').isdigit() else None
+        self.has_packaging = bool(selected and selected.packaging_enabled)
+        if self.has_packaging:
+            from .packaging_receipts import packaging_options
+            self.fields['purchase_packaging'].choices = [('', selected.get_measure_unit_display())] + [
+                (str(row['id']), row['label']) for row in packaging_options(selected)]
+            self.initial['purchase_configuration'] = selected.packaging_version
+            if self.instance.unit_factor is not None:
+                self.initial.update(quantity=self.instance.entered_quantity, unit_cost=self.instance.entered_unit_cost,
+                    purchase_packaging=str(self.instance.packaging_id or ''), purchase_configuration=self.instance.packaging_version)
         self.fields['quantity'].label = 'Quantity'
         self.fields['unit_cost'].label = 'Unit cost'
         selected_product_id = (
@@ -405,6 +418,24 @@ class PurchaseLineForm(TenantFormMixin, forms.ModelForm):
             for value in (cleaned.get('serial_numbers') or '').replace(',', '\n').splitlines()
             if value.strip()
         ]
+        if product and product.packaging_enabled and cleaned.get('quantity') is not None and cleaned.get('unit_cost') is not None:
+            from .packaging_receipts import purchase_snapshot
+            try:
+                snapshot = purchase_snapshot(organization=self.organization, product=product,
+                    packaging_id=cleaned.get('purchase_packaging'), quantity=quantity, unit_cost=cleaned['unit_cost'],
+                    version=cleaned.get('purchase_configuration'))
+                for name, value in snapshot.items():
+                    if name in ('quantity', 'unit_cost'):
+                        cleaned[name] = value
+                    else:
+                        setattr(self.instance, name, value)
+            except forms.ValidationError as exc:
+                self.add_error(None, exc)
+        elif product and cleaned.get('purchase_packaging'):
+            self.add_error('purchase_packaging', 'This product does not support packaging.')
+        elif product and not product.packaging_enabled:
+            for name in ('packaging', 'packaging_version', 'unit_factor', 'entered_quantity', 'entered_unit_cost', 'commercial_total', 'selected_unit_snapshot'):
+                setattr(self.instance, name, None)
         if product and product.is_serialized:
             if quantity != quantity.to_integral_value():
                 self.add_error('quantity', 'Serialized products require a whole-number quantity.')
@@ -577,7 +608,7 @@ class CartForm(TenantFormMixin, forms.ModelForm):
                 try:
                     validate_net_unit_price(
                         product=line.product, quantity=line.quantity, unit_price=line.unit_price,
-                        line_discount=line.discount_amount, allocated_document_discount=share,
+                        line_discount=line.discount_amount, allocated_document_discount=share, base_quantity=line.base_quantity,
                         actor=self.membership.user if self.membership else None,
                         organization=self.organization,
                     )
@@ -594,6 +625,8 @@ class CartLineDiscountForm(forms.Form):
 
 
 class CartLineForm(TenantFormMixin, forms.ModelForm):
+    sale_packaging = forms.ChoiceField(required=False, label='Selling unit')
+    sale_configuration = forms.IntegerField(required=False, widget=forms.HiddenInput)
     serial_units = forms.ModelMultipleChoiceField(queryset=StockUnit.objects.none(), required=False)
 
     class Meta:
@@ -602,6 +635,15 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
 
     def __init__(self, *args, organization=None, sale_pricing_category=Cart.SalePricingCategory.STANDARD,
                  cart=None, membership=None, **kwargs):
+        from .packaging_transport import expand_fields
+        self.transport_error = None
+        try:
+            if args:
+                args = (expand_fields(args[0], 'container_payload'), *args[1:])
+            elif 'data' in kwargs:
+                kwargs['data'] = expand_fields(kwargs['data'], 'container_payload')
+        except ValidationError as exc:
+            self.transport_error = str(exc)
         self.sale_pricing_category = sale_pricing_category
         self.cart = cart
         self.membership = membership
@@ -618,6 +660,29 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             self.fields['serial_units'].initial = [
                 str(value) for value in self.instance.serial_selections.values_list('stock_unit_id', flat=True)
             ]
+        self.container_fields = []
+        self.selected_packaging_product = self.fields['product'].queryset.filter(pk=product_id).first() if product_id and str(product_id).isdecimal() and len(str(product_id)) <= 18 else None
+        self.fields['sale_packaging'].choices = [('', 'Base unit')]
+        if self.selected_packaging_product and self.selected_packaging_product.packaging_enabled:
+            from .packaging_receipts import packaging_options
+            from .models import StockContainer
+            product = self.selected_packaging_product
+            self.fields['sale_packaging'].choices = [('', product.get_measure_unit_display())] + [
+                (str(option['id']), option['label']) for option in packaging_options(product)]
+            self.fields['sale_configuration'].initial = self.instance.packaging_version or product.packaging_version
+            self.fields['sale_packaging'].initial = str(self.instance.packaging_id or self.initial.get('sale_packaging') or '')
+            saved = dict(self.instance.container_selections.values_list('container_id', 'base_quantity')) if self.instance.pk else {}
+            containers = StockContainer.objects.filter(tenant=organization, organization=organization, product=product,
+                remaining_quantity__gt=0).order_by('received_at', 'pk')[:2000]
+            for container in containers:
+                name = f'container_{container.pk}'
+                self.fields[name] = forms.DecimalField(required=False, decimal_places=0, min_value=0,
+                    max_value=container.remaining_quantity, initial=saved.get(container.pk, 0),
+                    label=f'{container.label} / {container.get_state_display()} / {container.remaining_quantity:g} {product.get_measure_unit_display()}')
+                self.container_fields.append(self[name])
+            self.fields['quantity'].widget.attrs.update({'step': '1', 'min': '1'})
+        else:
+            self.fields['sale_packaging'].widget = forms.HiddenInput()
         self.serials_in_cart = set(CartSerialSelection.objects.filter(
             tenant=organization, cart_line__cart=cart,
         ).exclude(cart_line_id=self.instance.pk).values_list('stock_unit_id', flat=True)) if cart and cart.pk else set()
@@ -630,11 +695,53 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
         if not can_discount:
             self.fields['discount_amount'].help_text = 'Administrator controlled.'
 
+    def clean_product(self):
+        raw_id = str(self.data.get('product', ''))
+        if not (raw_id.isascii() and raw_id.isdecimal() and len(raw_id) <= 18):
+            raise forms.ValidationError('Select a valid product.')
+        product = self.cleaned_data['product']
+        return product
+
     def clean(self):
         cleaned = super().clean()
+        if self.transport_error:
+            self.add_error(None, self.transport_error)
+        if self.is_bound and any(name.startswith('container_') and name != 'container_payload' and name not in self.fields
+                and self.data.get(name) not in ('', '0', '0.0', '0.00', '0.000000') for name in self.data):
+            self.add_error(None, 'A selected physical piece is unavailable in this product/tenant. Review selections.')
         product = cleaned.get('product')
         quantity = cleaned.get('quantity') or Decimal('0.00')
         discount = cleaned.get('discount_amount') or Decimal('0.00')
+        base_quantity = quantity
+        package = None
+        self.aggregate_base_quantity = quantity
+        if product and product.packaging_enabled and quantity > 0:
+            from .packaging_sales import sale_snapshot, validate_selection
+            try:
+                values = sale_snapshot(organization=self.organization, product=product,
+                    packaging_id=cleaned.get('sale_packaging'), quantity=quantity,
+                    version=cleaned.get('sale_configuration'))
+                for name, value in values.items():
+                    setattr(self.instance, name, value)
+                self.instance.product = product
+                self.instance.quantity = quantity
+                self.instance.tenant = self.organization
+                package = values['packaging']
+                base_quantity = values['base_quantity']
+                others = self.cart.lines.filter(product=product).exclude(pk=self.instance.pk) if self.cart and self.cart.pk else []
+                self.aggregate_base_quantity = base_quantity + sum((line.base_quantity or line.quantity for line in others), Decimal('0'))
+                used = {}
+                for line in others:
+                    if not self.instance.pk and line.packaging_id == self.instance.packaging_id:
+                        continue
+                    for pk, amount in line.container_selections.values_list('container_id', 'base_quantity'):
+                        used[pk] = used.get(pk, Decimal('0')) + amount
+                self.selected_containers = [(int(name[10:]), cleaned[name]) for name in self.fields
+                    if name.startswith('container_') and cleaned.get(name)]
+                validate_selection(organization=self.organization, line=self.instance,
+                    selections=self.selected_containers, used=used)
+            except (ValidationError, ValueError) as exc:
+                self.add_error(None, str(exc))
         if quantity <= 0:
             self.add_error(
                 'quantity',
@@ -649,16 +756,16 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
             available = product.available_stock
             if available <= 0:
                 self.add_error('product', 'This product is currently out of stock.')
-            elif quantity > available:
+            elif (self.aggregate_base_quantity if product.packaging_enabled else quantity) > available:
                 self.add_error('quantity', f'Only {available} units are currently available.')
-        if product and discount > product.price_for_sale_category(
+        if product and not product.packaging_enabled and discount > product.price_for_sale_category(
             sale_pricing_category=self.sale_pricing_category, quantity=quantity,
         ) * quantity:
             self.add_error('discount_amount', 'Discount cannot exceed the line amount.')
         if product and self.cart is not None:
             from .services import CartService
 
-            if self.instance.pk and self.cart.lines.filter(product=product).exclude(pk=self.instance.pk).exists():
+            if self.instance.pk and self.cart.lines.filter(product=product, packaging_id=self.instance.packaging_id).exclude(pk=self.instance.pk).exists():
                 self.add_error('product', 'This product already has a cart line. Edit that item instead.')
             if not product.is_serialized and cleaned.get('serial_units'):
                 self.add_error('serial_units', 'This product does not use serial selections.')
@@ -668,12 +775,13 @@ class CartLineForm(TenantFormMixin, forms.ModelForm):
                 quantity=quantity,
                 customer=self.cart.customer,
                 sale_pricing_category=self.cart.sale_pricing_category,
+                packaging=package, aggregate_base_quantity=self.aggregate_base_quantity,
             )
             from products.pricing import BelowCostError, validate_net_unit_price
             try:
                 validate_net_unit_price(
                     product=product, quantity=quantity, unit_price=unit_price,
-                    line_discount=discount,
+                    line_discount=discount, base_quantity=base_quantity,
                     actor=self.membership.user if self.membership else None,
                     organization=self.organization,
                 )

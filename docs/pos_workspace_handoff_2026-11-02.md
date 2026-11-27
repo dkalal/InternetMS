@@ -22,14 +22,11 @@ Branch/base: `feature/tenant-sku-sequence` / `ba89500`.
   completed sale's receipt cashier as Completed by. Unknown historical editors
   remain Unknown; no historical ownership inference/backfill is performed.
 
-## Cart 66 finding and preservation
+## Historical attribution preservation
 
-Read-only investigation found creator account ID 19 (currently `johnson.jr773`)
-and creation audit 1566 dated **2026-10-31 14:09:58 Africa/Dar_es_Salaam**. The
-current line was added on November 2, and no matching line-change actor audit was
-available. This establishes recorded account attribution, not the physical person
-using the account. Cart 66's creator and historical audit records were not changed.
-Existing drafts were not deleted, hidden or reassigned. No live cleanup ran.
+The original office investigation is preserved privately. Historical creator and
+audit records were not changed. Missing editor events cannot establish who made
+a historical change; existing drafts were not deleted, hidden or reassigned.
 
 ## Task files
 

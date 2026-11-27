@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %}{% load static %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {% include "inventory/includes/module_nav.html" %}
@@ -13,7 +13,7 @@
     <a href="{% if cart.pk %}{% url 'inventory:cart_detail' cart.pk %}{% else %}{% url 'inventory:cart_workspace' workspace_token %}{% endif %}" class="jims-btn jims-btn-secondary">Back to sale</a>
   </header>
 
-  <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form>
+  <form method="post" class="jims-form-section" data-submit-lock data-cart-line-form data-packaging-transport="cart">
     {% csrf_token %}
     {% if workspace_token %}<input type="hidden" name="workspace_action" value="line">{% endif %}
     {% if form.non_field_errors %}
@@ -26,6 +26,14 @@
           <h2 id="item-details-title" class="mt-1 text-base font-semibold text-slate-950">Product and quantity</h2>
         </div>
         {% include "components/form_field.html" with field=form.product %}
+        {% if form.selected_packaging_product.packaging_enabled %}
+          {{ form.sale_configuration }}
+          {% include "components/form_field.html" with field=form.sale_packaging %}
+          <p class="text-sm text-slate-600">Selections reserve no stock. Cut or dispatch only after successful full payment. A full package requires an intact sealed container.</p>
+          <fieldset class="space-y-3"><legend class="font-semibold">Physical pieces / quantity in base units</legend>
+            {% for field in form.container_fields %}{% include "components/form_field.html" with field=field %}{% empty %}<p>No physical stock is available.</p>{% endfor %}
+          </fieldset>
+        {% endif %}
         <div class="grid gap-4 sm:grid-cols-2">
           {% include "components/form_field.html" with field=form.quantity %}
           {% include "components/form_field.html" with field=form.discount_amount %}
@@ -80,4 +88,4 @@
     </section>
   {% endif %}
 </div>
-{% endblock %}
+<script src="{% static 'inventory/js/packaging-admin.js' %}" defer></script>{% endblock %}

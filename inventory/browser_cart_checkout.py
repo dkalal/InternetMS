@@ -1,4 +1,5 @@
 """Optional Edge checkout smoke test against synthetic data in the test database."""
+import os
 from pathlib import Path
 
 from django.conf import settings
@@ -23,7 +24,7 @@ class CartCheckoutBrowserChecks(StaticLiveServerTestCase):
         output = Path(settings.BASE_DIR) / '.backups' / 'cart-checkout'
         output.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='msedge', headless=True)
+            browser = playwright.chromium.launch(channel=os.environ.get('PLAYWRIGHT_BROWSER_CHANNEL', 'msedge') or None, headless=True)
             context = browser.new_context(viewport={'width': 1440, 'height': 1000})
             cached_tailwind = output / 'tailwind.js'
             if cached_tailwind.exists():

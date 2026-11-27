@@ -8,6 +8,7 @@ from django.db import models, transaction
 from django.db.models import Q
 
 from users.tenant_models import TenantScopedManager
+from products.packaging_snapshots import purchase_constraints, sales_constraints, validate_snapshot
 
 
 class TenantModel(models.Model):
@@ -171,6 +172,13 @@ class PurchaseReferenceSequence(TenantModel):
 
 
 class PurchaseLine(models.Model):
+    packaging = models.ForeignKey('products.ProductPackaging', on_delete=models.PROTECT, null=True, blank=True, editable=False)
+    packaging_version = models.PositiveIntegerField(null=True, blank=True, editable=False)
+    unit_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    entered_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    entered_unit_cost = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    commercial_total = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True, editable=False)
+    selected_unit_snapshot = models.CharField(max_length=50, null=True, blank=True, editable=False)
     tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_purchase_lines', db_index=True)
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='purchase_lines')
@@ -191,9 +199,12 @@ class PurchaseLine(models.Model):
 
     class Meta:
         ordering = ['id']
+        constraints = purchase_constraints()
 
     @property
     def line_total(self):
+        if self.commercial_total is not None:
+            return self.commercial_total
         # Preserve immutable totals captured by the earlier package-assisted
         # workflow. New same-unit lines leave this null and use quantity × cost.
         if self.authoritative_purchase_total is not None:
@@ -204,18 +215,24 @@ class PurchaseLine(models.Model):
         return [value.strip() for value in self.serial_numbers.replace(',', '\n').splitlines() if value.strip()]
 
     def save(self, *args, **kwargs):
-        if self.purchase_id:
-            self.tenant_id = self.purchase.tenant_id
-        if self.product_id and self.product.tenant_id != self.tenant_id:
-            raise ValidationError('Purchase line product belongs to another tenant.')
-        if self.purchase_id and self.purchase.status == Purchase.Status.CONFIRMED:
-            raise ValidationError('Confirmed purchase lines are immutable.')
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            if self.purchase_id:
+                self.purchase = Purchase.objects.unscoped().select_for_update().get(pk=self.purchase_id)
+            if self.purchase_id:
+                self.tenant_id = self.purchase.tenant_id
+            if self.product_id and self.product.tenant_id != self.tenant_id:
+                raise ValidationError('Purchase line product belongs to another tenant.')
+            if self.purchase_id and self.purchase.status == Purchase.Status.CONFIRMED:
+                raise ValidationError('Confirmed purchase lines are immutable.')
+            validate_snapshot(self, purchase=True)
+            super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.purchase.status == Purchase.Status.CONFIRMED:
-            raise ValidationError('Confirmed purchase lines are immutable.')
-        return super().delete(*args, **kwargs)
+        with transaction.atomic():
+            purchase = Purchase.objects.unscoped().select_for_update().get(pk=self.purchase_id)
+            if purchase.status == Purchase.Status.CONFIRMED:
+                raise ValidationError('Confirmed purchase lines are immutable.')
+            return super().delete(*args, **kwargs)
 
 
 class InventoryBalance(TenantModel):
@@ -392,6 +409,11 @@ class Cart(TenantModel):
 
 
 class CartLine(models.Model):
+    packaging = models.ForeignKey('products.ProductPackaging', on_delete=models.PROTECT, null=True, blank=True, editable=False)
+    packaging_version = models.PositiveIntegerField(null=True, blank=True, editable=False)
+    unit_factor = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    base_quantity = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True, editable=False)
+    selected_unit_snapshot = models.CharField(max_length=50, null=True, blank=True, editable=False)
     tenant = models.ForeignKey('users.Organization', on_delete=models.PROTECT, related_name='tenant_cart_lines', db_index=True)
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='lines')
     product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='cart_lines')
@@ -404,7 +426,11 @@ class CartLine(models.Model):
 
     class Meta:
         ordering = ['id']
-        constraints = [models.UniqueConstraint(fields=['cart', 'product'], name='uniq_cart_product')]
+        constraints = [
+            models.UniqueConstraint(fields=['cart', 'product'], condition=models.Q(packaging__isnull=True), name='uniq_cart_base_product'),
+            models.UniqueConstraint(fields=['cart', 'product', 'packaging'], condition=models.Q(packaging__isnull=False), name='uniq_cart_product_packaging'),
+            *sales_constraints('cart'),
+        ]
 
     @property
     def line_total(self):
@@ -418,6 +444,7 @@ class CartLine(models.Model):
             self.tenant_id = cart.tenant_id
             if self.product_id and self.product.tenant_id != self.tenant_id:
                 raise ValidationError('Cart line product belongs to another tenant.')
+            validate_snapshot(self)
             super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -587,3 +614,6 @@ class HistoricalInventoryRecord(TenantModel):
     def save(self, *args, **kwargs):
         self._sync_tenant()
         super().save(*args, **kwargs)
+
+
+from .packaging_models import (ContainerStockEvent, PackagingActivation, StockContainer, ContainerAllocation, ProvisionalContainerAllocation)  # noqa: E402,F401

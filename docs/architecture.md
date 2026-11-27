@@ -101,6 +101,13 @@ Super Administrator access to tenant data requires an explicit support session w
 
 ### Inventory boundaries
 
+The approved optional packaging extension follows the
+[product packaging contract](product_packaging_contract.md). It defines separate
+commercial and base quantities, physical divisible containers, payment-time
+posting and a gated phased rollout. Until its implementation gates pass, the
+same-unit workflow below remains the only enabled path. Legacy package columns
+remain preservation-only throughout the extension.
+
 `products.Product` remains the shared product/service catalog and `billing.BillingDocument` remains the only quotation, invoice, and receipt system. The `inventory` app owns suppliers, purchases, balances, immutable movements, serial units, carts, sale-cost records, reports, imports, and inventory APIs.
 
 All balance mutations go through `InventoryService` under `transaction.atomic()` with row locks. `BillingService.create_receipt_from_invoice()` locks the invoice and invokes inventory completion in the same transaction only for catalog/inventory sales. This makes retries idempotent and prevents negative stock or double-selling serialized units.
@@ -184,3 +191,8 @@ Inventory report selection, date boundaries, purchase totals, stock valuation,
 export and currency semantics follow [the inventory reports contract](inventory_reports_audit_2026-10-24.md).
 
 Search scope, valuation provenance, historical loss review and the reporting workspace follow [the reporting follow-up contract](inventory_reports_followup_2026-10-24.md).
+
+
+### Completed optional packaging extension
+
+[Phase 4](product_packaging_phase4.md) provides explicit product configuration/count mapping, independent commercial prices, unit-aware cart/API sales, payment-time physical allocation, separate physical return/wastage and base/container reporting. Existing products remain disabled until audited activation. Legacy direct billing HTML directs opted-in products to the unit-aware cart; legacy import templates reject opted-in stock entries and the explicit commercial workbook creates stock-neutral drafts. Commercial snapshots never redefine base stock units or legacy columns. [Rollout and rollback](product_packaging_rollout.md) requires separate production authorization and verified private backup/restore evidence.

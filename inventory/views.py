@@ -94,6 +94,7 @@ def _cart_workspace(cart):
         _, line.pos_pricing_mode = CartService.line_pricing(
             product=line.product, quantity=line.quantity, customer=cart.customer,
             sale_pricing_category=cart.sale_pricing_category,
+            packaging=line.packaging, aggregate_base_quantity=sum((other.base_quantity or other.quantity for other in lines if other.product_id == line.product_id), Decimal('0')) if line.product.packaging_enabled else None,
         )
     subtotal = sum((line.line_total for line in lines), Decimal('0.00'))
     taxable_subtotal = sum(
@@ -523,7 +524,7 @@ def purchase_product_search(request):
             | Q(brand__icontains=query)
             | Q(model_number__icontains=query)
         )
-    products = products.select_related('sales_unit').order_by('name', 'sku', 'pk')
+    products = products.select_related('sales_unit').prefetch_related(_packaging_prefetch(organization)).order_by('name', 'sku', 'pk')
     start = (page - 1) * PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
     rows = list(products[start:start + PURCHASE_PRODUCT_SEARCH_PAGE_SIZE + 1])
     more = len(rows) > PURCHASE_PRODUCT_SEARCH_PAGE_SIZE
@@ -545,6 +546,7 @@ def purchase_product_search(request):
                 'serialized': product.is_serialized,
                 'expiry': product.track_expiry,
                 'selling_price': str(product.selling_price),
+                **_packaging_meta(product),
                 **({'buying_price': str(product.buying_price)} if can_view_costs else {}),
             }
             for product in rows[:PURCHASE_PRODUCT_SEARCH_PAGE_SIZE]
@@ -703,6 +705,7 @@ def _quick_product_response(product, *, status):
         'id': product.pk, 'text': str(product), 'name': product.name, 'sku': product.sku,
         'unit': product.sales_unit.label, 'serialized': product.is_serialized,
         'expiry': product.track_expiry,
+                **_packaging_meta(product),
     }}, status=status)
 
 
@@ -747,6 +750,20 @@ def purchase_supplier_quick_create(request):
     }, status=201)
 
 
+def _packaging_prefetch(organization):
+    from django.db.models import Prefetch
+    from products.models import ProductPackaging
+    return Prefetch('packaging_definitions', queryset=ProductPackaging.objects.unscoped().filter(
+        tenant=organization, is_active=True, unit__is_active=True, unit__tenant=organization).select_related('unit').order_by('pk'),
+        to_attr='available_purchase_packages')
+
+
+def _packaging_meta(product):
+    from .packaging_receipts import packaging_options
+    return {'packaging_enabled': product.packaging_enabled, 'packaging_version': product.packaging_version,
+            'packaging_options': packaging_options(product)}
+
+
 def _purchase_product_meta(organization, formset):
     product_ids = {
         form.instance.product_id
@@ -758,6 +775,7 @@ def _purchase_product_meta(organization, formset):
             'name': product.name,
             'serialized': product.is_serialized,
             'expiry': product.track_expiry,
+                **_packaging_meta(product),
             'sku': product.sku,
             'base_unit': product.sales_unit.label if product.sales_unit_id else product.get_measure_unit_display(),
             'selling_price': str(product.selling_price),
@@ -768,7 +786,7 @@ def _purchase_product_meta(organization, formset):
             is_active=True,
             item_type=Product.ItemType.PHYSICAL,
             track_stock=True,
-        ).select_related('sales_unit').order_by('name')
+        ).select_related('sales_unit').prefetch_related(_packaging_prefetch(organization)).order_by('name')
     }
 
 
@@ -821,62 +839,9 @@ def _render_purchase_workspace(request, *, organization, purchase, form, formset
     })
 
 
-def _save_purchase_draft(*, form, formset, organization, actor, creating,
-                         import_rows=None, import_token=None, import_fingerprint=None, membership=None):
-    with transaction.atomic():
-        if import_rows:
-            type(organization).objects.select_for_update().get(pk=organization.pk)
-            previous = PurchaseImportSubmission.objects.filter(tenant=organization, token=import_token).first()
-            if previous:
-                if previous.fingerprint != import_fingerprint:
-                    raise ImportInputError('This import token was already used with different content. Review and apply a new batch.')
-                return previous.purchase
-        purchase = form.save(commit=False)
-        purchase.organization = purchase.tenant = organization
-        if creating:
-            purchase.created_by = actor
-            if form.cleaned_data['auto_generated_reference'] == purchase.reference_number:
-                purchase.reference_number = PurchaseReferenceNumberService.next_number(
-                    organization=organization,
-                    purchase_date=purchase.purchase_date,
-                )
-        purchase.save()
-        formset.instance = purchase
-        formset.save()
-        from products.pricing import update_standard_selling_price
-        for line_form in formset.forms:
-            data = line_form.cleaned_data if hasattr(line_form, 'cleaned_data') else {}
-            product = data.get('product')
-            standard_price = data.get('standard_selling_price')
-            if product and standard_price is not None and standard_price != product.selling_price:
-                update_standard_selling_price(
-                    product_id=product.pk, organization=organization, price=standard_price,
-                    actor=actor, membership=membership,
-                )
-        # The workspace submits the complete proposal snapshot on edit.
-        purchase.product_proposals.filter(tenant=organization).delete()
-        if import_rows:
-            apply_purchase_batch(purchase=purchase, rows=import_rows, organization=organization,
-                                 actor=actor, membership=membership)
-        from .purchase_batch import proposal_lines
-        total = sum((line.line_total for line in list(purchase.lines.all()) + proposal_lines(purchase)), Decimal('0.00'))
-        total = total.quantize(Decimal('0.01'))
-        DecimalValidator(14, 2)(total)
-        Purchase.objects.filter(tenant=organization, pk=purchase.pk).update(total_cost=total)
-        purchase.total_cost = total
-        audit(
-            organization=organization,
-            actor=actor,
-            action='inventory.purchase.created' if creating else 'inventory.purchase.updated',
-            obj=purchase,
-            new_value={'reference_number': purchase.reference_number, 'total_cost': str(total)},
-        )
-        if import_rows:
-            PurchaseImportSubmission.objects.create(
-                organization=organization, tenant=organization, token=import_token,
-                fingerprint=import_fingerprint, purchase=purchase,
-            )
-    return purchase
+def _save_purchase_draft(**kwargs):
+    from .purchase_drafts import save_purchase_draft
+    return save_purchase_draft(**kwargs)
 
 
 def _import_request(request, organization):
@@ -966,7 +931,7 @@ def purchase_create(request):
                 purchase = _save_purchase_draft(
                     form=form, formset=formset, organization=organization, actor=request.user, creating=True,
                     import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
-                    membership=request.membership,
+                    membership=request.membership, support_session=getattr(request, "support_access", None),
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
@@ -1029,7 +994,7 @@ def purchase_edit(request, pk):
                 purchase = _save_purchase_draft(
                     form=form, formset=formset, organization=organization, actor=request.user, creating=False,
                     import_rows=import_rows, import_token=import_token, import_fingerprint=import_fingerprint,
-                    membership=request.membership,
+                    membership=request.membership, support_session=getattr(request, "support_access", None),
                 )
             except IntegrityError:
                 form.add_error('reference_number', 'This purchase reference already exists. Choose another reference.')
@@ -1133,6 +1098,7 @@ def purchase_detail(request, pk):
         'serialized_line_count': sum(1 for line in purchase_lines if line.product.is_serialized),
         'expiry_line_count': sum(1 for line in purchase_lines if line.product.track_expiry),
         'pricing_reviews': pricing_reviews,
+        'receipt_containers': purchase.lines.filter(containers__isnull=False).values('containers__id', 'containers__label', 'product__name', 'product__measure_unit', 'containers__remaining_quantity', 'containers__state').order_by('containers__id')[:2000],
     })
 
 
@@ -1142,7 +1108,7 @@ def purchase_confirm(request, pk):
     if request.method != 'POST':
         raise Http404
     try:
-        purchase = InventoryService.confirm_purchase(organization=organization, purchase_id=pk, actor=request.user)
+        purchase = InventoryService.confirm_purchase(organization=organization, purchase_id=pk, actor=request.user, **({"support_session": request.support_access} if getattr(request, "support_access", None) else {}))
         messages.success(request, f'Purchase {purchase.reference_number} confirmed and stock received.')
         if has_tenant_permission(request.user, organization, PermissionCode.COST_REPORT_VIEW, membership=request.membership):
             warnings = {
@@ -1404,7 +1370,11 @@ def cart_workspace(request, token):
             return redirect('inventory:cart_detail', pk=saved.pk)
     if line_mode:
         product_id = request.POST.get('product') if request.method == 'POST' else request.GET.get('product')
-        product = Product.objects.filter(tenant=organization, pk=product_id).first() if str(product_id).isdigit() else None
+        product = (
+            Product.objects.filter(tenant=organization, pk=product_id).first()
+            if str(product_id).isascii() and str(product_id).isdecimal() and len(str(product_id)) <= 18
+            else None
+        )
         response = render(request, 'inventory/cart_line_form.html', {
             'cart': cart, 'form': form, 'title': 'Add cart item', 'selected_product': product,
             'workspace_token': token,
@@ -1527,6 +1497,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
         unit_price, _ = CartService.line_pricing(
             product=form.cleaned_data['product'], quantity=form.cleaned_data['quantity'], customer=cart.customer,
             sale_pricing_category=cart.sale_pricing_category,
+            packaging=form.instance.packaging, aggregate_base_quantity=form.aggregate_base_quantity,
         )
         if form.cleaned_data['discount_amount'] > form.cleaned_data['quantity'] * unit_price:
             form.add_error('discount_amount', 'Discount cannot exceed the effective sale price.')
@@ -1549,7 +1520,7 @@ def cart_line_form(request, cart_pk, line_pk=None):
                 'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
                 'title': 'Edit cart item' if line else 'Add cart item',
             })
-        except InventoryError as exc:
+        except (InventoryError, BillingServiceError) as exc:
             form.add_error('discount_amount', str(exc))
             return render(request, 'inventory/cart_line_form.html', {
                 'form': form, 'cart': cart, 'line': line, 'selected_product': selected_product,
@@ -1614,7 +1585,7 @@ def cart_line_adjust(request, cart_pk):
 
     cart = get_object_or_404(Cart.objects.filter(tenant=organization, status=Cart.Status.DRAFT), pk=cart_pk)
     product = get_object_or_404(Product.objects.filter(tenant=organization, is_active=True), pk=product_id)
-    if product.is_serialized:
+    if product.is_serialized or (product.packaging_enabled and not request.POST.get('line_id')):
         target = reverse('inventory:cart_line_create', args=[cart.pk]) + f'?product={product.pk}'
         if _is_pos_request(request):
             return JsonResponse({'ok': False, 'message': 'Select serial numbers before adding this product.',
@@ -1622,7 +1593,8 @@ def cart_line_adjust(request, cart_pk):
         return redirect(target)
     try:
         cart = CartService.adjust_line(organization=organization, cart_id=cart.pk, product_id=product.pk,
-                                       direction=direction, actor=request.user, membership=request.membership)
+                                       direction=direction, actor=request.user, membership=request.membership,
+                                       **({'line_id': request.POST.get('line_id')} if product.packaging_enabled else {}))
     except (InventoryError, ValidationError) as exc:
         if _is_pos_request(request):
             return _pos_response(request, cart, message=str(exc), level='warning', status=422)
@@ -1784,6 +1756,8 @@ def cart_restore(request, pk):
 
 
 REPORT_NAMES = {
+    'physical-corrections': 'Physical returns and wastage',
+    'container-reconciliation': 'Container reconciliation',
     'stock-valuation': 'Stock valuation', 'purchases': 'Purchase report', 'sales': 'Sales report',
     'gross-profit': 'Gross profit', 'best-selling': 'Best-selling products', 'fast-moving': 'Fast-moving products',
     'slow-moving': 'Slow-moving products', 'dead-stock': 'Dead stock', 'low-stock': 'Low-stock products',
@@ -1791,9 +1765,11 @@ REPORT_NAMES = {
     'historical-purchases': 'Imported purchases',
     'historical-sales': 'Imported sales',
 }
-COST_REPORT_NAMES = {'stock-valuation', 'purchases', 'gross-profit', 'movements', 'historical-purchases'}
+COST_REPORT_NAMES = {'physical-corrections', 'container-reconciliation', 'stock-valuation', 'purchases', 'gross-profit', 'movements', 'historical-purchases'}
 
 REPORT_DESCRIPTIONS = {
+    'physical-corrections': 'Physical stock corrections and their signed base-unit/value effects. These records do not create monetary refunds.',
+    'container-reconciliation': 'Base-unit balances against physical remainders, sealed containers and current weighted-average value. Differences require an explicit investigation; reports never adjust stock.',
     'stock-valuation': 'Current movement-backed quantity and recorded acquisition value.',
     'purchases': 'Confirmed stock receipts in the selected period.',
     'sales': 'Fully paid inventory sales with stock already deducted.',
@@ -1885,7 +1861,7 @@ def report(request, report_name='stock-valuation'):
     }
     report_groups = []
     for label, slugs in (
-        ('Stock & inventory', ('stock-valuation', 'low-stock', 'out-of-stock', 'dead-stock', 'movements', 'serialized')),
+        ('Stock & inventory', ('physical-corrections', 'container-reconciliation', 'stock-valuation', 'low-stock', 'out-of-stock', 'dead-stock', 'movements', 'serialized')),
         ('Purchasing', ('purchases',)),
         ('Sales & margin', ('sales', 'gross-profit', 'best-selling', 'fast-moving', 'slow-moving')),
         ('Imported records', ('historical-purchases', 'historical-sales')),
@@ -1921,6 +1897,17 @@ def export_records(request, record_type):
             p.catalog_category.name if p.catalog_category_id else p.get_category_display(),
             p.brand, p.model_number, p.selling_price, p.technician_price, p.wholesale_price, p.is_active,
         ] for p in Product.objects.filter(tenant=organization).select_related('catalog_category').order_by('name')]
+    elif record_type == 'packaging':
+        require_permission(request, PermissionCode.PRODUCTS_VIEW)
+        require_permission(request, PermissionCode.COST_REPORT_VIEW)
+        from products.models import ProductPackaging
+        headers = ['SKU', 'Product', 'Base unit', 'Packaging enabled', 'Configuration version', 'Package reference',
+            'Commercial unit', 'Factor', 'Revision', 'Active', 'Standard price', 'Technician price', 'Wholesale price', 'Legacy retail price']
+        rows = [[row.product.sku, row.product.name, row.product.get_measure_unit_display(), row.product.packaging_enabled,
+            row.product.packaging_version, row.pk, row.unit.label, row.factor, row.version, row.is_active,
+            row.standard_price, row.technician_price, row.wholesale_price, row.retail_price]
+            for row in ProductPackaging.objects.filter(tenant=organization, product__tenant=organization,
+                unit__tenant=organization).select_related('product__sales_unit', 'unit').order_by('product__sku', 'version')]
     elif record_type == 'suppliers':
         require_permission(request, PermissionCode.SUPPLIER_MANAGE)
         headers = ['Company', 'Contact', 'Phone', 'Email', 'Address', 'TIN/VRN', 'Active']
@@ -2050,3 +2037,178 @@ def settings_edit(request):
         'subtitle': 'Configure operational thresholds used by dashboard alerts and movement reports.',
         'cancel_url': 'inventory:dashboard', 'submit_label': 'Save settings',
     })
+
+
+@login_required
+def invoice_containers(request, pk):
+    from django import forms
+    from users.permissions import can_view_sales_document
+    from .packaging_sales import eligible_containers, selections_for, PackagingSelectionService
+    organization = _scope(request, PermissionCode.BILLING_CREATE)
+    document = get_object_or_404(BillingDocument.objects.filter(tenant=organization, organization=organization,
+        document_type='invoice', status__in=['draft', 'issued']), pk=pk)
+    if not can_view_sales_document(request.user, document, membership=request.membership):
+        raise PermissionDenied('Invoice unavailable.')
+    from .packaging_transport import expand_fields
+    transport_error = None
+    data = request.POST or None
+    try:
+        data = expand_fields(data, 'selection_payload')
+    except ValidationError as exc:
+        transport_error = str(exc)
+    form = forms.Form(data)
+    if document.status == 'draft':
+        form.fields['issue_invoice'] = forms.BooleanField(required=False, label='Issue this invoice after saving reviewed selections')
+    entries = []
+    total_choices = 0
+    review_too_large = False
+    for line in document.items.filter(unit_factor__isnull=False).select_related('product').order_by('pk'):
+        saved = dict(selections_for(line))
+        fields = []
+        for container in eligible_containers(organization=organization, line=line)[:2000]:
+            total_choices += 1
+            if total_choices > 2000:
+                review_too_large = True
+                break
+            name = f'line_{line.pk}_container_{container.pk}'
+            form.fields[name] = forms.DecimalField(required=False, min_value=0, max_value=container.remaining_quantity,
+                decimal_places=0, initial=saved.get(container.pk, 0), label=f'{container.label} / {container.get_state_display()} / {container.remaining_quantity:g}')
+            fields.append((container.pk, form[name]))
+        entries.append((line, fields))
+    unknown_pieces = data is not None and any(name.startswith('line_') and '_container_' in name and name not in form.fields
+        and data.get(name) not in ('', '0', '0.0', '0.00', '0.000000') for name in data)
+    if request.method == 'POST' and form.is_valid() and unknown_pieces:
+        form.add_error(None, 'A selected physical piece is unavailable. Review every invoice line.')
+    if request.method == 'POST' and form.is_valid() and transport_error:
+        form.add_error(None, transport_error)
+    if request.method == 'POST' and form.is_valid() and review_too_large:
+        form.add_error(None, 'This invoice exceeds the 2,000-piece review limit. Split it into smaller invoices.')
+    if request.method == 'POST' and form.is_valid():
+        selections = {line.pk: [(container_id, form.cleaned_data[field.name]) for container_id, field in fields
+            if form.cleaned_data.get(field.name)] for line, fields in entries}
+        try:
+            PackagingSelectionService.review_document(organization=organization, actor=request.user,
+                document_id=document.pk, selections=selections, membership=request.membership, issue=form.cleaned_data.get('issue_invoice', False),
+                support_session=getattr(request, 'support_access', None))
+        except (ValidationError, BillingServiceError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, 'Physical selections saved. Cut or dispatch only after successful full payment.')
+            return redirect('billing:document_detail', doc_type='invoice', pk=pk)
+    return render(request, 'inventory/invoice_containers.html', {'document': document, 'form': form, 'entries': entries})
+
+
+@login_required
+def invoice_physical_return(request, pk):
+    from products.packaging import authorize
+    from .packaging_forms import PhysicalCorrectionForm
+    from .packaging_corrections import ContainerCorrectionService
+    organization = _scope(request, PermissionCode.INVENTORY_ADJUST)
+    support = getattr(request, 'support_access', None)
+    authorize(organization=organization, actor=request.user, stock=True, support_session=support)
+    invoice = get_object_or_404(BillingDocument.objects.filter(tenant=organization, organization=organization,
+        document_type='invoice', status='paid'), pk=pk)
+    from users.permissions import can_view_sales_document
+    if not can_view_sales_document(request.user, invoice, membership=request.membership):
+        raise PermissionDenied('Original invoice unavailable for physical return.')
+    form = PhysicalCorrectionForm(request.POST or None, organization=organization, invoice=invoice)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            event = ContainerCorrectionService.return_stock(organization=organization, actor=request.user,
+                allocation_id=form.cleaned_data['allocation'].pk, quantity=form.cleaned_data['quantity'],
+                reason=form.cleaned_data['reason'], request_key=form.cleaned_data['request_key'], support_session=support)
+        except (ValidationError, InventoryError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, 'Physical return recorded as a separate piece. No monetary refund was created.')
+            return redirect('inventory:packaging_containers', pk=event.product_id)
+    return render(request, 'inventory/physical_correction.html', {'form': form, 'title': 'Record inspected physical return',
+        'description': 'Return only stock physically received and inspected. Returned pieces remain separate; this action does not refund money.'})
+
+
+@login_required
+def container_waste(request, pk):
+    from products.packaging import authorize
+    from .models import StockContainer
+    from .packaging_forms import PhysicalCorrectionForm
+    from .packaging_corrections import ContainerCorrectionService
+    organization = _scope(request, PermissionCode.INVENTORY_ADJUST)
+    support = getattr(request, 'support_access', None)
+    authorize(organization=organization, actor=request.user, stock=True, support_session=support)
+    container = get_object_or_404(StockContainer.objects.filter(tenant=organization, organization=organization).select_related('product'), pk=pk)
+    form = PhysicalCorrectionForm(request.POST or None, organization=organization)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            ContainerCorrectionService.waste(organization=organization, actor=request.user, container_id=container.pk,
+                quantity=form.cleaned_data['quantity'], category=form.cleaned_data['category'], reason=form.cleaned_data['reason'],
+                request_key=form.cleaned_data['request_key'], support_session=support)
+        except (ValidationError, InventoryError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, 'Wastage recorded with an immutable stock movement.')
+            return redirect('inventory:packaging_containers', pk=container.product_id)
+    return render(request, 'inventory/physical_correction.html', {'form': form, 'title': 'Record physical wastage',
+        'description': f'{container.product.name} / {container.label} / remaining {container.remaining_quantity:g} {container.product.get_measure_unit_display()}. This action removes the entered base quantity from this piece and stock.'})
+
+
+@login_required
+def packaging_containers(request, pk):
+    from .models import StockContainer
+    organization = _scope(request, PermissionCode.STOCK_VIEW)
+    product = get_object_or_404(Product.objects.filter(tenant=organization), pk=pk)
+    containers = StockContainer.objects.filter(tenant=organization, organization=organization, product=product).order_by('-received_at', '-pk')
+    if request.GET.get('q'):
+        try:
+            containers = containers.filter(label=uuid.UUID(request.GET['q']))
+        except ValueError:
+            containers = containers.none()
+    if request.GET.get('state') in StockContainer.State.values:
+        containers = containers.filter(state=request.GET['state'])
+    return render(request, 'inventory/packaging_containers.html', {'product': product,
+        'page_obj': Paginator(containers, 50).get_page(request.GET.get('page')), 'states': StockContainer.State.choices})
+
+
+@login_required
+def commercial_purchase_import(request):
+    from django import forms
+    from products.packaging import authorize
+    from .packaging_import import HEADERS, parse_commercial_workbook, import_commercial_purchase
+    organization = _scope(request, PermissionCode.PURCHASES_CREATE)
+    support = getattr(request, 'support_access', None)
+    authorize(organization=organization, actor=request.user, support_session=support)
+    if request.GET.get('template') == '1':
+        book = Workbook()
+        sheet = book.active
+        sheet.title = 'Commercial purchase v1'
+        sheet.append(list(HEADERS))
+        instructions = book.create_sheet('Instructions')
+        for text in ['One row per commercial line. Existing activated products only; no product creation.',
+                     'quantity and unit_cost are per selected commercial unit. Blank packaging_id explicitly means base unit.',
+                     'Use the package reference and current configuration version shown on Optional packaging.',
+                     'Do not supply factors or normalized costs; the server resolves them. Draft import never changes stock.',
+                     'At most 200 rows and 2,000 physical containers. Dates use YYYY-MM-DD.']:
+            instructions.append([text])
+        output = BytesIO(); book.save(output)
+        response = HttpResponse(output.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename="commercial-purchase-v1.xlsx"'
+        return response
+    class ImportForm(forms.Form):
+        supplier = forms.ModelChoiceField(queryset=Supplier.objects.filter(tenant=organization, is_active=True))
+        purchase_date = forms.DateField(initial=date.today, widget=forms.DateInput(attrs={'type': 'date'}))
+        request_key = forms.UUIDField(initial=uuid.uuid4, widget=forms.HiddenInput)
+        workbook = forms.FileField(label='Commercial purchase v1 workbook')
+    form = ImportForm(request.POST or None, request.FILES or None)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            rows = parse_commercial_workbook(form.cleaned_data['workbook'])
+            purchase = import_commercial_purchase(organization=organization, actor=request.user,
+                supplier_id=form.cleaned_data['supplier'].pk, purchase_date=form.cleaned_data['purchase_date'], rows=rows,
+                request_key=form.cleaned_data['request_key'], support_session=support)
+        except ValidationError as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, 'Commercial purchase draft imported. Review entered/base quantities before receiving.')
+            return redirect('inventory:purchase_detail', pk=purchase.pk)
+    from internetservices.tailwind import apply_tailwind
+    apply_tailwind(form)
+    return render(request, 'inventory/commercial_import.html', {'form': form})

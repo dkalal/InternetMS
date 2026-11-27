@@ -39,6 +39,10 @@
             {{ item_form.product }}
             {% if item_form.product.errors %}<div class="mt-1 text-xs text-rose-600" role="alert">{% for error in item_form.product.errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
           </div>
+          <div class="js-commercial-unit-wrap {% if not item_form.has_commercial_units %}hidden{% endif %}">
+            {% include "components/form_field.html" with field=item_form.commercial_unit %}
+            <p class="text-xs text-slate-500">Save, then review physical pieces on the invoice before payment. Prices are confirmed by the server.</p>
+          </div>
           <div class="js-package-wrap hidden">
             <label for="{{ item_form.package.id_for_label }}" class="sr-only">Service package</label>
             {{ item_form.package }}

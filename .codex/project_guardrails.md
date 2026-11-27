@@ -28,6 +28,12 @@ An implementation that violates these guardrails is invalid even if its UI works
 
 ## 4. Purchasing and stock
 
+Approved extension (2026-11-05): explicitly activated products may use the new
+product-specific packaging workflow only after the gates in
+`docs/product_packaging_contract.md` pass. One base inventory unit, immutable
+history, strict cost floors and preservation-only legacy package fields remain
+mandatory. This exception does not enable conversion in existing code paths.
+
 - Each product has one selected sales/stock unit. Purchase quantity, purchase unit cost, stock balance, and selling prices use that same unit.
 - Package-to-smaller-unit conversion is deferred. Legacy package fields are preservation-only and cannot drive new forms, APIs, imports, calculations, or stock posting.
 - Draft purchases are stock-neutral.

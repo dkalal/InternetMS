@@ -37,6 +37,11 @@ This contract protects the purchasing foundation while the workspace, high-volum
 
 ## Deferred package conversion
 
+The separately approved [optional product packaging contract](product_packaging_contract.md)
+defines the replacement for explicitly activated products in later verified
+phases. This section continues to govern legacy fields and all existing products;
+Phase 0 documentation alone enables no conversion path.
+
 Package labels, factors, costs, and earlier purchase-line snapshots remain in the schema only for preservation and historical compatibility. They must not be exposed or used by new product forms, purchase forms, APIs, imports, calculations, or stock-posting services.
 
 Historical purchase lines with an `authoritative_purchase_total` continue to display and aggregate that immutable total. New same-unit lines leave that legacy field empty and calculate total as quantity multiplied by unit cost.

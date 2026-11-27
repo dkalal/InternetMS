@@ -18,3 +18,11 @@ build
 Thumbs.db
 *.log
 node_modules
+
+# Local business records and backup/rehearsal artifacts must never enter images.
+.backups/
+media/
+staticfiles/
+*.dump
+.env.*
+!.env.example

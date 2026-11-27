@@ -18,7 +18,7 @@ from users.tenancy import require_organization
 from internetservices.listing import apply_sort, clean_page_size, page_context, positive_decimal
 from django.core import signing
 from django.core.exceptions import ValidationError
-from django.http import HttpResponse
+from django.http import HttpResponse, Http404
 from uuid import uuid4
 from audit.models import AuditLog
 
@@ -445,3 +445,91 @@ class ProductDeleteView(LoginRequiredMixin, DeleteView):
                 'edit the product and mark it inactive.',
             )
             return redirect('product-detail', pk=self.object.pk)
+
+
+@login_required
+def product_packaging(request, pk):
+    from . import packaging as policy
+    from inventory.models import InventoryBalance
+    from inventory.packaging import PackagingActivationService, prepare_existing_balance
+    from inventory.packaging_forms import PackageConfigurationForm, PackagePriceForm, ActivationForm, CountedContainers
+    organization = require_organization(request)
+    support = getattr(request, 'support_access', None)
+    policy.authorize(organization=organization, actor=request.user, support_session=support)
+    product = get_object_or_404(Product.objects.filter(tenant=organization, organization=organization).select_related('sales_unit'), pk=pk)
+    if product.is_serialized or product.item_type != Product.ItemType.PHYSICAL or not product.track_stock:
+        raise Http404('Packaging supports non-serialized physical stock products only.')
+    action = request.POST.get('action') if request.method == 'POST' else None
+    configuration = PackageConfigurationForm(request.POST if action == 'configure' else None, organization=organization, prefix='configuration')
+    balance = InventoryBalance.objects.filter(tenant=organization, product=product).first()
+    quantity = balance.quantity if balance else product.quantity
+    average = balance.average_cost if balance else product.buying_price
+    activation = ActivationForm(request.POST if request.method == 'POST' and action != 'configure' else None, prefix='activation',
+        initial={'expected_quantity': quantity, 'expected_average_cost': average, 'expected_version': product.packaging_version})
+    from inventory.packaging_transport import expand_fields
+    transport_error = None
+    counted_data = request.POST if action == 'activate' else None
+    try:
+        counted_data = expand_fields(counted_data, 'counted_payload')
+    except ValidationError as exc:
+        transport_error = str(exc)
+    packages = list(product.packaging_definitions.filter(tenant=organization).select_related('unit').order_by('-version'))
+    counted = CountedContainers(counted_data, prefix='counted', form_kwargs={'organization': organization, 'product': product, 'packages': packages})
+    if transport_error:
+        activation.is_valid()
+        activation.add_error(None, transport_error)
+    price_forms = []
+    target = None
+    for package in packages:
+        bound = action in {'prices', 'retire'} and request.POST.get('packaging_id') == str(package.pk)
+        form = PackagePriceForm(request.POST if bound and action == 'prices' else None, prefix=f'price_{package.pk}',
+            initial={name: getattr(package, name) for name in PackagePriceForm.base_fields})
+        price_forms.append((package, form))
+        if bound:
+            target = (package, form)
+    if request.method == 'POST':
+        error_form = configuration if action == 'configure' else target[1] if target else activation
+        try:
+            changed = False
+            if action == 'configure' and configuration.is_valid():
+                policy.PackagingService.configure(organization=organization, actor=request.user, product_id=product.pk,
+                    unit_id=configuration.cleaned_data['unit'].pk, factor=configuration.cleaned_data['factor'],
+                    prices={name: configuration.cleaned_data[name] for name in PackagePriceForm.base_fields}, support_session=support)
+                changed = True
+            elif action == 'prices' and target and target[1].is_valid():
+                policy.PackagingService.update_prices(organization=organization, actor=request.user, product_id=product.pk,
+                    packaging_id=target[0].pk, prices=target[1].cleaned_data, support_session=support)
+                changed = True
+            elif action == 'retire' and target:
+                policy.PackagingService.retire(organization=organization, actor=request.user, product_id=product.pk,
+                    packaging_id=target[0].pk, support_session=support)
+                changed = True
+            elif action in {'activate', 'disable', 'prepare'} and activation.is_valid():
+                values = activation.cleaned_data
+                if action == 'prepare':
+                    prepare_existing_balance(organization=organization, actor=request.user, product_id=product.pk,
+                        expected_quantity=values['expected_quantity'], expected_average_cost=values['expected_average_cost'],
+                        reason=values['reason'], support_session=support)
+                    changed = True
+                elif action == 'disable' or counted.is_valid():
+                    rows = []
+                    if action == 'activate':
+                        for row in counted.cleaned_data:
+                            if row and not row.get('DELETE'):
+                                rows.append(dict(quantity=str(row['quantity']), packaging_id=row.get('packaging'),
+                                    sealed=row.get('sealed', False), supplier_identifier=row.get('supplier_identifier', ''),
+                                    expiry_date=row['expiry_date'].isoformat() if row.get('expiry_date') else ''))
+                    PackagingActivationService.change(organization=organization, actor=request.user, product_id=product.pk,
+                        enabled=action == 'activate', containers=rows, support_session=support, **values)
+                    changed = True
+            elif action not in {'configure', 'prices', 'retire', 'activate', 'disable', 'prepare'} or action in {'prices', 'retire'} and not target:
+                raise policy.PackagingError('Choose a valid packaging action for this product.')
+            if changed:
+                messages.success(request, 'Packaging action recorded. Existing transaction history and base unit are preserved.')
+                return redirect('product-packaging', pk=product.pk)
+        except ValidationError as exc:
+            error_form.is_valid()
+            error_form.add_error(None, str(exc))
+    return render(request, 'products/product_packaging.html', {'product': product, 'configuration': configuration,
+        'activation': activation, 'counted': counted, 'price_forms': price_forms, 'base_quantity': quantity,
+        'average_cost': average, 'workflow_ready': policy.workflows_ready(), 'needs_balance_preparation': balance is None and quantity > 0})

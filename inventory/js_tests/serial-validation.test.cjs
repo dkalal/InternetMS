@@ -50,3 +50,33 @@ test('failed live requests retain local validation and show a server-validation 
     assert.match(controller.notice, /unavailable.*before stock is changed/);
   } finally { global.fetch = originalFetch; }
 });
+
+test('an immediate successful check submits on a later task and preserves the chosen action', async () => {
+  const originalDocument = global.document, originalObserver = global.MutationObserver;
+  const originalSchedule = Controller.prototype.schedule;
+  const handlers = {}, submitted = [], button = {name:'action', value:'save_review'};
+  let inNativeDispatch = true;
+  const form = {prepend(){}, addEventListener(name, fn){handlers[name]=fn;},
+    requestSubmit(source){
+      if (inNativeDispatch) return; // Native browsers suppress reentrant submission.
+      submitted.push(source);
+      handlers.submit({submitter:source,preventDefault(){},stopImmediatePropagation(){}});
+    }};
+  global.document = {createElement(){return {style:{},setAttribute(){}};}};
+  global.MutationObserver = class {observe(){}};
+  Controller.prototype.schedule = function(){};
+  try {
+    const controller = new Controller(form, {});
+    controller.validate = async () => true;
+    handlers.submit({submitter:button,preventDefault(){},stopImmediatePropagation(){}});
+    await Promise.resolve();
+    assert.equal(submitted.length,0);
+    inNativeDispatch = false;
+    await new Promise(resolve => setTimeout(resolve,20));
+    assert.deepEqual(submitted,[button]);
+    assert.equal(controller.resubmitting,false);
+  } finally {
+    global.document=originalDocument; global.MutationObserver=originalObserver;
+    Controller.prototype.schedule=originalSchedule;
+  }
+});

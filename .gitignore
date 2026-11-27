@@ -34,3 +34,5 @@ docs/Screenshot *.jpg
 docs/purchase_rows_template_sample.xlsx
 docs/receipt sample.pdf
 report-source.md
+# Isolated packaging verification output (synthetic test diagnostics).
+/.packaging-*.log
